@@ -7,7 +7,6 @@ services:
     restart: always
     environment:
       POSTGRES_DB: garment_erp
-      POSTGRES_USER: erp_user
       POSTGRES_PASSWORD: erp_password_2024
     ports:
       - "5432:5432"

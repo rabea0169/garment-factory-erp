@@ -4,6 +4,7 @@ import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
 import '../../features/inventory/presentation/screens/inventory_screen.dart';
 import '../../features/production/presentation/screens/production_screen.dart';
+import '../../features/products/presentation/screens/products_screen.dart';
 import '../../features/quality/presentation/screens/quality_screen.dart';
 import '../../features/hr/presentation/screens/hr_screen.dart';
 import '../../features/sales/presentation/screens/sales_screen.dart';
@@ -49,14 +50,18 @@ class AppRouter {
         builder: (context, state) => const InventoryScreen(),
       ),
       GoRoute(
-        path: production,
-        name: 'production',
-        builder: (context, state) => const ProductionScreen(),
+        path: '/products',
+        builder: (context, state) => const ProductsScreen(),
       ),
       GoRoute(
         path: quality,
         name: 'quality',
         builder: (context, state) => const QualityScreen(),
+      ),
+      GoRoute(
+        path: production,
+        name: 'production',
+        builder: (context, state) => const ProductionScreen(),
       ),
       GoRoute(
         path: hr,

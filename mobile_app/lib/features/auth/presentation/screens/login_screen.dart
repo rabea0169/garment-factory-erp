@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
-import '../../../../core/router/app_router.dart';
+import '../cubit/auth_cubit.dart';
+import '../cubit/auth_state.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -12,179 +14,109 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController(text: 'admin@factory.com');
-  final _passwordController = TextEditingController(text: 'Admin@123');
-  bool _obscurePassword = true;
-  bool _isLoading = false;
+  final _emailController = TextEditingController();
+  final _passwordController = TextEditingController();
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.primary,
-      body: SafeArea(
-        child: Column(
-          children: [
-            // الجزء العلوي — شعار وعنوان
-            Expanded(
-              flex: 2,
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Container(
-                      width: 100,
-                      height: 100,
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.2),
-                            blurRadius: 24,
-                            offset: const Offset(0, 12),
-                          ),
-                        ],
+    return BlocProvider(
+      create: (context) => AuthCubit(),
+      child: Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.all(24.0),
+            child: Form(
+              key: _formKey,
+              child: BlocConsumer<AuthCubit, AuthState>(
+                listener: (context, state) {
+                  if (state is AuthAuthenticated) {
+                    context.go('/dashboard');
+                  } else if (state is AuthError) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(state.message, style: const TextStyle(fontFamily: 'Cairo')),
+                        backgroundColor: AppColors.error,
                       ),
-                      child: const Icon(
-                        Icons.factory_rounded,
-                        size: 56,
-                        color: AppColors.primary,
-                      ),
-                    ),
-                    const SizedBox(height: 20),
-                    const Text(
-                      'نظام إدارة المصنع',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 26,
-                        fontWeight: FontWeight.w700,
-                        fontFamily: 'Cairo',
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    const Text(
-                      'Garment Factory ERP',
-                      style: TextStyle(
-                        color: Colors.white70,
-                        fontSize: 14,
-                        fontFamily: 'Cairo',
-                        letterSpacing: 1,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            // الجزء السفلي — نموذج الدخول
-            Expanded(
-              flex: 3,
-              child: Container(
-                padding: const EdgeInsets.all(28),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(32),
-                    topRight: Radius.circular(32),
-                  ),
-                ),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    );
+                  }
+                },
+                builder: (context, state) {
+                  return Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const SizedBox(height: 8),
+                      const Icon(Icons.factory, size: 80, color: AppColors.primary),
+                      const SizedBox(height: 16),
                       Text(
                         'تسجيل الدخول',
-                        style: Theme.of(context).textTheme.headlineMedium,
+                        style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: AppColors.primary,
+                            ),
                       ),
-                      const SizedBox(height: 6),
-                      Text(
-                        'أدخل بياناتك للوصول إلى النظام',
-                        style: Theme.of(context).textTheme.bodyMedium,
+                      const SizedBox(height: 8),
+                      const Text(
+                        'مرحباً بك في نظام إدارة المصنع',
+                        style: TextStyle(color: AppColors.textSecondary, fontFamily: 'Cairo'),
                       ),
-                      const SizedBox(height: 28),
-                      // حقل البريد الإلكتروني
+                      const SizedBox(height: 48),
                       TextFormField(
                         controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        textDirection: TextDirection.ltr,
                         decoration: const InputDecoration(
                           labelText: 'البريد الإلكتروني',
                           prefixIcon: Icon(Icons.email_outlined),
                         ),
-                        validator: (v) =>
-                            v!.isEmpty ? 'أدخل البريد الإلكتروني' : null,
+                        keyboardType: TextInputType.emailAddress,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'يرجى إدخال البريد الإلكتروني';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
-                      // حقل كلمة المرور
                       TextFormField(
                         controller: _passwordController,
-                        obscureText: _obscurePassword,
-                        decoration: InputDecoration(
+                        decoration: const InputDecoration(
                           labelText: 'كلمة المرور',
-                          prefixIcon: const Icon(Icons.lock_outlined),
-                          suffixIcon: IconButton(
-                            icon: Icon(
-                              _obscurePassword
-                                  ? Icons.visibility_off_outlined
-                                  : Icons.visibility_outlined,
-                            ),
-                            onPressed: () => setState(
-                              () => _obscurePassword = !_obscurePassword,
-                            ),
-                          ),
+                          prefixIcon: Icon(Icons.lock_outline),
                         ),
-                        validator: (v) =>
-                            v!.isEmpty ? 'أدخل كلمة المرور' : null,
+                        obscureText: true,
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'يرجى إدخال كلمة المرور';
+                          }
+                          return null;
+                        },
                       ),
-                      const SizedBox(height: 32),
-                      // زر الدخول
-                      ElevatedButton(
-                        onPressed: _isLoading ? null : _handleLogin,
-                        child: _isLoading
-                            ? const SizedBox(
-                                width: 22,
-                                height: 22,
-                                child: CircularProgressIndicator(
-                                  color: Colors.white,
-                                  strokeWidth: 2,
-                                ),
-                              )
-                            : const Text('دخول'),
-                      ),
-                      const Spacer(),
-                      Center(
-                        child: Text(
-                          'نسخة 1.0.0 — Garment Factory ERP',
-                          style: Theme.of(context).textTheme.labelSmall,
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        height: 50,
+                        child: ElevatedButton(
+                          onPressed: state is AuthLoading
+                              ? null
+                              : () {
+                                  if (_formKey.currentState!.validate()) {
+                                    context.read<AuthCubit>().login(
+                                          _emailController.text,
+                                          _passwordController.text,
+                                        );
+                                  }
+                                },
+                          child: state is AuthLoading
+                              ? const CircularProgressIndicator(color: Colors.white)
+                              : const Text('دخول', style: TextStyle(fontSize: 18)),
                         ),
                       ),
                     ],
-                  ),
-                ),
+                  );
+                },
               ),
             ),
-          ],
+          ),
         ),
       ),
     );
-  }
-
-  void _handleLogin() async {
-    if (!_formKey.currentState!.validate()) return;
-    setState(() => _isLoading = true);
-    // سيتم استبداله بـ API call حقيقي عند تشغيل Backend
-    await Future.delayed(const Duration(seconds: 2));
-    if (mounted) {
-      setState(() => _isLoading = false);
-      context.go(AppRouter.dashboard);
-    }
-  }
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
   }
 }

@@ -1,7 +1,16 @@
 import { Module } from '@nestjs/common';
-import { Module as PrismaModule } from './prisma/prisma.module';
+import { PrismaModule } from './prisma/prisma.module';
 import { ConfigModule } from '@nestjs/config';
 import { EventEmitterModule } from '@nestjs/event-emitter';
+import { InventoryModule } from './modules/inventory/inventory.module';
+import { ProductionModule } from './modules/production/production.module';
+import { AuthModule } from './modules/auth/auth.module';
+import { ProductsModule } from './modules/products/products.module';
+import { HrModule } from './modules/hr/hr.module';
+import { SalesModule } from './modules/sales/sales.module';
+import { AccountingModule } from './modules/accounting/accounting.module';
+import { QualityModule } from './modules/quality/quality.module';
+import { ShippingModule } from './modules/shipping/shipping.module';
 
 @Module({
   imports: [
@@ -18,6 +27,15 @@ import { EventEmitterModule } from '@nestjs/event-emitter';
     }),
     // Prisma (قاعدة البيانات)
     PrismaModule,
+    InventoryModule,
+    ProductionModule,
+    AuthModule,
+    ProductsModule,
+    HrModule,
+    SalesModule,
+    AccountingModule,
+    QualityModule,
+    ShippingModule,
     // سيتم إضافة باقي الموديولات هنا تباعاً
     // AuthModule,
     // ProductsModule,

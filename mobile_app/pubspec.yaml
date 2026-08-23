@@ -31,7 +31,7 @@ dependencies:
   # Local Storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-  shared_preferences: ^2.2.3
+  shared_preferences: ^2.5.5
 
   # PDF & Printing
   pdf: ^3.11.0
@@ -54,7 +54,7 @@ dependencies:
   speech_to_text: ^7.4.0
 
   # Bluetooth Printing (طباعة الفواتير)
-  blue_thermal_printer: ^1.1.3+3
+  blue_thermal_printer: ^1.2.3
 
   # Image & Camera
   image_picker: ^1.1.2
