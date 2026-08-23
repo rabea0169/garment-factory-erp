@@ -12,8 +12,8 @@ class ApiClient {
     // 10.0.2.2 is the localhost for Android emulator. 
     // Use localhost or your machine IP for iOS or Web.
     final String baseUrl = defaultTargetPlatform == TargetPlatform.android
-        ? 'http://10.0.2.2:3000'
-        : 'http://localhost:3000';
+        ? 'http://10.0.2.2:3005'
+        : 'http://localhost:3005';
 
     _dio = Dio(
       BaseOptions(
