@@ -1,0 +1,106 @@
+name: garment_factory_erp
+description: نظام ERP لإدارة مصنع الملابس الجاهزة
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+
+  # State Management
+  flutter_bloc: ^9.1.1
+  bloc: ^9.2.1
+  equatable: ^2.0.5
+
+  # Navigation
+  go_router: ^17.5.0
+
+  # Dependency Injection
+  get_it: ^9.2.1
+  injectable: ^2.4.4
+
+  # Networking
+  dio: ^5.4.3
+  pretty_dio_logger: ^1.3.1
+
+  # Local Storage
+  hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  shared_preferences: ^2.2.3
+
+  # PDF & Printing
+  pdf: ^3.11.0
+  printing: ^5.12.0
+
+  # Barcode & QR Scanner (Android Camera)
+  mobile_scanner: ^7.4.0
+  barcode_widget: ^2.0.4
+
+  # Charts & Analytics
+  fl_chart: ^1.2.0
+
+  # Push Notifications
+  flutter_local_notifications: ^22.3.0
+
+  # NFC (بطاقات العمال)
+  nfc_manager: ^4.2.1
+
+  # Voice Input (الإدخال الصوتي)
+  speech_to_text: ^7.4.0
+
+  # Bluetooth Printing (طباعة الفواتير)
+  blue_thermal_printer: ^1.1.3+3
+
+  # Image & Camera
+  image_picker: ^1.1.2
+  cached_network_image: ^3.3.1
+
+  # UI Utilities
+  intl: ^0.20.0
+  shimmer: ^4.0.0
+  lottie: ^3.1.2
+  flutter_svg: ^2.0.10+1
+  font_awesome_flutter: ^11.0.0
+
+  # Forms & Validation
+  flutter_form_builder: ^10.3.0+2
+  form_builder_validators: ^11.1.2
+
+  # Utilities
+  uuid: ^4.4.0
+  path_provider: ^2.1.3
+  url_launcher: ^6.3.0
+  share_plus: ^13.3.0
+  permission_handler: ^13.0.1
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  build_runner: ^2.4.9
+  injectable_generator: ^2.6.2
+  hive_generator: ^2.0.1
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true
+  generate: true
+
+  assets:
+    - assets/images/
+    - assets/icons/
+    - assets/lottie/
+
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Regular.ttf
+          weight: 400
+        - asset: assets/fonts/Cairo-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Cairo-Bold.ttf
+          weight: 700

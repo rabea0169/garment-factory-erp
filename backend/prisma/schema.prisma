@@ -1,0 +1,655 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ===== M-02: AUTH & USERS =====
+
+enum UserRole {
+  SUPER_ADMIN
+  GENERAL_MANAGER
+  PRODUCTION_MANAGER
+  INVENTORY_MANAGER
+  ACCOUNTANT
+  CASHIER
+  HR_MANAGER
+  VIEWER
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  phone     String?  @unique
+  password  String
+  role      UserRole @default(VIEWER)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  activityLogs   ActivityLog[]
+  salesOrders    SalesOrder[]
+  purchaseOrders PurchaseOrder[]
+  vouchers       Voucher[]
+  workOrders     WorkOrder[]
+
+  @@map("users")
+}
+
+model ActivityLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  module    String
+  details   Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@map("activity_logs")
+}
+
+// ===== M-03: PRODUCT CATALOG =====
+
+model Season {
+  id        String    @id @default(uuid())
+  name      String
+  startDate DateTime?
+  endDate   DateTime?
+  isActive  Boolean   @default(true)
+  products  Product[]
+  createdAt DateTime  @default(now())
+
+  @@map("seasons")
+}
+
+model Product {
+  id             String   @id @default(uuid())
+  code           String   @unique
+  name           String
+  description    String?
+  imageUrl       String?
+  seasonId       String?
+  category       String?
+  retailPrice    Decimal  @db.Decimal(10, 2)
+  wholesalePrice Decimal  @db.Decimal(10, 2)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  season     Season?         @relation(fields: [seasonId], references: [id])
+  variants   ProductVariant[]
+  bomItems   BomItem[]
+  workOrders WorkOrder[]
+
+  @@map("products")
+}
+
+model ProductVariant {
+  id        String  @id @default(uuid())
+  productId String
+  size      String
+  color     String
+  barcode   String? @unique
+  isActive  Boolean @default(true)
+
+  product        Product          @relation(fields: [productId], references: [id])
+  inventoryItems FinishedGood[]
+  orderItems     SalesOrderItem[]
+
+  @@unique([productId, size, color])
+  @@map("product_variants")
+}
+
+model BomItem {
+  id            String  @id @default(uuid())
+  productId     String
+  rawMaterialId String
+  quantity      Decimal @db.Decimal(10, 4)
+  unit          String
+
+  product     Product     @relation(fields: [productId], references: [id])
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+
+  @@unique([productId, rawMaterialId])
+  @@map("bom_items")
+}
+
+// ===== M-04: INVENTORY =====
+
+enum RawMaterialUnit {
+  METER
+  KILOGRAM
+  PIECE
+  ROLL
+  DOZEN
+  LITER
+}
+
+model RawMaterial {
+  id            String          @id @default(uuid())
+  code          String          @unique
+  name          String
+  unit          RawMaterialUnit
+  currentStock  Decimal         @db.Decimal(10, 4) @default(0)
+  minStockLevel Decimal         @db.Decimal(10, 4) @default(0)
+  costPerUnit   Decimal         @db.Decimal(10, 2)
+  supplierId    String?
+  isActive      Boolean         @default(true)
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  supplier      Supplier?                @relation(fields: [supplierId], references: [id])
+  transactions  RawMaterialTransaction[]
+  bomItems      BomItem[]
+  purchaseItems PurchaseOrderItem[]
+  consumptions  MaterialConsumption[]
+
+  @@map("raw_materials")
+}
+
+enum TransactionType {
+  PURCHASE
+  PRODUCTION_USE
+  ADJUSTMENT
+  RETURN
+  WASTE
+}
+
+model RawMaterialTransaction {
+  id            String          @id @default(uuid())
+  rawMaterialId String
+  type          TransactionType
+  quantity      Decimal         @db.Decimal(10, 4)
+  costPerUnit   Decimal         @db.Decimal(10, 2)
+  reference     String?
+  notes         String?
+  createdAt     DateTime        @default(now())
+
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+
+  @@map("raw_material_transactions")
+}
+
+model FinishedGood {
+  id               String @id @default(uuid())
+  productVariantId String @unique
+  quantity         Int    @default(0)
+
+  variant     ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("finished_goods")
+}
+
+// ===== M-05: PRODUCTION =====
+
+enum WorkOrderStatus {
+  PLANNED
+  CUTTING
+  SEWING
+  FINISHING
+  IRONING
+  PACKAGING
+  COMPLETED
+  CANCELLED
+}
+
+model WorkOrder {
+  id           String          @id @default(uuid())
+  code         String          @unique
+  productId    String
+  quantity     Int
+  status       WorkOrderStatus @default(PLANNED)
+  startDate    DateTime?
+  endDate      DateTime?
+  completedQty Int             @default(0)
+  rejectedQty  Int             @default(0)
+  createdById  String
+  notes        String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  product              Product               @relation(fields: [productId], references: [id])
+  createdBy            User                  @relation(fields: [createdById], references: [id])
+  stageUpdates         WorkOrderStage[]
+  qualityChecks        QualityCheck[]
+  materialConsumptions MaterialConsumption[]
+  workerProductions    DailyProduction[]
+
+  @@map("work_orders")
+}
+
+model WorkOrderStage {
+  id          String          @id @default(uuid())
+  workOrderId String
+  stage       WorkOrderStatus
+  quantity    Int
+  notes       String?
+  createdAt   DateTime        @default(now())
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+
+  @@map("work_order_stages")
+}
+
+model MaterialConsumption {
+  id            String   @id @default(uuid())
+  workOrderId   String
+  rawMaterialId String
+  quantity      Decimal  @db.Decimal(10, 4)
+  costPerUnit   Decimal  @db.Decimal(10, 2)
+  createdAt     DateTime @default(now())
+
+  workOrder   WorkOrder   @relation(fields: [workOrderId], references: [id])
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+
+  @@map("material_consumptions")
+}
+
+// ===== M-06: QUALITY CONTROL =====
+
+enum RejectionReason {
+  SEWING_DEFECT
+  CUTTING_DEFECT
+  FABRIC_DEFECT
+  FINISHING_DEFECT
+  PACKAGING_DEFECT
+  OTHER
+}
+
+model QualityCheck {
+  id              String           @id @default(uuid())
+  workOrderId     String
+  stage           WorkOrderStatus
+  checkedQty      Int
+  passedQty       Int
+  rejectedQty     Int
+  rejectionReason RejectionReason?
+  notes           String?
+  checkedAt       DateTime         @default(now())
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+
+  @@map("quality_checks")
+}
+
+// ===== M-07: HR & PAYROLL =====
+
+enum WorkerSpecialty {
+  CUTTING
+  SEWING
+  FINISHING
+  PACKAGING
+  IRONING
+  QUALITY_CONTROL
+  OTHER
+}
+
+model Worker {
+  id         String          @id @default(uuid())
+  code       String          @unique
+  name       String
+  phone      String?
+  nationalId String?         @unique
+  specialty  WorkerSpecialty
+  pieceRate  Decimal         @db.Decimal(10, 2) @default(0)
+  isActive   Boolean         @default(true)
+  hireDate   DateTime        @default(now())
+  createdAt  DateTime        @default(now())
+
+  attendance      Attendance[]
+  dailyProduction DailyProduction[]
+  advances        WorkerAdvance[]
+  payrolls        Payroll[]
+
+  @@map("workers")
+}
+
+model Attendance {
+  id        String   @id @default(uuid())
+  workerId  String
+  date      DateTime @db.Date
+  isPresent Boolean  @default(true)
+  notes     String?
+
+  worker Worker @relation(fields: [workerId], references: [id])
+
+  @@unique([workerId, date])
+  @@map("attendance")
+}
+
+model DailyProduction {
+  id          String   @id @default(uuid())
+  workerId    String
+  workOrderId String?
+  date        DateTime @db.Date
+  piecesCount Int
+  pieceRate   Decimal  @db.Decimal(10, 2)
+  totalAmount Decimal  @db.Decimal(10, 2)
+  notes       String?
+  createdAt   DateTime @default(now())
+
+  worker    Worker     @relation(fields: [workerId], references: [id])
+  workOrder WorkOrder? @relation(fields: [workOrderId], references: [id])
+
+  @@map("daily_production")
+}
+
+model WorkerAdvance {
+  id        String   @id @default(uuid())
+  workerId  String
+  amount    Decimal  @db.Decimal(10, 2)
+  date      DateTime @default(now())
+  notes     String?
+
+  worker Worker @relation(fields: [workerId], references: [id])
+
+  @@map("worker_advances")
+}
+
+model Payroll {
+  id            String   @id @default(uuid())
+  workerId      String
+  periodStart   DateTime @db.Date
+  periodEnd     DateTime @db.Date
+  grossAmount   Decimal  @db.Decimal(10, 2)
+  advanceDeduct Decimal  @db.Decimal(10, 2) @default(0)
+  absenceDeduct Decimal  @db.Decimal(10, 2) @default(0)
+  netAmount     Decimal  @db.Decimal(10, 2)
+  isPaid        Boolean  @default(false)
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  worker Worker @relation(fields: [workerId], references: [id])
+
+  @@map("payrolls")
+}
+
+// ===== M-08: SALES & PURCHASING =====
+
+model Customer {
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  address   String?
+  email     String?
+  notes     String?
+  balance   Decimal  @db.Decimal(10, 2) @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  salesOrders SalesOrder[]
+  payments    CustomerPayment[]
+
+  @@map("customers")
+}
+
+model Supplier {
+  id           String   @id @default(uuid())
+  code         String   @unique
+  name         String
+  phone        String?
+  address      String?
+  email        String?
+  notes        String?
+  balance      Decimal  @db.Decimal(10, 2) @default(0)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  purchaseOrders   PurchaseOrder[]
+  rawMaterials     RawMaterial[]
+  supplierPayments SupplierPayment[]
+
+  @@map("suppliers")
+}
+
+enum PaymentType {
+  CASH
+  CREDIT
+  PARTIAL
+}
+
+model SalesOrder {
+  id          String      @id @default(uuid())
+  code        String      @unique
+  customerId  String
+  userId      String
+  paymentType PaymentType
+  totalAmount Decimal     @db.Decimal(10, 2)
+  paidAmount  Decimal     @db.Decimal(10, 2) @default(0)
+  discount    Decimal     @db.Decimal(10, 2) @default(0)
+  dueDate     DateTime?
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  customer  Customer         @relation(fields: [customerId], references: [id])
+  user      User             @relation(fields: [userId], references: [id])
+  items     SalesOrderItem[]
+  payments  CustomerPayment[]
+  shipments Shipment[]
+
+  @@map("sales_orders")
+}
+
+model SalesOrderItem {
+  id               String  @id @default(uuid())
+  salesOrderId     String
+  productVariantId String
+  quantity         Int
+  unitPrice        Decimal @db.Decimal(10, 2)
+  totalPrice       Decimal @db.Decimal(10, 2)
+
+  salesOrder SalesOrder     @relation(fields: [salesOrderId], references: [id])
+  variant    ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@map("sales_order_items")
+}
+
+model CustomerPayment {
+  id           String   @id @default(uuid())
+  customerId   String
+  salesOrderId String?
+  amount       Decimal  @db.Decimal(10, 2)
+  date         DateTime @default(now())
+  notes        String?
+
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  salesOrder SalesOrder? @relation(fields: [salesOrderId], references: [id])
+
+  @@map("customer_payments")
+}
+
+model PurchaseOrder {
+  id          String      @id @default(uuid())
+  code        String      @unique
+  supplierId  String
+  userId      String
+  paymentType PaymentType
+  totalAmount Decimal     @db.Decimal(10, 2)
+  paidAmount  Decimal     @db.Decimal(10, 2) @default(0)
+  dueDate     DateTime?
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  supplier Supplier            @relation(fields: [supplierId], references: [id])
+  user     User                @relation(fields: [userId], references: [id])
+  items    PurchaseOrderItem[]
+  payments SupplierPayment[]
+
+  @@map("purchase_orders")
+}
+
+model PurchaseOrderItem {
+  id              String   @id @default(uuid())
+  purchaseOrderId String
+  rawMaterialId   String
+  quantity        Decimal  @db.Decimal(10, 4)
+  unitCost        Decimal  @db.Decimal(10, 2)
+  totalCost       Decimal  @db.Decimal(10, 2)
+
+  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
+  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id])
+
+  @@map("purchase_order_items")
+}
+
+model SupplierPayment {
+  id              String   @id @default(uuid())
+  supplierId      String
+  purchaseOrderId String?
+  amount          Decimal  @db.Decimal(10, 2)
+  date            DateTime @default(now())
+  notes           String?
+
+  supplier      Supplier       @relation(fields: [supplierId], references: [id])
+  purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+
+  @@map("supplier_payments")
+}
+
+// ===== M-09: SHIPPING =====
+
+enum ShipmentStatus {
+  PREPARING
+  SHIPPED
+  IN_TRANSIT
+  DELIVERED
+  RETURNED
+}
+
+model ShippingCompany {
+  id        String     @id @default(uuid())
+  name      String
+  phone     String?
+  notes     String?
+  isActive  Boolean    @default(true)
+  shipments Shipment[]
+
+  @@map("shipping_companies")
+}
+
+model Shipment {
+  id                String         @id @default(uuid())
+  code              String         @unique
+  salesOrderId      String
+  shippingCompanyId String?
+  status            ShipmentStatus @default(PREPARING)
+  shippingCost      Decimal        @db.Decimal(10, 2) @default(0)
+  trackingNumber    String?
+  shippedAt         DateTime?
+  deliveredAt       DateTime?
+  notes             String?
+  createdAt         DateTime       @default(now())
+
+  salesOrder      SalesOrder       @relation(fields: [salesOrderId], references: [id])
+  shippingCompany ShippingCompany? @relation(fields: [shippingCompanyId], references: [id])
+
+  @@map("shipments")
+}
+
+// ===== M-10: ACCOUNTING =====
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  REVENUE
+  EXPENSE
+}
+
+model Account {
+  id        String      @id @default(uuid())
+  code      String      @unique
+  name      String
+  type      AccountType
+  parentId  String?
+  isGroup   Boolean     @default(false)
+  balance   Decimal     @db.Decimal(15, 2) @default(0)
+  isActive  Boolean     @default(true)
+  createdAt DateTime    @default(now())
+
+  parent      Account?      @relation("AccountHierarchy", fields: [parentId], references: [id])
+  children    Account[]     @relation("AccountHierarchy")
+  debitLines  JournalLine[] @relation("DebitAccount")
+  creditLines JournalLine[] @relation("CreditAccount")
+
+  @@map("accounts")
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  code        String   @unique
+  description String
+  reference   String?
+  date        DateTime @default(now())
+  isAuto      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  lines JournalLine[]
+
+  @@map("journal_entries")
+}
+
+model JournalLine {
+  id              String  @id @default(uuid())
+  journalEntryId  String
+  debitAccountId  String
+  creditAccountId String
+  amount          Decimal @db.Decimal(15, 2)
+  description     String?
+
+  journalEntry  JournalEntry @relation(fields: [journalEntryId], references: [id])
+  debitAccount  Account      @relation("DebitAccount", fields: [debitAccountId], references: [id])
+  creditAccount Account      @relation("CreditAccount", fields: [creditAccountId], references: [id])
+
+  @@map("journal_lines")
+}
+
+enum VoucherType {
+  PAYMENT
+  RECEIPT
+}
+
+model Voucher {
+  id          String      @id @default(uuid())
+  code        String      @unique
+  type        VoucherType
+  amount      Decimal     @db.Decimal(10, 2)
+  description String
+  reference   String?
+  date        DateTime    @default(now())
+  createdById String
+  createdAt   DateTime    @default(now())
+
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@map("vouchers")
+}
+
+model Treasury {
+  id        String   @id @default(uuid())
+  name      String
+  type      String   // CASH or BANK
+  balance   Decimal  @db.Decimal(15, 2) @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  @@map("treasuries")
+}
+
+model CostCenter {
+  id       String  @id @default(uuid())
+  name     String
+  code     String  @unique
+  isActive Boolean @default(true)
+
+  @@map("cost_centers")
+}
