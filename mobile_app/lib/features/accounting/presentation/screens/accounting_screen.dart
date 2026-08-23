@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
-import 'cubit/accounting_cubit.dart';
+import '../cubit/accounting_cubit.dart';
 
 class AccountingScreen extends StatelessWidget {
   const AccountingScreen({super.key});

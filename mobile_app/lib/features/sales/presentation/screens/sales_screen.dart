@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
-import 'cubit/sales_cubit.dart';
+import '../cubit/sales_cubit.dart';
 
 class SalesScreen extends StatelessWidget {
   const SalesScreen({super.key});
