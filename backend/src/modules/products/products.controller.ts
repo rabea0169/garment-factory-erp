@@ -1,6 +1,8 @@
 import { Controller, Get, Post, Body, Param } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.guard';
 
 @ApiTags('Products (المنتجات)')
 @Controller('products')
@@ -26,6 +28,7 @@ export class ProductsController {
   }
 
   @Post()
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة منتج جديد' })
   async createProduct(@Body() body: any) {
     return this.productsService.createProduct(body);

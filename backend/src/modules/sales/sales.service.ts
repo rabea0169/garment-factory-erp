@@ -32,13 +32,16 @@ export class SalesService {
     });
   }
 
-  async createSalesOrder(data: {
-    customerId: string;
-    userId: string;
-    paymentType: any;
-    discount: number;
-    items: { productVariantId: string; quantity: number; unitPrice: number }[];
-  }) {
+  async createSalesOrder(
+    data: {
+      customerId: string;
+      paymentType: any;
+      discount: number;
+      items: { productVariantId: string; quantity: number; unitPrice: number }[];
+    },
+    userId: string,
+  ) {
+    // P0-04: userId من الجلسة (يمرره الـ controller من التوكن) — أي userId في body يُتجاهل
     let totalAmount = 0;
     for (const item of data.items) {
       totalAmount += item.quantity * item.unitPrice;
@@ -49,7 +52,7 @@ export class SalesService {
       data: {
         code: `SO-${Date.now()}`,
         customerId: data.customerId,
-        userId: data.userId,
+        userId,
         paymentType: data.paymentType,
         totalAmount,
         discount: data.discount,

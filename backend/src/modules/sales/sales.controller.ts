@@ -1,6 +1,9 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
 
 @ApiTags('Sales (المبيعات والعملاء)')
 @Controller('sales')
@@ -14,6 +17,7 @@ export class SalesController {
   }
 
   @Post('customers')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'إضافة عميل جديد' })
   async createCustomer(@Body() body: { name: string; phone?: string; address?: string }) {
     return this.salesService.createCustomer(body);
@@ -26,8 +30,13 @@ export class SalesController {
   }
 
   @Post('orders')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'إنشاء أمر بيع جديد' })
-  async createOrder(@Body() body: any) {
-    return this.salesService.createSalesOrder(body);
+  async createOrder(
+    @CurrentUser('id') userId: string,
+    @Body() body: any,
+  ) {
+    // P0-04: userId من الجلسة فقط — أي userId وارد في body يُتجاهل
+    return this.salesService.createSalesOrder(body, userId);
   }
 }

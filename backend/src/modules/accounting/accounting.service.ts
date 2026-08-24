@@ -30,7 +30,11 @@ export class AccountingService {
     });
   }
 
-  async createVoucher(data: { type: any; amount: number; description: string; reference?: string; createdById: string }) {
+  async createVoucher(
+    data: { type: any; amount: number; description: string; reference?: string },
+    createdById: string,
+  ) {
+    // P0-04: createdById من الجلسة (يمرره الـ controller من التوكن) — يُتجاهل أي value من body
     return this.prisma.voucher.create({
       data: {
         code: `VCH-${Date.now()}`,
@@ -38,7 +42,7 @@ export class AccountingService {
         amount: data.amount,
         description: data.description,
         reference: data.reference,
-        createdById: data.createdById,
+        createdById,
       },
     });
   }

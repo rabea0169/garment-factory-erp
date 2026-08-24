@@ -21,14 +21,15 @@ export class ProductionService {
     });
   }
 
-  async createWorkOrder(dto: { productId: string; quantity: number; creatorId: string }) {
+  async createWorkOrder(dto: { productId: string; quantity: number }, creatorId: string) {
     const workOrder = await this.prisma.workOrder.create({
       data: {
         code: `WO-${Date.now()}`,
         productId: dto.productId,
         quantity: dto.quantity,
         status: WorkOrderStatus.PLANNED,
-        createdById: dto.creatorId,
+        // P0-04: الهوية من الجلسة (يمررها الـ controller) — تُتجاهل أي قيمة من body
+        createdById: creatorId,
       },
     });
 

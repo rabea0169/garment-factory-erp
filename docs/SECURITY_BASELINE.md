@@ -2,102 +2,78 @@
 
 > سجل الثغرات المعروفة مرتبة بالخطورة. يُحدَّث مع كل مهمة. أي P0 مفتوح يعني أن النظام **غير صالح للتشغيل ببيانات حقيقية**.
 
-**تاريخ القياس:** 2026-08-24 · **نطاق الفحص:** فرع `main` @ `2023acf` + فرع `stabilization/baseline-and-security` (توثيق فقط)
+**تاريخ القياس:** 2026-08-24 · **آخر تحديث:** GF-0002 (2026-08-25) — إغلاق P0-01/P0-02/P0-04 وجزء من P0-03
 
 ---
 
 ## P0 — حرجة: تمنع أي تشغيل ببيانات حقيقية
 
-### P0-01: جميع مسارات API بلا مصادقة إطلاقًا
-- **الأثر:** قراءة/كتابة كاملة لبيانات المصنع (عملاء، مخزون، رواتب، قيود محاسبية، عمال) لأي فرد على الشبكة.
-- **الجذر:** `backend/src/app.module.ts` لا يسجل `APP_GUARD`، ولا يوجد `@UseGuards(JwtAuthGuard)` على أي controller من الـ 30 endpoint. `RolesGuard` مكتوب في `backend/src/modules/auth/roles.guard.ts` ولا يُستخدم.
-- **الإصلاح (GF-0002):** `JwtAuthGuard` عالمي عبر `APP_GUARD` + `@Public()` على `/auth/login` فقط + تفعيل `RolesGuard` مع `@Roles()` لكل مسار حساس.
+### P0-01: جميع مسارات API بلا مصادقة إطلاقًا — ✅ **مغلقة في GF-0002**
+- **الإصلاح المنفذ:** `JwtAuthGuard` عالمي عبر `APP_GUARD` في `app.module.ts` + `@Public()` على `/auth/login` و `/` فقط + تفعيل `RolesGuard` مع `@Roles()` على كل مسار حساس (المصفوفة في `API_CONTRACT.md`).
+- **الإثبات:** `backend/test/auth-guard.e2e-spec.ts` — 16 اختبارًا: 7 سيناريوهات 401 (بلا توكن/توكن فاسد/مستخدم موقوف) + 3 سيناريوهات 403 + نجاح الدور الصحيح + تجاوز SUPER_ADMIN.
 
-### P0-02: سر JWT له fallback ثابت `'secret'`
-- **الجذر:** `backend/src/modules/auth/jwt.strategy.ts:16` — `secretOrKey: configService.get('JWT_SECRET') || 'secret'`.
-- **الأثر:** بدون `JWT_SECRET` في البيئة، يمكن تزوير أي token والمرور كأي مستخدم (بمجرد GF-0002 يعمل هذا كثغرة صلاحيات كاملة).
-- **الإصلاح:** رفض الإقلاع (fail-closed) عند غياب `JWT_SECRET` أو قصره (32+ حرفًا) في الإنتاج. لا fallback مطلقًا.
+### P0-02: سر JWT له fallback ثابت `'secret'` — ✅ **مغلقة في GF-0002**
+- **الإصلاح المنفذ:** أُزيل الـ fallback من `jwt.strategy.ts` (رمي خطأ واضح عند الغياب) + `assertRequiredEnv()` في `main.ts`: فشل إقلاع exit 1 عند غياب `JWT_SECRET`/`DATABASE_URL` في أي بيئة، وعند سر <32 حرفًا أو CORS مفتوح في الإنتاج.
+- **الإثبات:** اختبار سلوكي فعلي — `NODE_ENV=production node dist/src/main.js` بلا env → exit 1 برسائل عربية واضحة؛ سر بطول 5 → رفض "أقصر من 32". + 6 اختبارات unit في `src/main.spec.ts`.
 
-### P0-03: بيانات اعتماد قاعدة البيانات مكررة وثابتة في الكود
-- **المواضع:**
-  - `backend/src/prisma/prisma.service.ts:16` — connection string كاملة بكلمة مرور `erp_password_2024` كـ fallback.
-  - `backend/prisma/seed.ts:6` — نفس الـ connection string مكتوبة حرفيًا.
-  - `docker-compose.yml:10` — `POSTGRES_PASSWORD: erp_password_2024`.
-- **الإصلاح:** `DATABASE_URL` من البيئة فقط، رفض الإقلاع عند غيابها؛ seed يقرأ من `.env`؛ docker-compose يستخدم `${POSTGRES_PASSWORD}` من `.env` خارج Git.
+### P0-03: بيانات اعتماد قاعدة البيانات مكررة وثابتة في الكود — 🟡 **مغلقة جزئيًا في GF-0002**
+- ✅ `prisma.service.ts` — أُزيل connection string؛ `DATABASE_URL` من البيئة فقط (رمي عند الغياب).
+- ✅ `prisma/seed.ts` — أُزيل connection string؛ يقرأ من البيئة عبر dotenv.
+- ❌ `docker-compose.yml` — ما زال يحمل `POSTGRES_PASSWORD: erp_password_2024` منشورًا على 5432 (مع pgAdmin مكشوف 5050) → **مهمة GF-0006**. CI secret-scan يبقى أحمر حتى إغلاقها — مقصود.
 
-### P0-04: هوية المنشئ تُقبل من جسم الطلب (Client-side identity)
-- **المواضع:**
-  - `backend/src/modules/sales/sales.service.ts:52` — `userId` من body.
-  - `backend/src/modules/accounting/accounting.service.ts:41` — `createdById` من body.
-  - `backend/src/modules/production/production.service.ts:31` — `creatorId` من dto.
-- **الأثر:** تزوير هوية منشئ الفواتير وأوامر الصرف وأوامر التشغيل — يدمر audit trail بالكامل.
-- **الإصلاح:** `CurrentUser` decorator يستخرج الهوية من الجلسة، والخدمات تتجاهل أي حقل هوية قادم من العميل.
+### P0-04: هوية المنشئ تُقبل من جسم الطلب — ✅ **مغلقة في GF-0002**
+- **الإصلاح المنفذ:** `@CurrentUser('id')` decorator يستخرج الهوية من الجلسة؛ `sales.service.createSalesOrder(body, userId)` و`accounting.service.createVoucher(body, createdById)` و`production.service.createWorkOrder(dto, creatorId)` تستقبل الهوية كمعامل من الـ controller وتتجاهل أي قيمة واردة من body.
+- **الإثبات:** اختبار سلوكي في e2e: إرسال `createdById: 'HACKED-USER-ID'` في body لإنشاء سند → المحفوظ فعليًا هو id المستخرج من التوكن.
 
-### P0-05: نقاط نهاية مالية بلا DTO أو تحقق (`@Body() any`)
-- **المواضع:** `backend/src/modules/sales/sales.controller.ts:30` (`createOrder`) وعدة مواضع أخرى تستقبل objects خام.
-- **الأثر:** الـ ValidationPipe العالمي لا يحمي ما لا يملك DTO له؛ إجماليات الفواتير تُحسب من مدخلات عميل دون إعادة تحقق.
+### P0-05: نقاط نهاية مالية بلا DTO أو تحقق (`@Body() any`) — ❌ مفتوحة → GF-0004
+- **المواضع:** معظم مسارات الكتابة تستقبل objects خام؛ إجماليات الفواتير تُحسب من مدخلات عميل دون إعادة تحقق كافية.
 - **الإصلاح:** DTO مع `class-validator` لكل مسار كتابة + إعادة حساب الخادم للإجماليات.
 
 ## P1 — عالية: يجب إغلاقها قبل أي pilot
 
-### P1-01: CORS مفتوح بالكامل مع credentials
-- `backend/src/main.ts:22-26` — `origin: '*'` مع `credentials: true`. الإصلاح: قائمة origins من environment.
+### P1-01: CORS مفتوح بالكامل مع credentials — ✅ **مغلقة في GF-0002**
+- `CORS_ORIGINS` من البيئة (قائمة مفصولة بفواصل)؛ في الإنتاج: غيابها أو `*` → فشل إقلاع. في التطوير فقط تبقى `*` عند غياب القيمة.
 
-### P1-02: بيانات دخول admin منشورة في README وseed
-- `README.md` (admin@factory.com / Admin@123) + `backend/prisma/seed.ts:14`. الإصلاح: إزالة من README، توليد كلمة مرور عشوائية عند أول إقلاع أو فرض تغييرها.
+### P1-02: بيانات دخول admin منشورة في README وseed — ❌ مفتوحة → GF-0006
+- `README.md` (admin@factory.com / Admin@123) + `backend/prisma/seed.ts`. مؤجل عمدًا مع تصحيح README في GF-0006 (تغيير seed منفردًا يكسر الدخول الموثق دون تحديث README المتزامن).
 
-### P1-03: token الجلسة في SharedPreferences وليس secure storage
-- `mobile_app/lib/features/auth/presentation/cubit/auth_cubit.dart:27-54`. الإصلاح: `flutter_secure_storage`.
+### P1-03: token الجلسة في SharedPreferences — ❌ مفتوحة → GF-0010
+### P1-04: ApiClient بلا auth interceptor ولا معالجة 401 — ❌ مفتوحة → GF-0010
+- الخادم محمي الآن؛ التطبيق يحتاج إرفاق التوكن ومعالجة 401 وإلا سترفضه كل الـ endpoints.
 
-### P1-04: ApiClient بلا auth interceptor ولا معالجة 401
-- `mobile_app/lib/core/network/api_client.dart:33` — "Add JWT token here later". عنوان الـ base URL مكتوب داخل الكود لا من environment.
-
-### P1-05: mock data صامتة في مسار إنتاجي
-- `mobile_app/lib/features/reports/presentation/cubit/reports_cubit.dart:14-26` — فشل طلب `/dashboard/stats` (endpoint غير موجود أصلًا) يعرض بيانات وهمية كمичные. يخفي الفشل عن المستخدم.
-
-### P1-06: Redis وpgAdmin منشوران على الشبكة بكلمات مرور ضعيفة
-- `docker-compose.yml` — pgAdmin (admin@factory.com/admin123) على 5050، Redis مكشوف على 6379 بلا كلمة مرور. الإصلاح: ربط داخلية فقط `expose` بدل `ports`، أو شبكة داخلية.
-
-### P1-07: healthcheck لـ Postgres مكسور
-- `docker-compose.yml:16` — `pg_isready -U erp_user` لكن `POSTGRES_USER` غير معرّف (المستخدم الفعلي `postgres`)، فالـ healthcheck يفشل دائمًا وقد يعلّق `depends_on` مستقبلًا.
-
-### P1-08: لا rate limiting ولا helmet ولا correlation IDs
-- لا توجد أي طبقات حماية transport في `main.ts`.
-
-### P1-09: صلاحيات بلا مصفوفة معتمدة
-- 8 أدوار في enum `UserRole` دون أي mapping موثق endpoint→role. تُبنى المصفوفة في GF-0002.
-
-### P1-10: لا pagination في أي قائمة
-- كل `GET` للقوائم يعيد الجدول كاملًا (عملاء، مخازن، أوامر…) — خطر أداء وتسريب بيانات جملةً.
-
-### P1-11: أحداث بلا listeners (ادعاء README)
-- `emit` موجود في inventory/production فقط، وصفر `@OnEvent` — الادعاءات المحاسبية التلقائية في README غير منفذة.
-
-### P1-12: تعارض المنفذ backend/mobile
-- backend افتراضي 3000 (`main.ts:39`)، mobile يطلب 3005 (`api_client.dart:14-16`). يُحسم بـ env موحدة.
+### P1-05: mock data صامتة في مسار إنتاجي (Reports) — ❌ مفتوحة → GF-0010/GF-0019
+### P1-06: Redis وpgAdmin منشوران على الشبكة بكلمات مرور ضعيفة — ❌ مفتوحة → GF-0006
+### P1-07: healthcheck لـ Postgres مكسور (erp_user غير معرف) — ❌ مفتوحة → GF-0006
+### P1-08: لا rate limiting ولا helmet ولا correlation IDs — ❌ مفتوحة → GF-0021
+### P1-09: صلاحيات بلا مصفوفة معتمدة — 🟡 **منفذة تقنيًا في GF-0002** (مصفوفة `API_CONTRACT.md` مفعّلة ومختبرة 403) — تبقى موافقة مالك المنتج الرسمية على المصفوفة.
+### P1-10: لا pagination في أي قائمة — ❌ مفتوحة → GF-0012
+### P1-11: أحداث بلا listeners — ❌ مفتوحة → ADR-0003
+### P1-12: تعارض المنفذ backend/mobile — 🟡 **محلول جزئيًا:** `.env` محلي بـ PORT=3005 + `.env.example` يوثق 3005؛ يُستكمل مع Flutter config في GF-0010.
 
 ## P2 — متوسطة: قبل الإطلاق المؤسسي
 
-- P2-01: لا password policy ولا session expiry قصير (الافتراضي 7 أيام في `auth.module.ts:16`).
+- P2-01: لا password policy ولا session expiry قصير (الافتراضي 7 أيام في `auth.module.ts`).
 - P2-02: لا audit logging للعمليات الحساسة (جدول `ActivityLog` موجود وغير مستخدم).
-- P2-03: `verboseMemoryLeak: true` مفعل في `app.module.ts:26` — لا يليق بالإنتاج.
-- P2-04: لا تقييم اعتماديات (`npm audit`) ولا secret scanning في CI.
+- P2-03: `verboseMemoryLeak: true` مفعل في `app.module.ts` — لا يليق بالإنتاج.
+- P2-04: لا تقييم اعتماديات (`npm audit`) ولا secret scanning إضافي في CI.
 - P2-05: بيانات حساسة محتملة في رسائل الأخطاء (تفاصيل Prisma تصل للعميل كما هي).
 - P2-06: Swagger مكشوف للجمهور بلا حماية (`/api/docs`).
 - P2-07: أسرار خدمة pgAdmin مكتوبة نصًا في compose.
+- P2-08 (جديد بعد GF-0002): `/auth/login` بلا rate limiting — هدف سهل لهجمات القوة الغاشمة (يرتبط بـ P1-08).
 
 ---
 
 ## مصفوفة الحالة
 
-| ID | الخطورة | الملف الأساسي | الحالة | المهمة المخططة |
+| ID | الخطورة | الحالة | أُغلقت في | الإثبات |
 |---|---|---|---|---|
-| P0-01 | حرجة | app.module.ts + كل الـ controllers | مفتوحة | GF-0002 |
-| P0-02 | حرجة | jwt.strategy.ts:16 | مفتوحة | GF-0002 |
-| P0-03 | حرجة | prisma.service.ts / seed.ts / docker-compose.yml | مفتوحة | GF-0002 |
-| P0-04 | حرجة | sales/accounting/production services | مفتوحة | GF-0002 |
-| P0-05 | حرجة | sales.controller.ts وغيرها | مفتوحة | GF-0003+ |
-| P1-01..12 | عالية | متعددة | مفتوحة | GF-0002..GF-0006 |
-| P2-01..07 | متوسطة | متعددة | مفتوحة | المراحل 7-9 |
+| P0-01 | حرجة | ✅ مغلقة | GF-0002 | e2e: 7×401 + 3×403 + مصفوفة أدوار |
+| P0-02 | حرجة | ✅ مغلقة | GF-0002 | fail-closed boot + main.spec.ts |
+| P0-03 | حرجة | 🟡 جزئية | GF-0002 (2/3 مواضع) | بقي docker-compose → GF-0006 |
+| P0-04 | حرجة | ✅ مغلقة | GF-0002 | e2e: تجاهل HACKED-USER-ID |
+| P0-05 | حرجة | ❌ مفتوحة | — | GF-0004 |
+| P1-01 | عالية | ✅ مغلقة | GF-0002 | assertRequiredEnv + CORS_ORIGINS |
+| P1-02..12 | عالية | ❌/🟡 مفتوحة | — | انظر التفاصيل أعلاه |
+| P2-01..08 | متوسطة | ❌ مفتوحة | — | المراحل 7-9 |
 
 **قاعدة الحوكمة:** لا تُغلق أي ثغرة في هذا الملف دون إشارة إلى commit الإغلاق واختبار يثبت السلوك (401/403/إقلاع فاشل…).

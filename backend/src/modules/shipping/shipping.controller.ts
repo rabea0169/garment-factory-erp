@@ -1,6 +1,8 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
 import { ShippingService } from './shipping.service';
 import { ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.guard';
 
 @ApiTags('Shipping (الشحن)')
 @Controller('shipping')
@@ -13,6 +15,7 @@ export class ShippingController {
   }
 
   @Post()
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   async createShipment(@Body() body: any) {
     return this.shippingService.createShipment(body);
   }

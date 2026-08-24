@@ -5,34 +5,44 @@
 ```text
 Project: Garment Factory ERP
 Current branch: stabilization/baseline-and-security
-Current commit: 0446cc5
+Current commit: (التزام GF-0002 — يُحدّث في كل تسليم)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
-Last completed phase: Phase 0 — Baseline & Governance (GF-0001)
-Active task: GF-0002 — تفعيل المصادقة fail-closed وحماية مسارات API
-Blocked tasks: لا شيء محظور تقنيًا؛ كل المهام اللاحقة مشروطة بعبور بوابة المرحلة 1
-Known failing checks: انظر القسم 4 أدناه
+Last completed phase: المرحلة 1 جزئيًا — GF-0002 منجزة (حماية fail-closed مفعّلة ومختبرة)
+Active task: GF-0003 — إصلاح الاختبارات الـ 18 الفاشلة والـ lint
+Blocked tasks: لا شيء محظور تقنيًا؛ بقية المهام مشروطة بعبور بوابة G1 (متبقٍ: اختبارات خضراء)
+Known failing checks: 18 suite فاشلة (قوالب قديمة — GF-0003) + lint 16 خطأ قديمًا (GF-0003) + CI secret-scan أحمر على docker-compose/README/seed (GF-0006) + app.e2e-spec يحتاج DB
 Database migration state: migration واحدة فقط مطبقة (init 20260823183624)؛ لا توجد بيئة إنتاج
 Current API version: 1.0 (غير مقفل — العقد غير مستقر بعد)
-Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005 (مكتوبة داخل الكود، ليست من environment)
-Security blockers: 5 ثغرات P0 مفتوحة — انظر SECURITY_BASELINE.md
-Open decisions: ADR-0001 (نشر ports)، ADR-0002 (سياسة تغيير schema) قيد الاعتماد
-Last handoff: docs/handoffs/HANDOFF-001.md
-Next exact action: تنفيذ GF-0002 وفق بطاقة المهمة في HANDOFF-001.md
+Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005 (مكتوبة داخل الكود، ليست من environment — GF-0010)
+Security blockers: P0-05 فقط من الخمس (DTOs) + P1-02..P1-11 — انظر SECURITY_BASELINE.md
+Open decisions: ADR-0003 (مصير الأحداث المالية)، ADR-0004 (المنفذ — محسوم عمليًا 3005 عبر env)
+Last handoff: docs/handoffs/HANDOFF-002.md
+Next exact action: تنفيذ GF-0003 وفق بطاقة المهمة في HANDOFF-002.md
 ```
 
 ---
 
-## 1. طبيعة الحالة الحالية (تقييم صريح)
+## 1. طبيعة الحالة الحالية (بعد GF-0002 — تحديث)
 
-المشروع في حالة **prototype وظيفي غير محمي**. الكود يترجم ويبنى بنجاح، لكنه غير صالح لأي تشغيل ببيانات حقيقية للأسباب التالية:
+المشروع انتقل من **prototype مكشوف بالكامل** إلى **prototype محمي fail-closed**: كل مسارات API تتطلب JWT صالحًا (عدا login والجذر)، الأسرار من البيئة فقط (لا fallback)، والهوية من الجلسة لا من body. المتبقي قبل أي تشغيل حقيقي:
 
-1. **كل مسارات API مكشوفة تمامًا** — لا يوجد `APP_GUARD` ولا `@UseGuards` ولا `@Roles` واحدة في أي controller من الـ 30 endpoint. أي شخص يصل للشبكة يقرأ ويكتب بيانات المصنع كاملة (عملاء، مخزون، رواتب، قيود).
-2. **لا يوجد ملف `.env` في المستودع** — عند التشغيل الفعلي بدون `JWT_SECRET` يقبل الخادم أي token موقّع بالسر الافتراضي `'secret'`.
-3. **الاختبارات شكلية** — 18 من 19 suite فاشلة أصلًا لأنها قوالب NestJS الافتراضية بلا mock لـ `PrismaService`.
-4. **README يعد بما هو غير منفذ** — معمارية الأحداث المعلنة (سحب مخزون آلي + قيد محاسبي آلي) ليس لها أي `@OnEvent` listener واحد في الكود.
-5. **تطبيق Flutter لا يستطيع المصادقة أصلًا** — `ApiClient` بلا auth interceptor، والتطبيق يقفل على mock data في التقارير.
+1. **P0-05:** مسارات كتابة بلا DTOs (`@Body() any`) — GF-0004.
+2. **docker-compose** ما زال يحمل كلمة مرور منشورة وports مكشوفة — GF-0006.
+3. **الاختبارات القديمة حمراء** (18 suite قوالب بلا mocks) — GF-0003.
+4. **Flutter لم يوصل بعد**: لا auth interceptor (الخادم سيرفض كل طلباته على المسارات المحمية) ولا secure storage — GF-0010.
 
-## 2. خط الأساس المقاس (Baseline) — 2026-08-24
+### ما تغير في GF-0002 (ملخص)
+- `JwtAuthGuard` + `RolesGuard` مسجلان عالميًا (`APP_GUARD`) — كل مسار محمي افتراضيًا.
+- `@Public()` فقط على `POST /auth/login` و `GET /`.
+- `assertRequiredEnv()` في `main.ts`: فشل إقلاع عند نقص `JWT_SECRET`/`DATABASE_URL` (وأي إنتاج: سر <32 أو CORS `*`).
+- `prisma.service.ts`/`seed.ts`: `DATABASE_URL` من البيئة فقط.
+- `userId/createdById/creatorId` من `@CurrentUser('id')` في sales/accounting/production.
+- إصلاح خلل قديم: `AppController` لم يكن مسجلًا في `AppModule` (كان `/` يرجع 404).
+- 31 اختبارًا جديدًا (15 unit + 16 e2e) تثبت 401/403/الهوية-من-الجلسة/fail-closed.
+
+> ملاحظات مفتوحة من القياس الأصلي ما زالت صحيحة: الاختبارات القديمة شكلية (18 suite قوالب بلا PrismaService mock — GF-0003)، ادعاءات README عن الأحداث غير منفذة (ADR-0003)، وFlutter بلا auth interceptor (GF-0010).
+
+## 2. خط الأساس المقاس (Baseline) — 2026-08-24 (وحدّث جزئيًا في GF-0002)
 
 | البند | القيمة |
 |---|---|
@@ -42,13 +52,13 @@ Next exact action: تنفيذ GF-0002 وفق بطاقة المهمة في HANDOF
 | `npx prisma generate` | ✅ نجاح (شرط مسبق للبناء) |
 | `npx prisma validate` | ✅ نجاح — المخطط صالح |
 | `npm run build` | ✅ نجاح (يفشل إذا لم يُسبق بـ `prisma generate`) |
-| `npm test -- --runInBand` | ❌ **18 فاشل / 1 ناجح من 19 suite** |
-| `npm run lint` | ❌ **21 مشكلة (16 error / 5 warning)** |
+| `npm test -- --runInBand` | ❌ 18 فاشلة قديمة / 4 ناجحة (أصلية 1 + جديدة GF-0002: 3) — الإصلاح GF-0003 |
+| `npm run lint` | ❌ 16 خطأ قديمة (معظمها unsafe-any يعالجها GF-0003/GF-0004) — الملفات الجديدة في GF-0002 صفر أخطاء |
 | `npm run format:check` | غير معرف كسكربت — يوجد `format` فقط |
 | Flutter checks | غير مشغّلة في هذه البيئة (لا Flutter SDK مثبت) — مهمة CI |
 | Docker Compose | ⚠️ healthcheck لـ postgres **مكسور** (انظر SECURITY_BASELINE P1-07) |
 
-النتيجة: البناء قابل للتكرار، لكن **حزمة الاختبارات الحالية حمراء بالكامل عمليًا**، ولا يوجد CI يمنع تراجع الحالة.
+النتيجة: البناء قابل للتكرار، وحماية GF-0002 مثبتة باختبارات جديدة، لكن **حزمة الاختبارات القديمة ما زالت حمراء** بانتظار GF-0003، وCI secret-scan أحمر بانتظار GF-0006 (docker-compose/README/seed).
 
 ## 3. جرد المكونات الفعلي (مقابل ما يعلنه README)
 
@@ -60,26 +70,29 @@ Next exact action: تنفيذ GF-0002 وفق بطاقة المهمة في HANDOF
 | RBAC بالصلاحيات | `RolesGuard` موجود كملف **ولا يُستخدم في أي مكان** |
 | 34 model و10 enums | مؤكد من `schema.prisma` |
 
-## 4. الفحوصات المعروفة بفشلها (مع أوامر إعادة الإنتاج)
+## 4. الفحوصات المعروفة بفشلها (مع أوامر إعادة الإنتاج — بعد GF-0002)
 
 ```bash
-# 18/19 suite فاشلة — السبب: قوالب spec افتراضية بلا PrismaService mock
+# 18 suite فاشلة (قديمة، دون تغيير بعد GF-0002) — السبب: قوالب spec افتراضية بلا PrismaService mock
 cd backend && npm test -- --runInBand
-# Suites الفاشلة: accounting/{controller,service}, auth/{controller,service},
-# hr/{controller,service}, inventory/{controller,service}, production/{controller,service},
-# products/{controller,service}, quality/{controller,service}, sales/{controller,service},
-# shipping/{controller,service}
-# الناجحة: src/app.controller.spec.ts فقط
+# الناجحة الآن: app.controller.spec + roles.guard.spec + jwt-auth.guard.spec + main.spec (جديدة GF-0002)
 
-# 16 خطأ ESLint + 5 تحذيرات (no-unsafe-assignment على any، unused imports)
+# 16 خطأ ESLint قديمة (unsafe-any / unused imports) — لا أخطاء في ملفات GF-0002 الجديدة
 cd backend && npm run lint
+
+# اختبارات الحماية الجديدة (خضراء) — تثبيت سلوك GF-0002:
+cd backend && npx jest --config ./test/jest-e2e.json --runInBand test/auth-guard.e2e-spec.ts
+
+# فحص الإقلاع fail-closed (خضراء — يجب أن تفشل العملية برمز 1):
+NODE_ENV=production node dist/src/main.js   # من مجلد بلا .env
 ```
 
-## 5. قيود البيئة والتشغيل
+## 5. قيود البيئة والتشغيل (بعد GF-0002)
 
-- **المنفذ**: `main.ts` يستخدم `PORT` من البيئة افتراضيًا **3000**، بينما تطبيق Flutter يطلب **3005** — التشغيل الحالي لا يتفق إلا إذا ضُبط `PORT=3005` يدويًا. (تعارض مسجل، الحسم في ADR)
-- **قاعدة البيانات**: تتطلب PostgreSQL مطابقًا لـ `docker-compose.yml`، وكلمة المرور مكررة حرفيًا في 3 مواضع (انظر SECURITY_BASELINE P0-03).
-- **`prisma generate` إلزامي قبل البناء** — أتمتته داخل CI.
+- **المنفذ**: `PORT` من البيئة — `.env` المحلي و`.env.example` يوثقان **3005** (ADR-0004 محسوم عمليًا).
+- **التشغيل أصبح يتطلب `.env`**: `JWT_SECRET` و`DATABASE_URL` إلزاميان (فشل إقلاع بدونهما — fail-closed). انسخ `backend/.env.example` إلى `backend/.env`.
+- **قاعدة البيانات**: كلمة المرور لم تبق إلا في `docker-compose.yml` (GF-0006) — الكود وseed يقرآن من البيئة فقط.
+- **`prisma generate` إلزامي قبل البناء** — مُتمَت داخل CI.
 
 ## 6. بروتوكول تحديث هذا الملف
 

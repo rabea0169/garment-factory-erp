@@ -1,6 +1,8 @@
 import { Controller, Get, Post, Body, Param } from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.guard';
 
 @ApiTags('Inventory (المخزون)')
 @Controller('inventory')
@@ -20,6 +22,7 @@ export class InventoryController {
   }
 
   @Post('raw-materials/:id/add-stock')
+  @Roles(UserRole.INVENTORY_MANAGER)
   @ApiOperation({ summary: 'إضافة رصيد لمادة خام' })
   async addStock(
     @Param('id') id: string,

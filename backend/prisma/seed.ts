@@ -1,9 +1,18 @@
-import { PrismaClient, UserRole, RawMaterialUnit, WorkOrderStatus, WorkerSpecialty } from '@prisma/client';
+import 'dotenv/config';
+import { PrismaClient, UserRole, RawMaterialUnit, WorkerSpecialty } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 
-const pool = new Pool({ connectionString: 'postgresql://postgres:erp_password_2024@localhost:5432/garment_erp?schema=public' });
+// GF-0002 / P0-03: الاتصال من البيئة فقط — لا connection string مكتوب في الكود
+const connectionString = process.env.DATABASE_URL;
+if (!connectionString) {
+  console.error(
+    'DATABASE_URL مفقود — seed يقرأ الاتصال من البيئة فقط. انسخ backend/.env.example إلى backend/.env واضبط القيمة.',
+  );
+  process.exit(1);
+}
+const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
