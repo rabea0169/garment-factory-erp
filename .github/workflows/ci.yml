@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [main, 'stabilization/**']
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend — Prisma / Lint / Build / Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # Prisma lifecycle: الإقلاع يفشل بدون generate — لا يُخفى الفشل أبدًا
+      - name: Prisma generate
+        run: npx prisma generate
+
+      - name: Prisma validate
+        run: npx prisma validate
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+      - name: Tests
+        run: npm test -- --runInBand
+
+  secret-scan:
+    name: Secret Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Fail on hardcoded secrets / credentials in tracked files
+        run: |
+          set -e
+          # أنماط ممنوعة في الملفات المتتبعة (استثناء مقصود: قوالب .env.example)
+          PATTERNS=(
+            "erp_password_2024"
+            "postgres(ql)?://[^[:space:]'\"]+:[^[:space:]'\"]+@"
+            "JWT_SECRET[[:space:]]*=[[:space:]]*['\"][^'\"]{8,}['\"]"
+            "Admin@123"
+          )
+          FAIL=0
+          for P in "${PATTERNS[@]}"; do
+            MATCHES=$(git grep -nE "$P" -- ':!*.example' ':!docs/*' ':!.github/*' || true)
+            if [ -n "$MATCHES" ]; then
+              echo "::error::Pattern [$P] found:"
+              echo "$MATCHES"
+              FAIL=1
+            fi
+          done
+          if [ "$FAIL" -eq 1 ]; then
+            echo "Secret scan FAILED — أزل الأسرار الحقيقية من الكود."
+            exit 1
+          fi
+          echo "Secret scan passed."
+
+  # ------------------------------------------------------------------
+  # Flutter job — معطل مؤقتًا بقرار موثق:
+  # الخطة المرجعية §4.4: "إذا لم يكن Flutter SDK متاحًا، أعد runner مناسبًا أو
+  # فصل job موثق، لا تجاهل فحص Flutter". هذا الفصل مؤقت ويجب تفعيله قبل
+  # المرحلة 8 (GF-0020). عند التفعيل: أزل التعليق واستخدم subosito/flutter-action.
+  # ------------------------------------------------------------------
+  # flutter:
+  #   name: Flutter — Analyze / Test
+  #   runs-on: ubuntu-latest
+  #   defaults:
+  #     run:
+  #       working-directory: mobile_app
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - uses: subosito/flutter-action@v2
+  #       with:
+  #         channel: stable
+  #     - run: flutter pub get
+  #     - run: flutter analyze
+  #     - run: flutter test
