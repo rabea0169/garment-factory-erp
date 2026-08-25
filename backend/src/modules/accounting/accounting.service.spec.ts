@@ -8,7 +8,10 @@ import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 describe('AccountingService — الحسابات والسندات (GF-0003 + audit v2 A1/A2/A3)', () => {
   let service: AccountingService;
   let prisma: ReturnType<typeof createPrismaMock>;
-  let financial: { postJournalEntry: jest.Mock };
+  let financial: {
+    postJournalEntry: jest.Mock;
+    reverseJournalEntry?: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaMock();
