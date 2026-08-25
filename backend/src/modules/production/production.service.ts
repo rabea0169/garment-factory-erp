@@ -32,6 +32,9 @@ export class ProductionService {
           variant: { include: { product: true } },
           bomVersion: true,
           stageUpdates: true,
+          stageRuns: {
+            orderBy: { sequence: 'asc' },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
