@@ -7,7 +7,8 @@
 يجب توفير قاعدة PostgreSQL مخصصة للاختبار، وتطبيق كل migrations بما فيها GF-0013. لا تستخدم قاعدة تطوير أو إنتاج تحتوي على بيانات مهمة؛ الاختبارات تنفذ `TRUNCATE ... CASCADE` قبل كل حالة.
 
 ```bash
-export GF_INTEGRATION_DATABASE_URL='postgresql://postgres:postgres@localhost:5432/garment_erp_test'
+export PGPASSWORD='<database-password>'
+export GF_INTEGRATION_DATABASE_URL='postgresql://<database-user>@<database-host>:<database-port>/<database-name>'
 export DATABASE_URL="$GF_INTEGRATION_DATABASE_URL"
 cd backend
 npx prisma migrate deploy
