@@ -26,7 +26,7 @@ describe('ProductsController — التفويض والتفويض للخدمة (G
 
   it('يفوّض قائمة المواسم والمنتجات وتفاصيل منتج إلى الخدمة', async () => {
     await controller.getSeasons({});
-    await controller.getProducts({});
+    await controller.getAllProducts({});
     await controller.getProduct('p-1');
     expect(service.getAllSeasons).toHaveBeenCalledTimes(1);
     expect(service.getAllProducts).toHaveBeenCalledTimes(1);

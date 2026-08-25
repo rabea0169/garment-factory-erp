@@ -1,9 +1,11 @@
 import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { ProductsService } from './products.service';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CreateProductDto } from './dto/create-product.dto';
+import { CreateProductVariantDto } from './dto/create-product-variant.dto';
+import { CreateBomLineDto } from './dto/create-bom-line.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Products (المنتجات)')
@@ -13,13 +15,14 @@ export class ProductsController {
 
   @Get('seasons')
   @ApiOperation({ summary: 'الحصول على جميع المواسم' })
-  async getSeasons(@Query() pagination: PaginationDto) {
-    return this.productsService.getAllSeasons(pagination);
+  async getSeasons() {
+    return this.productsService.getAllSeasons();
   }
 
   @Get()
-  @ApiOperation({ summary: 'الحصول على جميع المنتجات' })
-  async getProducts(@Query() pagination: PaginationDto) {
+  @ApiOperation({ summary: 'جلب كل المنتجات' })
+  @ApiResponse({ status: 200, description: 'قائمة المنتجات (Paginated)' })
+  async getAllProducts(@Query() pagination: PaginationDto) {
     return this.productsService.getAllProducts(pagination);
   }
 
@@ -40,15 +43,22 @@ export class ProductsController {
 
   @Post(':id/variants')
   @ApiOperation({ summary: 'إضافة مقاس/لون جديد للمنتج' })
-  async createVariant(@Param('id') id: string, @Body() body: any) {
+  async createVariant(
+    @Param('id') id: string,
+    @Body() body: CreateProductVariantDto,
+  ) {
     return this.productsService.createVariant(id, body.size, body.color);
   }
 
-  /*
   @Post(':id/bom')
   @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
-  async addBomItem(@Param('id') id: string, @Body() body: any) {
-    return this.productsService.addBomItem(id, body.rawMaterialId, body.quantity, body.unit);
+  async addBomItem(@Param('id') id: string, @Body() body: CreateBomLineDto) {
+    return this.productsService.addBomItem(
+      id,
+      body.rawMaterialId,
+      body.quantity,
+      body.unit,
+    );
   }
 
   @Post('bom/:bomId/delete') // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
@@ -56,5 +66,4 @@ export class ProductsController {
   async deleteBomItem(@Param('bomId') bomId: string) {
     return this.productsService.deleteBomItem(bomId);
   }
-  */
 }
