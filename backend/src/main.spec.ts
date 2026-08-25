@@ -11,7 +11,7 @@ describe('assertRequiredEnv (fail-closed startup validation)', () => {
   it('يفشل عند غياب JWT_SECRET في أي بيئة', () => {
     const problems = assertRequiredEnv({
       NODE_ENV: 'development',
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      DATABASE_URL: 'postgresql://localhost:5432/db',
     });
     expect(problems.some((p) => p.includes('JWT_SECRET'))).toBe(true);
   });
@@ -28,7 +28,7 @@ describe('assertRequiredEnv (fail-closed startup validation)', () => {
     const problems = assertRequiredEnv({
       NODE_ENV: 'production',
       JWT_SECRET: SHORT_SECRET,
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      DATABASE_URL: 'postgresql://localhost:5432/db',
       CORS_ORIGINS: 'https://app.example.com',
     });
     expect(problems.some((p) => p.includes('32'))).toBe(true);
@@ -38,14 +38,14 @@ describe('assertRequiredEnv (fail-closed startup validation)', () => {
     const noCors = assertRequiredEnv({
       NODE_ENV: 'production',
       JWT_SECRET: LONG_SECRET,
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      DATABASE_URL: 'postgresql://localhost:5432/db',
     });
     expect(noCors.some((p) => p.includes('CORS_ORIGINS'))).toBe(true);
 
     const starCors = assertRequiredEnv({
       NODE_ENV: 'production',
       JWT_SECRET: LONG_SECRET,
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      DATABASE_URL: 'postgresql://localhost:5432/db',
       CORS_ORIGINS: '*',
     });
     expect(starCors.some((p) => p.includes('CORS_ORIGINS'))).toBe(true);
@@ -55,7 +55,7 @@ describe('assertRequiredEnv (fail-closed startup validation)', () => {
     const problems = assertRequiredEnv({
       NODE_ENV: 'production',
       JWT_SECRET: LONG_SECRET,
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      DATABASE_URL: 'postgresql://localhost:5432/db',
       CORS_ORIGINS: 'https://app.example.com',
     });
     expect(problems).toHaveLength(0);
@@ -65,7 +65,7 @@ describe('assertRequiredEnv (fail-closed startup validation)', () => {
     const problems = assertRequiredEnv({
       NODE_ENV: 'development',
       JWT_SECRET: SHORT_SECRET,
-      DATABASE_URL: 'postgresql://u:p@localhost:5432/db',
+      DATABASE_URL: 'postgresql://localhost:5432/db',
     });
     expect(problems).toHaveLength(0);
   });

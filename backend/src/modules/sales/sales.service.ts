@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaymentType } from '@prisma/client';
 
 @Injectable()
 export class SalesService {
@@ -7,16 +8,20 @@ export class SalesService {
 
   async getCustomers() {
     return this.prisma.customer.findMany({
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
   }
 
-  async createCustomer(data: { name: string; phone?: string; address?: string }) {
+  async createCustomer(data: {
+    name: string;
+    phone?: string;
+    address?: string;
+  }) {
     return this.prisma.customer.create({
       data: {
         ...data,
-        code: `CUST-${Date.now()}`
-      }
+        code: `CUST-${Date.now()}`,
+      },
     });
   }
 
@@ -25,19 +30,23 @@ export class SalesService {
       include: {
         customer: true,
         items: {
-          include: { variant: { include: { product: true } } }
-        }
+          include: { variant: { include: { product: true } } },
+        },
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
   }
 
   async createSalesOrder(
     data: {
       customerId: string;
-      paymentType: any;
+      paymentType: PaymentType;
       discount: number;
-      items: { productVariantId: string; quantity: number; unitPrice: number }[];
+      items: {
+        productVariantId: string;
+        quantity: number;
+        unitPrice: number;
+      }[];
     },
     userId: string,
   ) {
@@ -57,14 +66,14 @@ export class SalesService {
         totalAmount,
         discount: data.discount,
         items: {
-          create: data.items.map(item => ({
+          create: data.items.map((item) => ({
             productVariantId: item.productVariantId,
             quantity: item.quantity,
             unitPrice: item.unitPrice,
             totalPrice: item.quantity * item.unitPrice,
-          }))
-        }
-      }
+          })),
+        },
+      },
     });
   }
 }

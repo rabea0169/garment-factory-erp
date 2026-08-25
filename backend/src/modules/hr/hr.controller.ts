@@ -22,16 +22,30 @@ export class HrController {
   }
 
   @Post('production')
-  @Roles(UserRole.PRODUCTION_MANAGER, UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @Roles(
+    UserRole.PRODUCTION_MANAGER,
+    UserRole.HR_MANAGER,
+    UserRole.GENERAL_MANAGER,
+  )
   @ApiOperation({ summary: 'تسجيل إنتاج يومي بالقطعة لعامل' })
-  async recordProduction(@Body() body: { workerId: string; workOrderId?: string; date: Date; piecesCount: number }) {
+  async recordProduction(
+    @Body()
+    body: {
+      workerId: string;
+      workOrderId?: string;
+      date: Date;
+      piecesCount: number;
+    },
+  ) {
     return this.hrService.recordDailyProduction(body);
   }
 
   @Post('advances')
   @Roles(UserRole.HR_MANAGER)
   @ApiOperation({ summary: 'تسجيل سلفة مالية لعامل' })
-  async recordAdvance(@Body() body: { workerId: string; amount: number; notes?: string }) {
+  async recordAdvance(
+    @Body() body: { workerId: string; amount: number; notes?: string },
+  ) {
     return this.hrService.recordAdvance(body);
   }
 }

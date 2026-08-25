@@ -29,8 +29,13 @@ export class ProductionController {
 
   @Patch('work-orders/:id/status')
   @Roles(UserRole.PRODUCTION_MANAGER)
-  @ApiOperation({ summary: 'تحديث حالة أمر التشغيل (مخطط، قيد التنفيذ، مكتمل)' })
-  async updateStatus(@Param('id') id: string, @Body() body: { status: WorkOrderStatus }) {
+  @ApiOperation({
+    summary: 'تحديث حالة أمر التشغيل (مخطط، قيد التنفيذ، مكتمل)',
+  })
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: { status: WorkOrderStatus },
+  ) {
     return this.productionService.updateOrderStatus(id, body.status);
   }
 }

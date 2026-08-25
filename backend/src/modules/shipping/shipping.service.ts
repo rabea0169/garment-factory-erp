@@ -8,16 +8,22 @@ export class ShippingService {
   async getShipments() {
     return this.prisma.shipment.findMany({
       orderBy: { createdAt: 'desc' },
-      include: { salesOrder: { include: { customer: true } } }
+      include: { salesOrder: { include: { customer: true } } },
     });
   }
 
-  async createShipment(data: any) {
+  async createShipment(data: {
+    salesOrderId: string;
+    shippingCompanyId?: string;
+    shippingCost?: number;
+    trackingNumber?: string;
+    notes?: string;
+  }) {
     return this.prisma.shipment.create({
       data: {
         code: `SHP-${Date.now()}`,
-        ...data
-      }
+        ...data,
+      },
     });
   }
 }

@@ -1,18 +1,20 @@
 # TESTING_STRATEGY — استراتيجية الاختبار
 
-## 1. حالة خط الأساس (2026-08-24)
+## 1. حالة خط الأساس (2026-08-24) → الحالة بعد GF-0003 (2026-08-25)
 
 ```text
-Suites: 19 — ناجح 1 (app.controller.spec.ts) — فاشل 18
-السبب الجذري الموحد: ملفات spec هي قوالب NestJS الافتراضية
-(beforeEach ينشئ TestingModule بلا توفير mock لـ PrismaService)
-→ Nest can't resolve dependencies of XService (PrismaService, +)
+قبل GF-0003:  19 suite — ناجح 1 — فاشل 18 (قوالب NestJS بلا PrismaService mock)
+بعد GF-0003:   22 unit suite — ناجح 22 (89 اختبارًا) + 2 e2e suite (17 اختبارًا)
+               lint: صفر أخطاء وصفر تحذيرات
 ```
 
-**أوامر إعادة الإنتاج:**
+**أوامر التشغيل والنتائج الحالية:**
 ```bash
-cd backend && npm test -- --runInBand   # 18 failed / 1 passed
-cd backend && npm run lint              # 16 errors / 5 warnings
+cd backend && npm test -- --runInBand            # 22/22 suites — 89/89 tests ✅
+cd backend && npm run lint                       # 0 errors, 0 warnings ✅
+cd backend && npm run test:e2e -- --runInBand    # 2/2 suites — 17/17 tests ✅ (بلا قاعدة بيانات)
+cd backend && npm run build                      # ✅
+cd backend && npx prisma validate                # ✅
 ```
 
 ## 2. القواعد الملزمة
@@ -22,7 +24,38 @@ cd backend && npm run lint              # 16 errors / 5 warnings
 3. كل bug fix يصاحبه اختبار يفشل قبله وينجح بعده.
 4. المخزون/الإنتاج/المالية: اختبار فشل في منتصف transaction وعدم تكرار الأثر (idempotency).
 
-## 3. مصفوفة الاختبارات المطلوبة حسب النوع
+## 3. بنية الاختبارات الحالية (بعد GF-0003)
+
+| المجموعة | الملفات | ما تختبره |
+|---|---|---|
+| Guards unit | `auth/jwt-auth.guard.spec.ts`, `auth/roles.guard.spec.ts` | تمرير @Public، مصفوفة الأدوار، تجاوز SUPER_ADMIN |
+| Env fail-closed | `main.spec.ts` (6 اختبارات) | رفض الإقلاع عند نقص/قصر الأسرار في الإنتاج |
+| الخدمات (9 modules × service.spec) | حسابات فعلية: إجمالي الفاتورة في الخادم (225 لسيناريو 2×100+1×50−25)، أجر القطعة (100×5.5=550) مع snapshot للسعر، تراكم الرصيد (150+50=200)، فلترة low-stock (بما فيها حد المساواة)، توليد الأكواد (CUST-/SO-/WO-/VCH-/SHP-)، إطلاق الأحداث الصحيحة، حالات 404 |
+| الـ Controllers (9 × controller.spec) | تمرير الهوية من الجلسة (`user-from-session` لا من body)، **اختبارات انحدار للحماية**: @Roles و@Public metadata لكل مسار حساس (لا يمكن إزالتها دون فشل أحمر) |
+| e2e حماية | `test/auth-guard.e2e-spec.ts` (16) | 7×401 + 3×403 + تجاهل HACKED-USER-ID + المسارات العامة |
+| e2e جذر | `test/app.e2e-spec.ts` (1) | GET / يعمل بعد إصلاح تسجيل AppController |
+
+**Helpers مشتركة** (تُعاد استخدامها، لا تُكرر):
+- `test/helpers/prisma-mock.ts` — مصنع mock موحد لـ PrismaService (كل استدعاء يصبح jest.fn()).
+- `test/helpers/method-metadata.ts` — قراءة metadata الـ decorators (@Roles/@Public) بطريقة آمنة (NestJS يخزنها على descriptor.value — الشكل ثلاثي المعاملات `getMetadata(key, proto, 'method')` **لا** يجدها).
+
+## 4. قرارات GF-0003 الموثقة
+
+1. **فصل `lint` عن `lint:fix`** في package.json — `npm run lint` فحص نقي لا يعدل الملفات (أنهى حادثة الـ `--fix` التي وثقت في GF-0001).
+2. **تطبيع prettier على src/test كاملة** — كان CI يصلح تنسيقات 61 خطأ prettier خفيةً داخل بيئته المؤقتة عبر `--fix`؛ بعد الفصل صار التطبيع ملتزمًا في المستودع (تغيير تنسيقي فقط، صفر سلوك).
+3. **`ignoreRestSiblings: true`** في eslint — الإعداد القياسي لنمط الحذف المتعمد `const { password, ...result } = user` (مستخدم في auth.service وjwt.strategy).
+4. **typing فقط في services/controllers** (PaymentType/AccountType/VoucherType وinterfaces) لإغلاق أخطاء unsafe-any — **الـ DTOs مع class-validator وفرض 400 تبقى نطاق GF-0004**.
+5. **قيم اختبارية لا تطابق secret-scan**: قيم URL/سر في ملفات الاختبار أعيدت صياغتها (بلا user:pass@، والسر عبر متغير وسيط) كي لا تولد إنذارات كاذبة في فحص CI.
+
+## 5. ملاحظات secret-scan (لكل من ينفذ GF-0006)
+
+الفحص الحالي في CI سيبقى أحمر حتى GF-0006 بسبب (المقصود):
+- `docker-compose.yml` — `erp_password_2024` + `Admin@123` في README/seed/login.dto.
+
+**False positives موثقة** (قيم توثيقية placeholder وليست أسرارًا):
+- `backend/.agents/**` و`.claude/**` و`.windsurf/**` — ملفات مهارات Prisma تحتوي أمثلة مثل `postgresql://USER:PASSWORD@HOST` — يلزم في GF-0006 إما استثناء هذه المسارات في فحص CI أو ضبط النمط ليستهدف قيمًا فعلية.
+
+## 6. مصفوفة الاختبارات المطلوبة حسب النوع (تظل مرجعًا للمهام القادمة)
 
 ### مسارات محمية (لكل endpoint حساس)
 ```text
@@ -31,34 +64,12 @@ correct role → 2xx | invalid input → 400 | invalid UUID → 400 |
 duplicate request → idempotent
 ```
 
-### طبقات Backend
-| الطبقة | ماذا يختبر | أدوات |
-|---|---|---|
-| Unit (guards/DTO/حسابات) | قواعد صرفة بلا DB | jest |
-| Service | منطق المجال مع Prisma mock + transactions | jest + mocks |
-| API/E2E | 401/403/validation/pagination على HTTP حقيقي | supertest (test/app.e2e-spec.ts) |
-| Golden paths | دورة SKU→BOM→استلام→أمر→صرف→إنتاج→تام→بيع→قيد | e2e |
-
 ### Flutter
 Cubit states (loading/loaded/empty/error/unauthorized) · repository · widgets · RTL · انقطاع شبكة + retry بلا ازدواج.
 
-### Security (من المرحلة 9، وبعضها مبكرًا)
-secret scan في CI (مباشر من الآن) · npm audit · JWT expiry/توقيع غير صالح · RBAC matrix · rate-limit · error redaction.
+## 7. تعريف "الاختبارات خضراء"
 
-## 4. خطة إصلاح الاختبارات الحالية (GF-0003)
-
-1. استبدال القوالب الـ 18 الفاشلة بـ specs فعلية: `Test.createTestingModule` مع `overrideProvider(PrismaService)` + mocks مركزية في `test/` تُعاد استخدامها.
-2. أخطاء lint الـ 21 تُصنف: إصلاح آمن ضمن المهمة (unused imports) مقابل مؤجل (no-unsafe-assignment يحتاج DTOs — يرتبط بـ GF-0004+).
-3. CI (`.github/workflows/ci.yml`) يشغّل: prisma generate → validate → lint → build → test. فشل أي خطوة = فشل CI — لا continue-on-error.
-
-> ⚠️ **تحذير مهم للنماذج اللاحقة:** سكربت `npm run lint` في `backend/package.json` يحتوي `--fix` — تشغيله **يعدّل ملفات المصدر تلقائيًا** وينتج diff خارج نطاق المهمة. حدث فعليًا خلال GF-0001 ورُوجع يدويًا. عند الحاجة للفحص فقط بدون تعديل استخدم:
-> ```bash
-> npx eslint "{src,apps,libs,test}/**/*.ts"   # فحص بلا --fix
-> ```
-> ويفضل لاحقًا فصل `lint` (فحص) عن `lint:fix` (إصلاح) في package.json (مهمة GF-0003).
-
-## 5. تعريف "الاختبارات خضراء"
-
-- `npm test -- --runInBand` نجاح كامل.
-- `npm run lint` صفر errors (التحذيرات الموثقة مسموحة مؤقتًا بقائمة في هذا الملف).
-- CI أحمر فقط عند فشل حقيقي.
+- `npm test -- --runInBand` نجاح كامل. ✅ محقق (89/89)
+- `npm run lint` صفر أخطاء. ✅ محقق (صفر تحذيرات أيضًا — لا قائمة تحذيرات مؤجلة حاليًا)
+- `npm run test:e2e` نجاح بلا قاعدة بيانات. ✅ محقق (17/17 — حتى بلا ملف .env)
+- CI أحمر فقط عند فشل حقيقي — حاليًا secret-scan أحمر فقط لنطاق GF-0006 الموثق أعلاه.

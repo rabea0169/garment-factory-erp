@@ -35,7 +35,9 @@ export class HrService {
     date: Date;
     piecesCount: number;
   }) {
-    const worker = await this.prisma.worker.findUnique({ where: { id: data.workerId } });
+    const worker = await this.prisma.worker.findUnique({
+      where: { id: data.workerId },
+    });
     if (!worker) throw new NotFoundException('العامل غير موجود');
 
     const totalAmount = data.piecesCount * Number(worker.pieceRate);
@@ -52,7 +54,11 @@ export class HrService {
     });
   }
 
-  async recordAdvance(data: { workerId: string; amount: number; notes?: string }) {
+  async recordAdvance(data: {
+    workerId: string;
+    amount: number;
+    notes?: string;
+  }) {
     return this.prisma.workerAdvance.create({
       data: {
         workerId: data.workerId,

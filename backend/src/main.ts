@@ -21,7 +21,10 @@ export function assertRequiredEnv(
     problems.push(
       'JWT_SECRET مفقود — لا يوجد fallback. انسخ backend/.env.example إلى backend/.env وحدد قيمة عشوائية.',
     );
-  } else if (nodeEnv === 'production' && jwtSecret.length < MIN_JWT_SECRET_LENGTH) {
+  } else if (
+    nodeEnv === 'production' &&
+    jwtSecret.length < MIN_JWT_SECRET_LENGTH
+  ) {
     problems.push(
       `JWT_SECRET أقصر من ${MIN_JWT_SECRET_LENGTH} حرفًا (${jwtSecret.length}) — غير مقبول في الإنتاج.`,
     );
@@ -95,12 +98,14 @@ async function bootstrap() {
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);
-  console.log(`🚀 Garment Factory ERP Backend is running on: http://localhost:${port}`);
+  console.log(
+    `🚀 Garment Factory ERP Backend is running on: http://localhost:${port}`,
+  );
   console.log(`📚 API Docs available at: http://localhost:${port}/api/docs`);
 }
 
 // يُشغَّل bootstrap فقط عند التشغيل المباشر (node dist/main) —
 // يسمح باستيراد assertRequiredEnv في الاختبارات دون إقلاع الخادم
 if (require.main === module) {
-  bootstrap();
+  void bootstrap();
 }

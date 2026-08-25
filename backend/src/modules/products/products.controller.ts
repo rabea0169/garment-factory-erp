@@ -22,7 +22,9 @@ export class ProductsController {
   }
 
   @Get(':id')
-  @ApiOperation({ summary: 'تفاصيل المنتج تشمل مقاساته وألوانه والخامات (BOM)' })
+  @ApiOperation({
+    summary: 'تفاصيل المنتج تشمل مقاساته وألوانه والخامات (BOM)',
+  })
   async getProduct(@Param('id') id: string) {
     return this.productsService.getProductDetails(id);
   }
@@ -30,7 +32,17 @@ export class ProductsController {
   @Post()
   @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة منتج جديد' })
-  async createProduct(@Body() body: any) {
+  async createProduct(
+    @Body()
+    body: {
+      code: string;
+      name: string;
+      category: string;
+      retailPrice: number;
+      wholesalePrice: number;
+      seasonId?: string;
+    },
+  ) {
     return this.productsService.createProduct(body);
   }
 }

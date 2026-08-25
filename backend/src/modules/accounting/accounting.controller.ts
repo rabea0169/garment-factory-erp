@@ -1,7 +1,7 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { UserRole } from '@prisma/client';
+import { AccountType, UserRole, VoucherType } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 
@@ -20,7 +20,16 @@ export class AccountingController {
   @Post('accounts')
   @Roles(UserRole.ACCOUNTANT)
   @ApiOperation({ summary: 'إضافة حساب جديد' })
-  async createAccount(@Body() body: any) {
+  async createAccount(
+    @Body()
+    body: {
+      code: string;
+      name: string;
+      type: AccountType;
+      parentId?: string;
+      isGroup?: boolean;
+    },
+  ) {
     return this.accountingService.createAccount(body);
   }
 
@@ -36,7 +45,13 @@ export class AccountingController {
   @ApiOperation({ summary: 'إنشاء أمر صرف أو قبض جديد' })
   async createVoucher(
     @CurrentUser('id') userId: string,
-    @Body() body: any,
+    @Body()
+    body: {
+      type: VoucherType;
+      amount: number;
+      description: string;
+      reference?: string;
+    },
   ) {
     // P0-04: createdById من الجلسة فقط — أي قيمة واردة في body تُتجاهل
     return this.accountingService.createVoucher(body, userId);

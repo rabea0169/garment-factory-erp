@@ -13,7 +13,10 @@ export class AuthController {
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'تسجيل الدخول للموظفين والإدارة' })
-  @ApiResponse({ status: 200, description: 'تم تسجيل الدخول بنجاح وإرجاع الـ Token' })
+  @ApiResponse({
+    status: 200,
+    description: 'تم تسجيل الدخول بنجاح وإرجاع الـ Token',
+  })
   @ApiResponse({ status: 401, description: 'بيانات الدخول غير صحيحة' })
   async login(@Body() loginDto: LoginDto) {
     return this.authService.login(loginDto);

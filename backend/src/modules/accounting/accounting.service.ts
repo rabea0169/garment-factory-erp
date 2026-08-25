@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { AccountType, VoucherType } from '@prisma/client';
 
 @Injectable()
 export class AccountingService {
@@ -11,7 +12,13 @@ export class AccountingService {
     });
   }
 
-  async createAccount(data: { code: string; name: string; type: any; parentId?: string; isGroup?: boolean }) {
+  async createAccount(data: {
+    code: string;
+    name: string;
+    type: AccountType;
+    parentId?: string;
+    isGroup?: boolean;
+  }) {
     return this.prisma.account.create({
       data: {
         code: data.code,
@@ -31,7 +38,12 @@ export class AccountingService {
   }
 
   async createVoucher(
-    data: { type: any; amount: number; description: string; reference?: string },
+    data: {
+      type: VoucherType;
+      amount: number;
+      description: string;
+      reference?: string;
+    },
     createdById: string,
   ) {
     // P0-04: createdById من الجلسة (يمرره الـ controller من التوكن) — يُتجاهل أي value من body

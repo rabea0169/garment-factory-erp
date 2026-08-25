@@ -28,7 +28,11 @@ export class InventoryController {
     @Param('id') id: string,
     @Body() body: { quantity: number; costPerUnit: number },
   ) {
-    return this.inventoryService.addRawMaterialStock(id, body.quantity, body.costPerUnit);
+    return this.inventoryService.addRawMaterialStock(
+      id,
+      body.quantity,
+      body.costPerUnit,
+    );
   }
 
   @Get('finished-goods')

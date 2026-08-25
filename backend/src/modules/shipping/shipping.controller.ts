@@ -16,7 +16,16 @@ export class ShippingController {
 
   @Post()
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
-  async createShipment(@Body() body: any) {
+  async createShipment(
+    @Body()
+    body: {
+      salesOrderId: string;
+      shippingCompanyId?: string;
+      shippingCost?: number;
+      trackingNumber?: string;
+      notes?: string;
+    },
+  ) {
     return this.shippingService.createShipment(body);
   }
 }

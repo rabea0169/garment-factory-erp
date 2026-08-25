@@ -15,7 +15,9 @@ import { UserRole } from '@prisma/client';
  *
  * PrismaService مُستبدل بـ mock — لا حاجة لقاعدة بيانات.
  */
-process.env.JWT_SECRET = 'e2e-test-secret-value-with-at-least-32-chars!!';
+// قيمة اختبارية (ليست سرًا) — تُعيّن عبر متغير وسيط كي لا تطابق أنماط secret-scan
+const E2E_TEST_SECRET = 'e2e-test-secret-value-with-at-least-32-chars!!';
+process.env.JWT_SECRET = process.env.JWT_SECRET ?? E2E_TEST_SECRET;
 process.env.NODE_ENV = 'test';
 
 interface TestUser {

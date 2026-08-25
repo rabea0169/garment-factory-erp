@@ -19,7 +19,10 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
         'JWT_SECRET غير معرف في البيئة. انسخ backend/.env.example إلى backend/.env وحدد قيمة عشوائية (openssl rand -base64 48). لا يوجد fallback أمني.',
       );
     }
-    if (process.env.NODE_ENV === 'production' && secret.length < MIN_JWT_SECRET_LENGTH) {
+    if (
+      process.env.NODE_ENV === 'production' &&
+      secret.length < MIN_JWT_SECRET_LENGTH
+    ) {
       throw new Error(
         `JWT_SECRET قصير جدًا للإنتاج (${secret.length} حرفًا، الحد الأدنى ${MIN_JWT_SECRET_LENGTH}). استخدم قيمة عشوائية أطول.`,
       );

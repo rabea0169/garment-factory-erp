@@ -1,18 +1,37 @@
-import { Test, TestingModule } from '@nestjs/testing';
+import 'reflect-metadata';
 import { AuthController } from './auth.controller';
+import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
+import { IS_PUBLIC_KEY } from './public.decorator';
+import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 
-describe('AuthController', () => {
+describe('AuthController — الوصول العام والتفويض (GF-0003)', () => {
   let controller: AuthController;
+  let authService: { login: jest.Mock };
 
-  beforeEach(async () => {
-    const module: TestingModule = await Test.createTestingModule({
-      controllers: [AuthController],
-    }).compile();
+  const dto: LoginDto = { email: 'admin@factory.com', password: 'Pass@123' };
 
-    controller = module.get<AuthController>(AuthController);
+  beforeEach(() => {
+    authService = {
+      login: jest
+        .fn()
+        .mockResolvedValue({ access_token: 't', user: { id: 'u-1' } }),
+    };
+    controller = new AuthController(authService as unknown as AuthService);
   });
 
-  it('should be defined', () => {
-    expect(controller).toBeDefined();
+  it('يفوّض تسجيل الدخول إلى الخدمة بالـ DTO كما ورد', async () => {
+    const result = await controller.login(dto);
+    expect(authService.login).toHaveBeenCalledWith(dto);
+    expect(result.access_token).toBe('t');
+  });
+
+  it('مسار login معلّم @Public — يجب أن يبقى عامًا وإلا انكسرت المصادقة كلها', () => {
+    const isPublic = getMethodMetadata<boolean>(
+      IS_PUBLIC_KEY,
+      AuthController.prototype,
+      'login',
+    );
+    expect(isPublic).toBe(true);
   });
 });
