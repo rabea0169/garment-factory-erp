@@ -4,16 +4,39 @@ import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 
+const MIN_JWT_SECRET_LENGTH = 32;
+
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
-    private readonly configService: ConfigService,
+    configService: ConfigService,
     private readonly prisma: PrismaService,
   ) {
+    // fail-closed: لا fallback لسر JWT إطلاقًا (P0-02)
+    const secret = configService.get<string>('JWT_SECRET');
+    if (!secret) {
+      throw new Error(
+        'JWT_SECRET غير معرف في البيئة. انسخ backend/.env.example إلى backend/.env وحدد قيمة عشوائية (openssl rand -base64 48). لا يوجد fallback أمني.',
+      );
+    }
+    if (
+      process.env.NODE_ENV === 'production' &&
+      secret.length < MIN_JWT_SECRET_LENGTH
+    ) {
+      throw new Error(
+        `JWT_SECRET قصير جدًا للإنتاج (${secret.length} حرفًا، الحد الأدنى ${MIN_JWT_SECRET_LENGTH}). استخدم قيمة عشوائية أطول.`,
+      );
+    }
+    if (secret.length < MIN_JWT_SECRET_LENGTH) {
+      console.warn(
+        `[security] JWT_SECRET أقصر من ${MIN_JWT_SECRET_LENGTH} حرفًا — غير مقبول في الإنتاج (فشل إقلاع هناك).`,
+      );
+    }
+
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
-      secretOrKey: configService.get<string>('JWT_SECRET') || 'secret',
+      secretOrKey: secret,
     });
   }
 
@@ -21,11 +44,11 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
     });
-    
+
     if (!user || !user.isActive) {
       throw new UnauthorizedException('المستخدم غير مصرح له بالدخول');
     }
-    
+
     // إزالة كلمة المرور من كائن المستخدم المرجع
     const { password, ...result } = user;
     return result;
