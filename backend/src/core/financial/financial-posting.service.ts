@@ -269,6 +269,9 @@ export class FinancialPostingService {
    * ملاحظة: العكس لا يتعقب بشكل تلقائي الـ side-effects على treasury/customer/
    * supplier. لكل قيد عكسي، يجب على المستدعي تمرير treasuryUpdates/customerUpdates
    * بقيم معكوسة. يمكن لاحقًا بناء دالة عكسية كاملة تُقلب الـ side-effects تلقائيًا.
+   *
+   * A9 (enhanced): يرفض عكس قيد معكوس بالفعل، يُعلِّم الأصلي isReversed=true،
+   * ويربط القيد العكسي بالأصلي عبر reversalOfId.
    */
   async reverseJournalEntry(
     originalEntryId: string,
@@ -286,6 +289,13 @@ export class FinancialPostingService {
     if (original.lines.length === 0) {
       throw new BadRequestException(
         `القيد ${originalEntryId} لا يحوي بنودًا — لا يمكن عكسه`,
+      );
+    }
+    // A9: رفض عكس قيد معكوس بالفعل — يمنع العكس المزدوج (Double reversal).
+    if (original.isReversed) {
+      throw new BadRequestException(
+        `القيد ${original.code} معكوس بالفعل — لا يمكن عكسه مرتين. ` +
+          `راجع القيد العكسي المرتبط عبر reversalOfId.`,
       );
     }
 
@@ -308,6 +318,24 @@ export class FinancialPostingService {
       },
       userId,
     );
+
+    // A9: ربط القيد العكسي بالأصلي + تعليم الأصلي كمعكوس.
+    // ملاحظة: هذه تحديثات منفصلة عن $transaction الخاص بـ postJournalEntry.
+    // فشلها يترك القيد العكسي موجودًا لكن بلا ربط — يُكتشف لاحقًا عبر
+    // journal_entries WHERE reversalOfId IS NULL AND reference LIKE 'REVERSAL-OF-%'.
+    await this.prisma.journalEntry.update({
+      where: { id: reversalEntry.entryId },
+      data: { reversalOfId: original.id },
+    });
+
+    await this.prisma.journalEntry.update({
+      where: { id: original.id },
+      data: {
+        isReversed: true,
+        reversedById: userId,
+        reversedAt: new Date(),
+      },
+    });
 
     return {
       ...reversalEntry,

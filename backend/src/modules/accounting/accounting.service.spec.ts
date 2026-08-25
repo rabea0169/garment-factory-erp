@@ -201,4 +201,56 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
 
     expect(result.code).toMatch(/^VCH-\d{8}-[0-9A-F]{8}$/);
   });
+
+  describe('A9 — Reversal of journal entries', () => {
+    it('delegates to FinancialPostingService.reverseJournalEntry with userId + description', async () => {
+      financial = {
+        ...financial,
+        reverseJournalEntry: jest.fn().mockResolvedValue({
+          entryId: 'je-rev-1',
+          entryCode: 'JE-20260828-ABCD1234',
+          reversedEntryId: 'je-orig-1',
+          reversedEntryCode: 'JE-20260827-XXXX0000',
+        }),
+      };
+      // re-instantiate service with new financial mock
+      const fresh = new AccountingService(
+        prisma as unknown as PrismaService,
+        financial as unknown as FinancialPostingService,
+      );
+
+      await fresh.reverseJournalEntry(
+        'je-orig-1',
+        'user-reverser',
+        'إلغاء قيد بيع بالخطأ',
+      );
+
+      expect(financial.reverseJournalEntry).toHaveBeenCalledWith(
+        'je-orig-1',
+        'user-reverser',
+        'إلغاء قيد بيع بالخطأ',
+      );
+    });
+
+    it('passes undefined description when not provided', async () => {
+      financial = {
+        ...financial,
+        reverseJournalEntry: jest.fn().mockResolvedValue({
+          entryId: 'je-rev-2',
+        }),
+      };
+      const fresh = new AccountingService(
+        prisma as unknown as PrismaService,
+        financial as unknown as FinancialPostingService,
+      );
+
+      await fresh.reverseJournalEntry('je-orig-2', 'user-reverser');
+
+      expect(financial.reverseJournalEntry).toHaveBeenCalledWith(
+        'je-orig-2',
+        'user-reverser',
+        undefined,
+      );
+    });
+  });
 });
