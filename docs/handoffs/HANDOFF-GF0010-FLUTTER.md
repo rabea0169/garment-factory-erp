@@ -3,11 +3,12 @@
 ## الحالة
 
 - **Task ID:** GF-0010
-- **Branch:** `phase2/gf-0010-flutter`
-- **Rebased commits:** `22cf5f8` → `3dc39bf` → `d93852d` → `a300e36` → `3688dcc`
-- **Latest commit:** `3688dcc docs(gf-0010): record green Flutter CI handoff`
+- **Source branch:** `phase2/gf-0010-flutter`
+- **Merged into:** `main` عبر PR #5
+- **Merge commit:** `b714a61`
+- **Source head before merge:** `a45d45a`
 - **Base:** `main` بعد دمج GF-0009 عند `b93ee09`
-- **Status:** تنفيذ العميل مكتمل، وCI أخضر؛ يحتاج مراجعة/دمج بشري
+- **Status:** مدمجة في `main` وCI النهائي أخضر
 - **لا يتضمن:** تعديلات schema أو ملفات Purchasing/GF-0009
 
 ## ما تم تنفيذه
@@ -61,7 +62,7 @@ mobile_app/lib/features/reports/presentation/screens/reports_screen.dart
 
 ## التحقق
 
-تم تنفيذ CI على GitHub للـ commit `907764d` عبر Run `32853456521`، وكانت الوظائف الثلاث ناجحة:
+تم تنفيذ CI على GitHub قبل الدمج عبر Run `32854837431`، ثم أُعيد التحقق على `main` بعد الدمج عبر Run `32855115583`، وكانت الوظائف الثلاث ناجحة:
 
 ```text
 Flutter — Analyze / Test       PASS
@@ -71,7 +72,7 @@ Backend — Prisma/Lint/Build/Tests PASS
 
 نتائج Flutter تضمنت `flutter pub get` و`flutter analyze` و`flutter test` بنجاح.
 
-تم تنفيذ فحوصات Backend على نفس قاعدة GF-0008 دون تغيير، وكانت النتائج:
+تم تنفيذ فحوصات Backend على `main` بعد دمج GF-0009 وGF-0010، وكانت النتائج:
 
 ```text
 prisma generate        PASS
@@ -85,11 +86,9 @@ tsc --noEmit           PASS
 
 في بيئة التنفيذ المحلية لم يكن Flutter SDK مثبتًا، لذلك تم اعتماد GitHub Actions للتحقق التنفيذي من Flutter، ونجحت البوابة فعليًا.
 
-## تعليمات الدمج
+## ما بعد الدمج
 
-تمت إعادة تأسيس هذا الفرع فوق `main` بعد دمج GF-0009، ولا يتضمن تغييرات schema أو Purchasing. يجب فتح Pull Request من `phase2/gf-0010-flutter` إلى `main` بعد التأكد من أن branch protection يرى CI الأخضر.
-
-بعد الدمج يجب اختبار 401 وlogout على جهاز/محاكي حقيقي، لأن اختبار unit المحلي غير متاح بدون Flutter SDK في بيئة التنفيذ المحلية.
+تم الدمج في `main`. يجب اختبار 401 وlogout على جهاز/محاكي حقيقي، لأن اختبار unit المحلي غير متاح بدون Flutter SDK في بيئة التنفيذ المحلية. كما يجب تنفيذ `/auth/me` لاحقًا إذا أُريد التحقق من صلاحية التوكن قبل عرض dashboard.
 
 ## المخاطر المتبقية
 
