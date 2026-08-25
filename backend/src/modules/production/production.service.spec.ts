@@ -27,7 +27,13 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
 
   it('يجلب أوامر التشغيل مع المنتج وتحديثات المراحل', async () => {
     const orders = [
-      { id: 'wo-1', variant: {}, bomVersion: {}, stageUpdates: [] },
+      {
+        id: 'wo-1',
+        variant: {},
+        bomVersion: {},
+        stageUpdates: [],
+        stageRuns: [],
+      },
     ];
     prisma.workOrder.findMany.mockResolvedValue(orders);
 
@@ -41,6 +47,9 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
         variant: { include: { product: true } },
         bomVersion: true,
         stageUpdates: true,
+        stageRuns: {
+          orderBy: { sequence: 'asc' },
+        },
       },
       orderBy: { createdAt: 'desc' },
     });
