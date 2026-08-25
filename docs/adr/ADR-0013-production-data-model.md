@@ -26,7 +26,7 @@
 inputQty = acceptedQty + rejectedQty + wasteQty
 ```
 
-يجب فرضها في service واختبارات السلوك، وإضافة CHECK في migration. لا يكفي Prisma schema لفرض CHECK مخصص في PostgreSQL.
+يجب فرضها في service واختبارات السلوك عند إغلاق المرحلة، وإضافة CHECK مشروط في migration: يسمح السجل غير المكتمل (`PENDING` أو `IN_PROGRESS`) بالبقاء بقيم مخرجات ابتدائية، بينما يمنع السجل `COMPLETED` من الحفظ إلا عند تحقق المعادلة. لا يكفي Prisma schema لفرض CHECK مخصص في PostgreSQL.
 
 ### الاستهلاك
 

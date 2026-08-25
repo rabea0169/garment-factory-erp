@@ -74,7 +74,10 @@ ALTER TABLE "production_stage_runs"
     "wasteQty" >= 0
   ),
   ADD CONSTRAINT "production_stage_runs_quantity_conservation_check"
-  CHECK ("inputQty" = "acceptedQty" + "rejectedQty" + "wasteQty");
+  CHECK (
+    "status" <> 'COMPLETED' OR
+    "inputQty" = "acceptedQty" + "rejectedQty" + "wasteQty"
+  );
 
 CREATE UNIQUE INDEX "production_stage_runs_workOrderId_stage_key"
   ON "production_stage_runs"("workOrderId", "stage");
