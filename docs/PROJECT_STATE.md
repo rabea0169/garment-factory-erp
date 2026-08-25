@@ -58,13 +58,12 @@ Next exact action: تنفيذ GF-0004 وفق بطاقة المهمة في HANDOF
 | Flutter checks | غير مشغّلة في هذه البيئة (لا Flutter SDK مثبت) — مهمة CI |
 | Docker Compose | ⚠️ healthcheck لـ postgres **مكسور** (انظر SECURITY_BASELINE P1-07) |
 
-النتيجة: البناء قابل للتكرار، وحماية GF-0002 مثبتة باختبارات جديدة، لكن **حزمة الاختبارات القديمة ما زالت حمراء** بانتظار GF-0003، وCI secret-scan أحمر بانتظار GF-0006 (docker-compose/README/seed).
+النتيجة بعد GF-0003: كل فحوصات backend خضراء (22 unit suite + 2 e2e + lint + build) وBackend job في CI أخضر بالكامل.
 
-### دليل CI الفعلي (Run #1 — GitHub Actions)
-- الفرع مدفوع إلى GitHub في 2026-08-25 (بعد GF-0002).
-- Backend job: npm ci ✅ → prisma generate ✅ → prisma validate ✅ → **lint ❌** (الأخطاء القديمة الـ 13 — تحقق سجلها: كلها unused/unsafe-any قديمة، لا شيء من ملفات GF-0002).
-- Secret Scan job: ❌ كما هو مقصود — يلتقط كلمات المرور المنشورة (docker-compose/README/seed — نطاق GF-0006).
-- الخلاصة: CI يعمل ويحمي المستودع؛ يخضرّ تدريجيًا مع GF-0003 ثم GF-0006.
+### دليل CI الفعلي
+- **Run #1 (2026-08-25، sha 02ec9cb بعد GF-0002):** backend job فشل في lint (الأخطاء القديمة) + secret-scan فشل (مقصود).
+- **Run #3 (2026-08-25، sha b4ff13f بعد GF-0003):** ✅ **Backend job أخضر بالكامل** — npm ci → prisma generate → validate → **Lint ✅** → **Build ✅** → **Tests ✅**. الوحيد الأحمر: secret-scan (docker-compose/README/seed — نطاق GF-0006 المقصود).
+- الخلاصة: CI يحمي المستودع بالكامل الآن؛ يخضرّ كليًا مع GF-0006.
 
 ## 3. جرد المكونات الفعلي (مقابل ما يعلنه README)
 
