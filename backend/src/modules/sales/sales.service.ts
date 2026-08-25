@@ -20,6 +20,10 @@ import {
   createIdempotencyKey,
   storeIdempotencyResponse,
 } from '../../core/common/idempotency.util';
+import {
+  EGYPT_VAT_RATE,
+  computeVat,
+} from '../../core/financial/chart-of-accounts';
 
 /** نطاقات idempotency لمسارات الـ Sales — واحد لإنشاء أمر بيع، آخر للتأكيد. */
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CREATE = 'sales-order-create';
@@ -174,13 +178,13 @@ export class SalesService {
       );
     }
 
-    let totalAmount = 0;
+    let subtotal = 0;
     const orderItemsData = data.items.map((item) => {
       const variant = variants.find((v) => v.id === item.productVariantId);
       // We will use wholesalePrice or retailPrice. For now, default to retailPrice
       const unitPrice = Number(variant!.product.retailPrice);
       const itemTotal = unitPrice * item.quantity;
-      totalAmount += itemTotal;
+      subtotal += itemTotal;
 
       return {
         productVariantId: item.productVariantId,
@@ -190,8 +194,11 @@ export class SalesService {
       };
     });
 
-    totalAmount -= data.discount;
-    if (totalAmount < 0) totalAmount = 0;
+    // A10: حساب الـ VAT المصري 14% على (subtotal - discount).
+    // taxableBase = subtotal - discount (لا يقل عن 0)
+    // vatAmount = taxableBase × 0.14
+    // totalAmount = taxableBase + vatAmount
+    const { vatAmount, totalAmount } = computeVat(subtotal, data.discount);
 
     // 2. Create the order as DRAFT — داخل $transaction لتخزين idempotency key
     // بنفس اللحظة التزام أمر البيع. هذا يضمن:
@@ -215,6 +222,10 @@ export class SalesService {
             customerId: data.customerId,
             userId,
             paymentType: data.paymentType,
+            // A10: VAT fields + totalAmount (post-VAT)
+            subtotal,
+            vatRate: EGYPT_VAT_RATE,
+            vatAmount,
             totalAmount,
             discount: data.discount,
             status: SalesOrderStatus.DRAFT,

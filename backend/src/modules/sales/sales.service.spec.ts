@@ -116,7 +116,7 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011 + A5/
       );
     });
 
-    it('should calculate totalAmount correctly using DB prices', async () => {
+    it('should calculate totalAmount correctly using DB prices + A10 VAT 14%', async () => {
       await service.createSalesOrder(dto, 'user-1');
 
       const createArgs = (
@@ -126,7 +126,12 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011 + A5/
       ).data;
       expect(createArgs).toEqual(
         expect.objectContaining({
-          totalAmount: 190, // (100 * 2) - 10
+          // A10: VAT 14% on (subtotal - discount) = 14% × (200 - 10) = 26.6
+          // totalAmount = taxableBase + vatAmount = 190 + 26.6 = 216.6
+          subtotal: 200,
+          vatRate: 0.14,
+          vatAmount: 26.6,
+          totalAmount: 216.6, // (100 * 2) - 10 + 14% VAT on 190
           status: SalesOrderStatus.DRAFT,
           userId: 'user-1',
         }),
