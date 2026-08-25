@@ -2,7 +2,7 @@
 
 **تاريخ التقرير:** 25 أغسطس 2026  
 **المستودع:** [rabea0169/garment-factory-erp](https://github.com/rabea0169/garment-factory-erp)  
-**مصدر الحالة:** `origin/main` عند `7e73cf75`، مع مراجعة PR #11 عند `fbd892ba`
+**مصدر الحالة:** `origin/main` عند `7e73cf75`، مع مراجعة PR #11 عند `3e99765`
 
 ## 1. الحكم التنفيذي
 
@@ -15,10 +15,10 @@
 | الفرع الرئيسي | `main` |
 | آخر commit على main | [`7e73cf75`](https://github.com/rabea0169/garment-factory-erp/commit/7e73cf75a61c0e275337d2e604de44453a43342a) |
 | فرع العمل | `phase3/gf0013-schema-design` |
-| آخر commit للفرع | [`fbd892ba`](https://github.com/rabea0169/garment-factory-erp/commit/fbd892baf877e8ed9af860a6ee95c98f9be1a14b) |
+| آخر commit للفرع | [`3e99765`](https://github.com/rabea0169/garment-factory-erp/commit/3e997652d8c12fbd5967625d93ad13c966258d8a) |
 | Pull Request | [#11 — production workflow integration coverage](https://github.com/rabea0169/garment-factory-erp/pull/11) |
 | حالة PR | مفتوح، `MERGEABLE`، غير مدمج |
-| CI الأخضر | [Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157) |
+| CI الأخضر | [Run 32884547465](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884547465) |
 | PR توثيقي سابق | [PR #10](https://github.com/rabea0169/garment-factory-erp/pull/10) ما زال مفتوحًا؛ لا يساوي دمج GF-0013 |
 | الإصدار | `pre-release`، غير معتمد لمؤسسة بعد |
 | حالة working tree | نظيف بعد آخر push |
@@ -55,7 +55,7 @@ Migration GF-0013 additive ولا تحذف جداول أو أعمدة legacy. أ
 
 | البوابة | النتيجة | الدليل الدقيق |
 |---|---|---|
-| Prisma validate/generate | ناجحة | محليًا وداخل Run `32884044157` |
+| Prisma validate/generate | ناجحة | محليًا وداخل Run `32884547465` |
 | Format check | ناجحة | `npm run format:check` محليًا وCI |
 | Typecheck | ناجحة | `npm run typecheck` محليًا وCI |
 | Lint | ناجحة | `npm run lint` محليًا وCI |
@@ -63,9 +63,9 @@ Migration GF-0013 additive ولا تحذف جداول أو أعمدة legacy. أ
 | Unit | ناجحة | `25 suites / 120 tests` |
 | E2E | ناجحة | `2 suites / 36 tests`؛ الاختبارات الحالية mock-backed |
 | Flutter | ناجحة | `flutter analyze` و`flutter test` في CI |
-| Secret Scan | ناجحة | Run `32884044157` |
+| Secret Scan | ناجحة | Run `32884547465` |
 | Migration runtime | ناجحة | `prisma migrate deploy` على PostgreSQL 16 disposable |
-| Real integration | ناجحة | `1 suite / 5 tests` في Run `32884044157` |
+| Real integration | ناجحة | `1 suite / 5 tests` في Run `32884547465` |
 | Local integration | غير منفذة فعليًا | `5 skipped` لغياب Docker/PostgreSQL في sandbox؛ لا تُحسب نجاحًا محليًا |
 
 ## 6. المشكلات والفجوات مرتبة
@@ -91,7 +91,7 @@ Migration GF-0013 additive ولا تحذف جداول أو أعمدة legacy. أ
 ## 8. المراجع
 
 - [PR #11](https://github.com/rabea0169/garment-factory-erp/pull/11)
-- [CI Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157)
+- [CI Run 32884547465](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884547465)
 - [PROJECT_STATE](PROJECT_STATE.md)
 - [HANDOFF-013](handoffs/HANDOFF-013.md)
 - [MASTER_BACKLOG](MASTER_BACKLOG.md)

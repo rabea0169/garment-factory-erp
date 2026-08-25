@@ -9,9 +9,9 @@
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الرئيسي | `main` |
 | آخر commit على main | `7e73cf75` — أساس GF-0013 قبل الدمج |
-| فرع GF-0013 الحالي | `phase3/gf0013-schema-design` عند `fbd892ba` |
+| فرع GF-0013 الحالي | `phase3/gf0013-schema-design` عند `3e99765` |
 | Pull Request الحالي | [PR #11](https://github.com/rabea0169/garment-factory-erp/pull/11) — مفتوح، أخضر، غير مدمج |
-| آخر CI أخضر للفرع | [Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157) |
+| آخر CI أخضر للفرع | [Run 32884547465](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884547465) |
 | الإصدار | لا يوجد إصدار مؤسسي معتمد بعد — `pre-release` |
 | آخر مهمة مكتملة على main | `GF-0012` — Pagination الموحد |
 | حالة GF-0013 | نطاق schema/service/integration مكتمل في PR #11؛ API/RBAC وFlutter وFinishedGood posting مؤجلة |
@@ -50,9 +50,9 @@
 | Unit tests | `25 suites / 120 tests` ناجحة |
 | E2E tests | `2 suites / 36 tests` ناجحة؛ ما زالت mock-backed |
 | Flutter analyze/test | ناجحان في CI |
-| Secret Scan | ناجح في Run `32884044157` |
-| Prisma migrate deploy | ناجح على PostgreSQL 16 disposable في Run `32884044157` |
-| GF-0013 PostgreSQL integration | `1 suite / 5 tests` ناجحة في Run `32884044157` |
+| Secret Scan | ناجح في Run `32884547465` |
+| Prisma migrate deploy | ناجح على PostgreSQL 16 disposable في Run `32884547465` |
+| GF-0013 PostgreSQL integration | `1 suite / 5 tests` ناجحة في Run `32884547465` |
 | Integration محليًا | `5 tests skipped` لأن sandbox لا يحتوي Docker/PostgreSQL؛ لا تُحسب نجاحًا محليًا |
 
 ## الفجوات المعروفة قبل الاستخدام المؤسسي
@@ -77,4 +77,4 @@
 
 ## آخر تحديث توثيقي
 
-تم إنشاء `docs/handoffs/HANDOFF-013.md` وتحديث هذا الملف و`docs/CURRENT_STATUS_2026-08-25.md` بعد نجاح Run `32884044157`. PR #11 ما زال مفتوحًا، وPR #10 التوثيقي السابق ما زال مفتوحًا أيضًا ويجب عدم خلطه ببطاقة GF-0013.
+تم إنشاء `docs/handoffs/HANDOFF-013.md` وتحديث هذا الملف و`docs/CURRENT_STATUS_2026-08-25.md` بعد نجاح Run `32884547465`. PR #11 ما زال مفتوحًا، وPR #10 التوثيقي السابق ما زال مفتوحًا أيضًا ويجب عدم خلطه ببطاقة GF-0013.

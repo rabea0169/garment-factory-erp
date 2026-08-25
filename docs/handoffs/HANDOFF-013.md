@@ -16,10 +16,10 @@
 | الفرع الأساسي | `main` |
 | Base SHA | [`7e73cf75`](https://github.com/rabea0169/garment-factory-erp/commit/7e73cf75a61c0e275337d2e604de44453a43342a) |
 | فرع العمل | `phase3/gf0013-schema-design` |
-| Head SHA | [`fbd892ba`](https://github.com/rabea0169/garment-factory-erp/commit/fbd892baf877e8ed9af860a6ee95c98f9be1a14b) |
+| Head SHA | [`3e99765`](https://github.com/rabea0169/garment-factory-erp/commit/3e997652d8c12fbd5967625d93ad13c966258d8a) |
 | Pull Request | [#11](https://github.com/rabea0169/garment-factory-erp/pull/11) |
 | حالة PR | مفتوح، `MERGEABLE`، غير مدمج |
-| CI الأخضر | [Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157) |
+| CI الأخضر | [Run 32884547465](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884547465) |
 | PR توثيق سابق مفتوح | [PR #10](https://github.com/rabea0169/garment-factory-erp/pull/10) — لا تخلطه مع PR #11 |
 | حالة working tree عند التسليم | نظيف بعد دفع آخر commit |
 
@@ -71,11 +71,11 @@ Migration `backend/prisma/migrations/20260825150000_gf_0013_production_workflow/
 | Lint | `npm run lint` | ناجحة | لا أخطاء |
 | Build | `npm run build` | ناجحة | Backend يبنى |
 | Unit tests | محليًا وCI | `25 suites / 120 tests` ناجحة | تستمر اختبارات الوحدات السابقة |
-| E2E tests | Run `32884044157` | `2 suites / 36 tests` ناجحة | ما زالت mock-backed كما هو موثق |
-| Flutter | Run `32884044157` | `analyze` و`test` ناجحان | لا تغيير Flutter في هذا PR |
-| Secret Scan | Run `32884044157` | ناجحة | مثال URI الآمن لا يطابق النمط |
-| Migration deploy | Run `32884044157` | ناجح | PostgreSQL 16 نظيفة |
-| Real PostgreSQL integration | Run `32884044157` | `1 suite / 5 tests` ناجحة | تنفيذ حقيقي بلا Prisma mock |
+| E2E tests | Run `32884547465` | `2 suites / 36 tests` ناجحة | ما زالت mock-backed كما هو موثق |
+| Flutter | Run `32884547465` | `analyze` و`test` ناجحان | لا تغيير Flutter في هذا PR |
+| Secret Scan | Run `32884547465` | ناجحة | مثال URI الآمن لا يطابق النمط |
+| Migration deploy | Run `32884547465` | ناجح | PostgreSQL 16 نظيفة |
+| Real PostgreSQL integration | Run `32884547465` | `1 suite / 5 tests` ناجحة | تنفيذ حقيقي بلا Prisma mock |
 | Local integration | `npm run test:integration` | `5 tests skipped` | Docker/PostgreSQL غير متاح في sandbox، لذلك لا تُنسب هذه النتيجة إلى نجاح محلي |
 
 ## 7. القيود والمخاطر المفتوحة
@@ -97,7 +97,7 @@ Migration `backend/prisma/migrations/20260825150000_gf_0013_production_workflow/
 ## 9. الروابط المرجعية
 
 - [PR #11](https://github.com/rabea0169/garment-factory-erp/pull/11)
-- [CI Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157)
+- [CI Run 32884547465](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884547465)
 - [PROJECT_STATE](../PROJECT_STATE.md)
 - [MASTER_BACKLOG](../MASTER_BACKLOG.md)
 - [ADR-0013](../adr/ADR-0013-production-data-model.md)
