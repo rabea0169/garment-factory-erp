@@ -11,18 +11,18 @@ class SpeechService {
     return _isInitialized;
   }
 
-  void startListening(Function(String) onResult) async {
+  Future<void> startListening(Function(String) onResult) async {
     if (await init()) {
-      _speechToText.listen(
+      await _speechToText.listen(
         onResult: (result) {
           onResult(result.recognizedWords);
         },
-        localeId: 'ar_SA', // تحديد اللغة العربية
+        options: const SpeechListenOptions(localeId: 'ar_SA'),
       );
     }
   }
 
-  void stopListening() {
-    _speechToText.stop();
+  Future<void> stopListening() async {
+    await _speechToText.stop();
   }
 }
