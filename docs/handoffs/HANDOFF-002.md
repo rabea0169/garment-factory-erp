@@ -50,7 +50,7 @@
 - CI secret-scan يبقى أحمر على `docker-compose.yml`/`README.md`/`seed.ts` (كلمات مرور قديمة منشورة) — عن قصد حتى GF-0006.
 - `app.e2e-spec.ts` القديم يفشل بلا DB (كان كذلك قبل GF-0002) — يُعالج في GF-0003 مع بقية القوالب.
 - تغيير fileMode البيئي (100644→100755) ظهر على كل الملفات في بيئة العمل — عولج بـ `git config core.fileMode false` محليًا (لا يُدفع إلى Git).
-- **الدفع إلى GitHub لم يتم**: بيئة العمل بلا صلاحيات دفع — نفّذ يدويًا: `git push -u origin stabilization/baseline-and-security`.
+- **الدفع إلى GitHub تم بنجاح (2026-08-25)**: الفرع `stabilization/baseline-and-security` مدفوع، وCI Run #1 اشتغل فعليًا: prisma generate/validate ✅، lint ❌ (الأخطاء القديمة فقط — تحقق السجل)، secret-scan ❌ (docker-compose/README/seed — مقصود حتى GF-0006). الأدلة في `PROJECT_STATE.md §2`.
 
 ## Not Done
 - P0-05 (DTOs لكل مسارات الكتابة) — GF-0004.

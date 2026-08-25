@@ -10,7 +10,7 @@ Current release: لا يوجد إصدار معتمد بعد (pre-release)
 Last completed phase: المرحلة 1 جزئيًا — GF-0002 منجزة (حماية fail-closed مفعّلة ومختبرة)
 Active task: GF-0003 — إصلاح الاختبارات الـ 18 الفاشلة والـ lint
 Blocked tasks: لا شيء محظور تقنيًا؛ بقية المهام مشروطة بعبور بوابة G1 (متبقٍ: اختبارات خضراء)
-Known failing checks: 18 suite فاشلة (قوالب قديمة — GF-0003) + lint 16 خطأ قديمًا (GF-0003) + CI secret-scan أحمر على docker-compose/README/seed (GF-0006) + app.e2e-spec يحتاج DB
+Known failing checks: CI Run #1 على GitHub (2026-08-25، sha 02ec9cb) مثبت: lint ❌ (أخطاء قديمة — GF-0003) + secret-scan ❌ (docker-compose/README/seed — GF-0006)؛ prisma generate/validate ✅ في CI
 Database migration state: migration واحدة فقط مطبقة (init 20260823183624)؛ لا توجد بيئة إنتاج
 Current API version: 1.0 (غير مقفل — العقد غير مستقر بعد)
 Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005 (مكتوبة داخل الكود، ليست من environment — GF-0010)
@@ -59,6 +59,12 @@ Next exact action: تنفيذ GF-0003 وفق بطاقة المهمة في HANDOF
 | Docker Compose | ⚠️ healthcheck لـ postgres **مكسور** (انظر SECURITY_BASELINE P1-07) |
 
 النتيجة: البناء قابل للتكرار، وحماية GF-0002 مثبتة باختبارات جديدة، لكن **حزمة الاختبارات القديمة ما زالت حمراء** بانتظار GF-0003، وCI secret-scan أحمر بانتظار GF-0006 (docker-compose/README/seed).
+
+### دليل CI الفعلي (Run #1 — GitHub Actions)
+- الفرع مدفوع إلى GitHub في 2026-08-25 (بعد GF-0002).
+- Backend job: npm ci ✅ → prisma generate ✅ → prisma validate ✅ → **lint ❌** (الأخطاء القديمة الـ 13 — تحقق سجلها: كلها unused/unsafe-any قديمة، لا شيء من ملفات GF-0002).
+- Secret Scan job: ❌ كما هو مقصود — يلتقط كلمات المرور المنشورة (docker-compose/README/seed — نطاق GF-0006).
+- الخلاصة: CI يعمل ويحمي المستودع؛ يخضرّ تدريجيًا مع GF-0003 ثم GF-0006.
 
 ## 3. جرد المكونات الفعلي (مقابل ما يعلنه README)
 
