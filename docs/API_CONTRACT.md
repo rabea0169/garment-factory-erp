@@ -111,22 +111,50 @@
 3. أي مسار جديد يُضاف لاحقًا **محمي افتراضيًا** — لا حاجة لتذكر الحماية؛ فقط أضف `@Public()` إن كان عامًا فعلًا (وبأقصى تضييق).
 4. مصادقة الإقلاع fail-closed: غياب `JWT_SECRET`/`DATABASE_URL` (وفي الإنتاج: سر <32 حرفًا أو CORS مفتوح) → فشل إقلاع فوري.
 
+## عقد Pagination الموحد (GF-0012)
+
+كل endpoint يعيد قائمة يجب أن يستخدم query parameters التالية ما لم يُذكر استثناء صريح:
+
+| Parameter | Default | Limit | Validation |
+|---|---:|---:|---|
+| `page` | 1 | — | integer >= 1 |
+| `limit` | 20 | 100 | integer between 1 and 100 |
+
+شكل الاستجابة الموحد هو:
+
+```json
+{
+  "data": [],
+  "meta": {
+    "total": 0,
+    "page": 1,
+    "pageSize": 20,
+    "totalPages": 0,
+    "hasNextPage": false,
+    "hasPreviousPage": false
+  }
+}
+```
+
+تطبّق القوائم الحالية هذا العقد على المنتجات، المواسم، الخامات، المخازن، ledger، المنتجات التامة، أوامر التشغيل، أوامر الشراء، العملاء، أوامر البيع، العمال، الجودة، الشحن، الحسابات، والسندات. أما endpoints الملخصات والتفاصيل المفردة فلا تستخدم pagination.
+
 ## ثغرات العقد المتبقية (تُغلق تباعًا)
 
 1. **لا endpoint للـ Dashboard/Reports** رغم أن Flutter يطلب `/dashboard/stats` (P1-05 — GF-0019).
-2. **لا pagination** في أي قائمة (P1-10 — GF-0012).
-3. ~~**لا DTOs** في معظم مسارات الكتابة~~ — ✅ **أُغلقت في GF-0004**: 13 DTO مع class-validator مفعّلة ومختبرة (19 اختبار 400).
-4. **لا معالج أخطاء موحد** — أخطاء Prisma تتسرب بتفاصيلها (P2-05).
-5. Flutter `ApiClient` لا يضيف التوكن للطلبات بعد (P1-04 — GF-0010) — الحماية جاهزة server-side.
-6. **قاعدة المجال المؤجلة**: `checked = passed + rejected` في فحص الجودة تُفرض في GF-0014 (موثقة في DOMAIN_GLOSSARY رقم 3) — GF-0004 غطى صحة المدخلات فقط.
+2. ~~**لا pagination** في القوائم~~ — ✅ **أُغلقت في GF-0012** بعقد موحد واختبارات حدودية.
+3. ~~**لا DTOs** في معظم مسارات الكتابة~~ — ✅ **أُغلقت في GF-0004**.
+4. **لا معالج أخطاء موحد** — أخطاء Prisma قد تتسرب بتفاصيلها (P2-05).
+5. **قاعدة المجال المؤجلة**: `checked = passed + rejected` في فحص الجودة تُفرض في GF-0014.
 
 ## أمثلة Payloads الصحيحة (GF-0004)
+
+> **تنبيه:** أمثلة القوائم تستخدم `GET /path?page=1&limit=20` وتعيد العقد الموحد أعلاه. سعر بند البيع لا يُرسل من العميل؛ الخادم يقرأ السعر من المنتج.
 
 ```jsonc
 // POST /sales/orders
 {
   "customerId": "uuid", "paymentType": "CASH", "discount": 0,
-  "items": [{ "productVariantId": "uuid", "quantity": 2, "unitPrice": 100 }]
+  "items": [{ "productVariantId": "uuid", "quantity": 2 }]
 }
 // POST /accounting/vouchers  { "type": "PAYMENT", "amount": 500, "description": "صرف نثريات" }
 // POST /production/work-orders  { "productId": "uuid", "quantity": 100 }

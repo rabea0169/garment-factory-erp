@@ -686,7 +686,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
 
       const result = await service.getWarehouses({});
 
-      expect((result as any).data || result).toEqual(warehouses);
+      expect(result.data).toEqual(warehouses);
       expect(prisma.warehouse.findMany).toHaveBeenCalledWith({
         skip: 0,
         take: 20,
@@ -759,7 +759,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         to: '2026-08-31T23:59:59Z',
       });
 
-      expect((result as any).data || result).toEqual(entries);
+      expect(result.data).toEqual(entries);
       expect(prisma.stockLedgerEntry.findMany).toHaveBeenCalledWith({
         where: {
           rawMaterialId: 'rm-1',
@@ -802,7 +802,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
 
       const result = await service.getAllRawMaterials({});
 
-      expect((result as any).data || result).toEqual(materials);
+      expect(result.data).toEqual(materials);
       expect(prisma.rawMaterial.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { supplier: true },
@@ -829,7 +829,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
 
       const result = await service.getAllFinishedGoods({});
 
-      expect((result as any).data || result).toEqual(goods);
+      expect(result.data).toEqual(goods);
       expect(prisma.finishedGood.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { variant: { include: { product: true } } },
@@ -848,7 +848,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
 
       const result = await service.getDashboardSummary();
 
-      expect((result as any).data || result).toEqual({
+      expect(result).toEqual({
         totalMaterials: 10,
         lowStockMaterials: 2,
         totalFinishedGoodsTypes: 4,

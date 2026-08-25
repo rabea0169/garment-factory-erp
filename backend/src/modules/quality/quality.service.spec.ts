@@ -17,10 +17,11 @@ describe('QualityService — فحوصات الجودة (GF-0003)', () => {
       { id: 'qc-1', checkedQty: 100, passedQty: 95, rejectedQty: 5 },
     ];
     prisma.qualityCheck.findMany.mockResolvedValue(checks);
+    prisma.qualityCheck.count.mockResolvedValue(checks.length);
 
     const result = await service.getQualityChecks();
 
-    expect(result).toEqual(checks);
+    expect(result.data).toEqual(checks);
     expect(prisma.qualityCheck.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { checkedAt: 'desc' },

@@ -1,6 +1,5 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { CreateProductDto } from './dto/create-product.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
@@ -8,10 +7,22 @@ import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAllSeasons() {
-    return this.prisma.season.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+  async getAllSeasons(pagination: PaginationDto = new PaginationDto()) {
+    const page = pagination.page ?? 1;
+    const pageSize = pagination.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const options = {
+      orderBy: { createdAt: 'desc' } as const,
+      skip,
+      take: pageSize,
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.season.findMany(options),
+      this.prisma.season.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, pageSize);
   }
 
   async getAllProducts(pagination: PaginationDto) {

@@ -10,7 +10,7 @@ class ProductionCubit extends Cubit<ProductionState> {
     try {
       final dio = ApiClient.instance.dio;
       final response = await dio.get('/production/work-orders');
-      emit(ProductionLoaded(response.data));
+      emit(ProductionLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(ProductionError('حدث خطأ أثناء تحميل أوامر التشغيل: $e'));
     }

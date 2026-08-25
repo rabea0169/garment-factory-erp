@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, Query } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -6,6 +6,7 @@ import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateAccountDto } from './dto/create-account.dto';
 import { CreateVoucherDto } from './dto/create-voucher.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Accounting (الحسابات والمالية)')
 @Controller('accounting')
@@ -15,8 +16,8 @@ export class AccountingController {
   @Get('accounts')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'شجرة الحسابات' })
-  async getAccounts() {
-    return this.accountingService.getChartOfAccounts();
+  async getAccounts(@Query() pagination: PaginationDto) {
+    return this.accountingService.getChartOfAccounts(pagination);
   }
 
   @Post('accounts')
@@ -29,8 +30,8 @@ export class AccountingController {
   @Get('vouchers')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'أوامر الصرف والقبض' })
-  async getVouchers() {
-    return this.accountingService.getVouchers();
+  async getVouchers(@Query() pagination: PaginationDto) {
+    return this.accountingService.getVouchers(pagination);
   }
 
   @Post('vouchers')

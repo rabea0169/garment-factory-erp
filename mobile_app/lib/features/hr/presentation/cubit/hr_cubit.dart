@@ -10,7 +10,7 @@ class HrCubit extends Cubit<HrState> {
     try {
       final dio = ApiClient.instance.dio;
       final response = await dio.get('/hr/workers');
-      emit(HrLoaded(response.data));
+      emit(HrLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(HrError('حدث خطأ أثناء تحميل بيانات العمال: $e'));
     }

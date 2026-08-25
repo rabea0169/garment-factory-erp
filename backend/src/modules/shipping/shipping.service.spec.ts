@@ -14,10 +14,11 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
   it('يجلب الشحنات مع أمر البيع والعميل', async () => {
     const shipments = [{ id: 'sh-1', salesOrder: { customer: {} } }];
     prisma.shipment.findMany.mockResolvedValue(shipments);
+    prisma.shipment.count.mockResolvedValue(shipments.length);
 
     const result = await service.getShipments();
 
-    expect(result).toEqual(shipments);
+    expect(result.data).toEqual(shipments);
     expect(prisma.shipment.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         include: { salesOrder: { include: { customer: true } } },

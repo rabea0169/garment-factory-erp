@@ -1,14 +1,28 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 @Injectable()
 export class HrService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAllWorkers() {
-    return this.prisma.worker.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+  async getAllWorkers(pagination: PaginationDto = new PaginationDto()) {
+    const page = pagination.page ?? 1;
+    const pageSize = pagination.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const options = {
+      orderBy: { createdAt: 'desc' } as const,
+      skip,
+      take: pageSize,
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.worker.findMany(options),
+      this.prisma.worker.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, pageSize);
   }
 
   async getWorkerDetails(id: string) {

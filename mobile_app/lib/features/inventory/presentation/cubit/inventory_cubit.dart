@@ -20,9 +20,9 @@ class InventoryCubit extends Cubit<InventoryState> {
       ]);
 
       emit(InventoryLoaded(
-        rawMaterials: responses[0].data,
-        finishedGoods: responses[1].data,
-        lowStockMaterials: responses[2].data,
+        rawMaterials: ApiClient.extractPaginatedData(responses[0].data),
+        finishedGoods: ApiClient.extractPaginatedData(responses[1].data),
+        lowStockMaterials: ApiClient.extractPaginatedData(responses[2].data),
       ));
     } catch (e) {
       emit(InventoryError('حدث خطأ أثناء تحميل بيانات المخزون: $e'));

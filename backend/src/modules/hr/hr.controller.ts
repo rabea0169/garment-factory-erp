@@ -1,10 +1,11 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { HrService } from './hr.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { RecordProductionDto } from './dto/record-production.dto';
 import { CreateAdvanceDto } from './dto/create-advance.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('HR (الموارد البشرية والعمال)')
 @Controller('hr')
@@ -13,8 +14,8 @@ export class HrController {
 
   @Get('workers')
   @ApiOperation({ summary: 'قائمة جميع العمال' })
-  async getWorkers() {
-    return this.hrService.getAllWorkers();
+  async getWorkers(@Query() pagination: PaginationDto = new PaginationDto()) {
+    return this.hrService.getAllWorkers(pagination);
   }
 
   @Get('workers/:id')
