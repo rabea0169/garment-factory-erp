@@ -37,9 +37,13 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
       items: [{ productVariantId: 'v-1', quantity: 2 }],
     } as unknown as CreateSalesOrderDto;
 
-    await controller.createOrder('user-1', body);
+    await controller.createOrder('user-1', body, undefined);
 
-    expect(service.createSalesOrder).toHaveBeenCalledWith(body, 'user-1');
+    expect(service.createSalesOrder).toHaveBeenCalledWith(
+      body,
+      'user-1',
+      undefined,
+    );
   });
 
   it('تأكيد أمر البيع يتطلب صلاحيات CASHIER أو GENERAL_MANAGER', () => {
@@ -52,7 +56,11 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
   });
 
   it('يمرر المعرف userId لتأكيد الأمر', async () => {
-    await controller.confirmOrder('so-1', 'user-1');
-    expect(service.confirmOrder).toHaveBeenCalledWith('so-1', 'user-1');
+    await controller.confirmOrder('so-1', 'user-1', undefined);
+    expect(service.confirmOrder).toHaveBeenCalledWith(
+      'so-1',
+      'user-1',
+      undefined,
+    );
   });
 });

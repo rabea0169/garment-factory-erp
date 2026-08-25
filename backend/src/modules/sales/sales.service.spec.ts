@@ -9,6 +9,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { generateDocumentCode } from '../../core/common/codes.util';
+import { computeRequestHash } from '../../core/common/idempotency.util';
 
 describe('SalesService — العملاء وأوامر البيع (GF-0011 + A5/A7/B1)', () => {
   let service: SalesService;
@@ -109,6 +110,10 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011 + A5/
       ]);
       prisma.finishedGood.findFirst.mockResolvedValue({ quantity: 10 });
       prisma.salesOrder.create.mockResolvedValue({ id: 'so-1' });
+      // A8: createSalesOrder wraps salesOrder.create inside $transaction now.
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => Promise<unknown>) => cb(prisma),
+      );
     });
 
     it('should calculate totalAmount correctly using DB prices', async () => {
@@ -270,6 +275,213 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011 + A5/
       const b = generateDocumentCode('SO');
       expect(a).not.toBe(b);
       expect(a).toMatch(/^SO-\d{8}-[0-9A-F]{8}$/);
+    });
+  });
+
+  describe('A8: Idempotency-Key deduplication', () => {
+    const dto = {
+      customerId: 'c-1',
+      paymentType: PaymentType.CASH,
+      discount: 0,
+      items: [{ productVariantId: 'v-1', quantity: 1 }],
+    };
+
+    beforeEach(() => {
+      prisma.productVariant.findMany.mockResolvedValue([
+        { id: 'v-1', product: { retailPrice: 100 } },
+      ]);
+      prisma.finishedGood.findFirst.mockResolvedValue({ quantity: 10 });
+      prisma.salesOrder.create.mockResolvedValue({ id: 'so-1' });
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => Promise<unknown>) => cb(prisma),
+      );
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null); // first use
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    });
+
+    it('createSalesOrder: first request with key creates idempotency record + stores response', async () => {
+      const expectedHash = computeRequestHash({
+        operation: 'sales-order-create',
+        userId: 'user-1',
+        customerId: 'c-1',
+        paymentType: 'CASH',
+        discount: 0,
+        items: [{ productVariantId: 'v-1', quantity: 1 }],
+      });
+      await service.createSalesOrder(dto, 'user-1', 'idem-key-1');
+
+      // createIdempotencyKey called inside tx
+      expect(prisma.idempotencyKey.create).toHaveBeenCalledWith({
+        data: {
+          key: 'idem-key-1',
+          scope: 'sales-order-create',
+          requestHash: expectedHash,
+        },
+        select: { id: true },
+      });
+      // storeIdempotencyResponse called inside tx
+      expect(prisma.idempotencyKey.update).toHaveBeenCalledWith({
+        where: { key: 'idem-key-1' },
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        data: { response: expect.objectContaining({ id: 'so-1' }) },
+      });
+    });
+
+    it('createSalesOrder: second call with same key replays stored response (no new order)', async () => {
+      // Simulate the second call: idempotencyKey.findUnique returns existing record with response
+      const storedOrder = { id: 'so-1', code: 'SO-20260101-ABCD1234' };
+
+      // Compute the same hash the service will compute
+      const expectedHash = computeRequestHash({
+        operation: 'sales-order-create',
+        userId: 'user-1',
+        customerId: 'c-1',
+        paymentType: 'CASH',
+        discount: 0,
+        items: [{ productVariantId: 'v-1', quantity: 1 }],
+      });
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'idem-key-1',
+        scope: 'sales-order-create',
+        requestHash: expectedHash,
+        response: storedOrder,
+      });
+
+      // Mock create to throw if called (proving no new order is created)
+      prisma.salesOrder.create.mockImplementation(() => {
+        throw new Error('should not create a new order on replay');
+      });
+
+      const result = (await service.createSalesOrder(
+        dto,
+        'user-1',
+        'idem-key-1',
+      )) as { id: string; replayed?: boolean };
+
+      expect(result.id).toBe('so-1');
+      expect(result.replayed).toBe(true);
+      expect(prisma.salesOrder.create).not.toHaveBeenCalled();
+    });
+
+    it('createSalesOrder: same key with different content throws ConflictException (409)', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'idem-key-1',
+        scope: 'sales-order-create',
+        requestHash: 'different-hash-xxx',
+        response: null,
+      });
+
+      await expect(
+        service.createSalesOrder(dto, 'user-1', 'idem-key-1'),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.salesOrder.create).not.toHaveBeenCalled();
+    });
+
+    it('createSalesOrder: P2002 unique violation on idempotency_keys triggers replay', async () => {
+      // First call: idempotencyKey.create throws P2002 (race-loser)
+      const prismaP2002 = Object.assign(new Error('Unique constraint failed'), {
+        code: 'P2002',
+        meta: { target: ['idempotency_keys_key_key'] },
+      });
+      prisma.idempotencyKey.create.mockRejectedValue(prismaP2002);
+
+      // After P2002, service retries tryReplay — make the second findUnique return a stored response
+      const expectedHash = computeRequestHash({
+        operation: 'sales-order-create',
+        userId: 'user-1',
+        customerId: 'c-1',
+        paymentType: 'CASH',
+        discount: 0,
+        items: [{ productVariantId: 'v-1', quantity: 1 }],
+      });
+      prisma.idempotencyKey.findUnique
+        .mockResolvedValueOnce(null) // initial replay check
+        .mockResolvedValueOnce({
+          // race-recovery replay
+          key: 'idem-key-1',
+          scope: 'sales-order-create',
+          requestHash: expectedHash,
+          response: { id: 'so-1', code: 'SO-X' },
+        });
+
+      const result = (await service.createSalesOrder(
+        dto,
+        'user-1',
+        'idem-key-1',
+      )) as { id: string; replayed?: boolean };
+
+      expect(result.id).toBe('so-1');
+      expect(result.replayed).toBe(true);
+    });
+
+    it('confirmOrder: idempotency key on confirmation prevents double-charge', async () => {
+      const expectedHash = computeRequestHash({
+        operation: 'sales-order-confirm',
+        orderId: 'so-1',
+        userId: 'user-1',
+      });
+      prisma.salesOrder.findUnique.mockResolvedValue({
+        id: 'so-1',
+        code: 'SO-X',
+        status: SalesOrderStatus.DRAFT,
+        items: [{ productVariantId: 'v-1', quantity: 1 }],
+      });
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+      prisma.finishedGood.findFirst.mockResolvedValue({
+        id: 'fg-1',
+        quantity: 10,
+      });
+      prisma.finishedGood.updateMany.mockResolvedValue({ count: 1 });
+      prisma.finishedGood.findUnique.mockResolvedValue({ quantity: 9 });
+      prisma.salesOrder.update.mockResolvedValue({ id: 'so-1', code: 'SO-X' });
+      prisma.stockLedgerEntry.create.mockResolvedValue({});
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-2' });
+
+      await service.confirmOrder('so-1', 'user-1', 'idem-confirm-1');
+
+      // Should create idempotency record inside tx
+      expect(prisma.idempotencyKey.create).toHaveBeenCalledWith({
+        data: {
+          key: 'idem-confirm-1',
+          scope: 'sales-order-confirm',
+          requestHash: expectedHash,
+        },
+        select: { id: true },
+      });
+      // Should store response on idempotency key
+      expect(prisma.idempotencyKey.update).toHaveBeenCalledWith({
+        where: { key: 'idem-confirm-1' },
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+        data: { response: expect.objectContaining({ id: 'so-1' }) },
+      });
+    });
+
+    it('confirmOrder: same key on already-confirmed order replays without re-decrementing', async () => {
+      const expectedHash = computeRequestHash({
+        operation: 'sales-order-confirm',
+        orderId: 'so-1',
+        userId: 'user-1',
+      });
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'idem-confirm-1',
+        scope: 'sales-order-confirm',
+        requestHash: expectedHash,
+        response: { id: 'so-1', code: 'SO-X' },
+      });
+
+      const result = (await service.confirmOrder(
+        'so-1',
+        'user-1',
+        'idem-confirm-1',
+      )) as { id: string; replayed?: boolean };
+
+      expect(result.id).toBe('so-1');
+      expect(result.replayed).toBe(true);
+      // Must NOT call findUnique on salesOrder (no DB read)
+      expect(prisma.salesOrder.findUnique).not.toHaveBeenCalled();
+      // Must NOT decrement stock again
+      expect(prisma.finishedGood.updateMany).not.toHaveBeenCalled();
     });
   });
 });
