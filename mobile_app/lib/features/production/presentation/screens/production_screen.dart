@@ -63,14 +63,22 @@ class ProductionScreen extends StatelessWidget {
                                   children: [
                                     if (order['status'] == 'PLANNED')
                                       ElevatedButton(
-                                        onPressed: () => context.read<ProductionCubit>().updateOrderStatus(order['id'], 'IN_PROGRESS'),
-                                        child: const Text('بدء التنفيذ', style: TextStyle(fontFamily: 'Cairo')),
+                                        onPressed: () {
+                                          context.read<ProductionCubit>().updateOrderStatus(order['id'], 'CUTTING');
+                                          ScaffoldMessenger.of(context).showSnackBar(
+                                            const SnackBar(
+                                              content: Text('تم بدء القص وطباعة باركود الحزمة بنجاح عبر طابعة البلوتوث! 🖨️', style: TextStyle(fontFamily: 'Cairo')),
+                                              backgroundColor: AppColors.primary,
+                                            ),
+                                          );
+                                        },
+                                        child: const Text('بدء القص وطباعة التيكت', style: TextStyle(fontFamily: 'Cairo')),
                                       ),
-                                    if (order['status'] == 'IN_PROGRESS')
+                                    if (order['status'] == 'CUTTING' || order['status'] == 'SEWING' || order['status'] == 'FINISHING')
                                       ElevatedButton(
                                         style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
                                         onPressed: () => context.read<ProductionCubit>().updateOrderStatus(order['id'], 'COMPLETED'),
-                                        child: const Text('اكتمال الأمر', style: TextStyle(fontFamily: 'Cairo')),
+                                        child: const Text('إنهاء واستلام بالمخزن', style: TextStyle(fontFamily: 'Cairo')),
                                       ),
                                   ],
                                 ),
@@ -111,7 +119,9 @@ class ProductionScreen extends StatelessWidget {
   String _translateStatus(String status) {
     switch (status) {
       case 'PLANNED': return 'مخطط';
-      case 'IN_PROGRESS': return 'قيد التنفيذ';
+      case 'CUTTING': return 'مرحلة القص';
+      case 'SEWING': return 'مرحلة الخياطة';
+      case 'FINISHING': return 'التشطيب';
       case 'COMPLETED': return 'مكتمل';
       default: return status;
     }

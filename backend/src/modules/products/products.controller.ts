@@ -30,4 +30,22 @@ export class ProductsController {
   async createProduct(@Body() body: any) {
     return this.productsService.createProduct(body);
   }
+
+  @Post(':id/variants')
+  @ApiOperation({ summary: 'إضافة مقاس/لون جديد للمنتج' })
+  async createVariant(@Param('id') id: string, @Body() body: any) {
+    return this.productsService.createVariant(id, body.size, body.color);
+  }
+
+  @Post(':id/bom')
+  @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
+  async addBomItem(@Param('id') id: string, @Body() body: any) {
+    return this.productsService.addBomItem(id, body.rawMaterialId, body.quantity, body.unit);
+  }
+
+  @Post('bom/:bomId/delete') // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
+  @ApiOperation({ summary: 'حذف مادة من شجرة التصنيع' })
+  async deleteBomItem(@Param('bomId') bomId: string) {
+    return this.productsService.deleteBomItem(bomId);
+  }
 }

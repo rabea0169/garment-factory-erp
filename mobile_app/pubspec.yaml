@@ -57,7 +57,7 @@ dependencies:
   blue_thermal_printer: ^1.2.3
 
   # Image & Camera
-  image_picker: ^1.1.2
+  image_picker: ^1.2.3
   cached_network_image: ^3.3.1
 
   # UI Utilities

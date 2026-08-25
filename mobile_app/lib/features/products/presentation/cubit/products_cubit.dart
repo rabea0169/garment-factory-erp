@@ -15,4 +15,32 @@ class ProductsCubit extends Cubit<ProductsState> {
       emit(ProductsError('حدث خطأ أثناء تحميل المنتجات: $e'));
     }
   }
+
+  Future<void> createFullProduct({
+    required Map<String, dynamic> productData,
+    required List<Map<String, dynamic>> variants,
+    required List<Map<String, dynamic>> bomItems,
+  }) async {
+    try {
+      final dio = ApiClient.instance.dio;
+      // 1. Create Product
+      final pRes = await dio.post('/products', data: productData);
+      final productId = pRes.data['id'];
+
+      // 2. Create Variants
+      for (var v in variants) {
+        await dio.post('/products/$productId/variants', data: v);
+      }
+
+      // 3. Add BOM Items
+      for (var b in bomItems) {
+        await dio.post('/products/$productId/bom', data: b);
+      }
+
+      // Refresh list
+      fetchProducts();
+    } catch (e) {
+      emit(ProductsError('فشل في إضافة المنتج وتفاصيله'));
+    }
+  }
 }

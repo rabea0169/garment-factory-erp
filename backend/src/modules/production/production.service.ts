@@ -40,7 +40,31 @@ export class ProductionService {
     const order = await this.prisma.workOrder.update({
       where: { id },
       data: { status },
+      include: { product: { include: { bomItems: true } } }
     });
+
+    if (status === WorkOrderStatus.CUTTING) {
+      // Deduct materials based on BOM
+      for (const bom of order.product.bomItems) {
+        const totalNeeded = Number(bom.quantity) * order.quantity;
+        
+        await this.prisma.rawMaterial.update({
+          where: { id: bom.rawMaterialId },
+          data: { currentStock: { decrement: totalNeeded } }
+        });
+
+        await this.prisma.rawMaterialTransaction.create({
+          data: {
+            rawMaterialId: bom.rawMaterialId,
+            type: 'PRODUCTION_USE',
+            quantity: totalNeeded,
+            costPerUnit: 0, // Should be fetched from material ideally
+            reference: order.code,
+            notes: 'استهلاك أمر قص',
+          }
+        });
+      }
+    }
 
     if (status === WorkOrderStatus.COMPLETED) {
       // NOTE: Should map to a variant in a real app, assuming first variant for now

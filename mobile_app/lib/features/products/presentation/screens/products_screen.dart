@@ -3,6 +3,8 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/products_cubit.dart';
 import '../cubit/products_state.dart';
+import 'add_product_screen.dart';
+import '../../../inventory/presentation/cubit/inventory_cubit.dart';
 
 class ProductsScreen extends StatelessWidget {
   const ProductsScreen({super.key});
@@ -92,9 +94,24 @@ class ProductsScreen extends StatelessWidget {
             return const SizedBox();
           },
         ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: () {},
-          child: const Icon(Icons.add),
+        floatingActionButton: Builder(
+          builder: (ctx) => FloatingActionButton(
+            onPressed: () {
+              Navigator.push(
+                ctx,
+                MaterialPageRoute(
+                  builder: (_) => MultiBlocProvider(
+                    providers: [
+                      BlocProvider.value(value: ctx.read<ProductsCubit>()),
+                      BlocProvider(create: (_) => InventoryCubit()..fetchRawMaterials()),
+                    ],
+                    child: const AddProductScreen(),
+                  ),
+                ),
+              );
+            },
+            child: const Icon(Icons.add),
+          ),
         ),
       ),
     );

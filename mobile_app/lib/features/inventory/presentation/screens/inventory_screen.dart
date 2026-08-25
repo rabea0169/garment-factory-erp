@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
+import '../../../../core/widgets/barcode_scanner_screen.dart';
 
 class InventoryScreen extends StatelessWidget {
   const InventoryScreen({super.key});
@@ -250,19 +251,50 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
               title: const Text('إضافة رصيد مادة خام', style: TextStyle(fontFamily: 'Cairo', fontSize: 18, fontWeight: FontWeight.bold)),
               content: Column(
                 mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: 'اختر المادة'),
-                    value: selectedId,
-                    items: materials.map<DropdownMenuItem<String>>((m) {
-                      return DropdownMenuItem<String>(
-                        value: m['id'],
-                        child: Text(m['name'], style: const TextStyle(fontFamily: 'Cairo')),
-                      );
-                    }).toList(),
-                    onChanged: (v) => setState(() => selectedId = v),
-                  ),
-                  const SizedBox(height: 16),
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            decoration: const InputDecoration(labelText: 'اختر المادة'),
+                            value: selectedId,
+                            items: materials.map<DropdownMenuItem<String>>((m) {
+                              return DropdownMenuItem<String>(
+                                value: m['id'],
+                                child: Text('${m['name']} (${m['code']})', style: const TextStyle(fontFamily: 'Cairo')),
+                              );
+                            }).toList(),
+                            onChanged: (v) => setState(() => selectedId = v),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        IconButton(
+                          icon: const Icon(Icons.qr_code_scanner, size: 32, color: AppColors.primary),
+                          onPressed: () async {
+                            final scannedCode = await Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (ctx) => const BarcodeScannerScreen()),
+                            );
+                            if (scannedCode != null) {
+                              // Find material by code
+                              try {
+                                final matchedMaterial = materials.firstWhere((m) => m['code'] == scannedCode);
+                                setState(() => selectedId = matchedMaterial['id']);
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('تم العثور على: ${matchedMaterial['name']}')),
+                                );
+                              } catch (e) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  SnackBar(content: Text('كود غير مسجل: $scannedCode', style: const TextStyle(color: Colors.white)), backgroundColor: AppColors.error),
+                                );
+                              }
+                            }
+                          },
+                        )
+                      ],
+                    ),
+                    const SizedBox(height: 16),
                   TextField(
                     controller: qtyController,
                     keyboardType: TextInputType.number,

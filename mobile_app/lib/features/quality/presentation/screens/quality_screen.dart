@@ -4,6 +4,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/quality_cubit.dart';
 import '../cubit/quality_state.dart';
+import '../../../../core/widgets/barcode_scanner_screen.dart';
 
 class QualityScreen extends StatelessWidget {
   const QualityScreen({super.key});
@@ -68,23 +69,51 @@ class QualityScreen extends StatelessWidget {
         ),
         floatingActionButton: Builder(
           builder: (ctx) => FloatingActionButton.extended(
-            onPressed: () => _showAddQualityCheckDialog(ctx),
-            icon: const Icon(Icons.playlist_add_check),
-            label: const Text('تقرير جديد', style: TextStyle(fontFamily: 'Cairo')),
+            onPressed: () async {
+              // مسح باركود الحزمة
+              final scannedCode = await Navigator.push(
+                ctx,
+                MaterialPageRoute(builder: (c) => const BarcodeScannerScreen()),
+              );
+              if (scannedCode != null) {
+                if (ctx.mounted) {
+                  _showAddQualityCheckDialog(ctx, scannedCode);
+                }
+              }
+            },
+            icon: const Icon(Icons.qr_code_scanner),
+            label: const Text('فحص حزمة (باركود)', style: TextStyle(fontFamily: 'Cairo')),
           ),
         ),
       ),
     );
   }
 
-  void _showAddQualityCheckDialog(BuildContext context) {
-    // UI input fields for adding new check (Work Order ID, Passed Qty, Rejected Qty, etc.)
+  void _showAddQualityCheckDialog(BuildContext context, String workOrderCode) {
+    final passedCtrl = TextEditingController();
+    final rejectedCtrl = TextEditingController();
+    String? selectedReason;
     final cubit = context.read<QualityCubit>();
+
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('إضافة تقرير جودة', style: TextStyle(fontFamily: 'Cairo')),
-        content: const Text('سيتم إضافة الواجهة التفصيلية للنموذج هنا. حالياً مقتصرة على العرض كنموذج.', style: TextStyle(fontFamily: 'Cairo')),
+        title: Text('تقرير فحص: $workOrderCode', style: const TextStyle(fontFamily: 'Cairo')),
+        content: StatefulBuilder(
+          builder: (context, setDialogState) => Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: passedCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'العدد السليم')),
+              TextField(controller: rejectedCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'العدد التالف')),
+              DropdownButtonFormField<String>(
+                hint: const Text('سبب التلف (إن وجد)'),
+                value: selectedReason,
+                items: ['SEWING_DEFECT', 'CUTTING_DEFECT', 'FABRIC_DEFECT', 'FINISHING_DEFECT'].map((r) => DropdownMenuItem(value: r, child: Text(_translateReason(r)))).toList(),
+                onChanged: (v) => setDialogState(() => selectedReason = v),
+              ),
+            ],
+          ),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -92,9 +121,18 @@ class QualityScreen extends StatelessWidget {
           ),
           ElevatedButton(
             onPressed: () {
-              // Example hardcoded submit
-              // cubit.submitQualityCheck(...)
-              Navigator.pop(ctx);
+              if (passedCtrl.text.isNotEmpty && rejectedCtrl.text.isNotEmpty) {
+                cubit.submitQualityCheck(
+                  workOrderId: workOrderCode, // In a real app we lookup the UUID from this Code
+                  stage: 'SEWING', // Assuming check happens after sewing
+                  checkedQty: int.parse(passedCtrl.text) + int.parse(rejectedCtrl.text),
+                  passedQty: int.parse(passedCtrl.text),
+                  rejectedQty: int.parse(rejectedCtrl.text),
+                  rejectionReason: selectedReason,
+                );
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تسجيل الفحص!')));
+              }
             },
             child: const Text('حفظ'),
           ),

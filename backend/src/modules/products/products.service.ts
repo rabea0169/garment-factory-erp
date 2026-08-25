@@ -53,4 +53,22 @@ export class ProductsService {
       data: { productId, size, color }
     });
   }
+
+  async addBomItem(productId: string, rawMaterialId: string, quantity: number, unit: string) {
+    return this.prisma.bomItem.create({
+      data: {
+        productId,
+        rawMaterialId,
+        quantity,
+        unit,
+      },
+      include: { rawMaterial: true }
+    });
+  }
+
+  async deleteBomItem(id: string) {
+    return this.prisma.bomItem.delete({
+      where: { id }
+    });
+  }
 }
