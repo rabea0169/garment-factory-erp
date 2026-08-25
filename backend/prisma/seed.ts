@@ -16,11 +16,20 @@ const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
+// GF-0006 / P1-02: كلمة مرور admin الأولية من البيئة — لا قيمة منشورة في الكود أو README
+const seedAdminPassword = process.env.SEED_ADMIN_PASSWORD;
+if (!seedAdminPassword) {
+  console.error(
+    'SEED_ADMIN_PASSWORD مفقود — حدد كلمة مرور أولية للتطوير في backend/.env (مثال في backend/.env.example). لا قيمة افتراضية لأسباب أمنية.',
+  );
+  process.exit(1);
+}
+
 async function main() {
   console.log('Seeding database...');
 
   // 1. Create Admin User
-  const hashedPassword = await bcrypt.hash('Admin@123', 10);
+  const hashedPassword = await bcrypt.hash(seedAdminPassword, 10);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@factory.com' },
     update: {},

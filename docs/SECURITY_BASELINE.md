@@ -16,10 +16,10 @@
 - **الإصلاح المنفذ:** أُزيل الـ fallback من `jwt.strategy.ts` (رمي خطأ واضح عند الغياب) + `assertRequiredEnv()` في `main.ts`: فشل إقلاع exit 1 عند غياب `JWT_SECRET`/`DATABASE_URL` في أي بيئة، وعند سر <32 حرفًا أو CORS مفتوح في الإنتاج.
 - **الإثبات:** اختبار سلوكي فعلي — `NODE_ENV=production node dist/src/main.js` بلا env → exit 1 برسائل عربية واضحة؛ سر بطول 5 → رفض "أقصر من 32". + 6 اختبارات unit في `src/main.spec.ts`.
 
-### P0-03: بيانات اعتماد قاعدة البيانات مكررة وثابتة في الكود — 🟡 **مغلقة جزئيًا في GF-0002**
-- ✅ `prisma.service.ts` — أُزيل connection string؛ `DATABASE_URL` من البيئة فقط (رمي عند الغياب).
-- ✅ `prisma/seed.ts` — أُزيل connection string؛ يقرأ من البيئة عبر dotenv.
-- ❌ `docker-compose.yml` — ما زال يحمل `POSTGRES_PASSWORD: erp_password_2024` منشورًا على 5432 (مع pgAdmin مكشوف 5050) → **مهمة GF-0006**. CI secret-scan يبقى أحمر حتى إغلاقها — مقصود.
+### P0-03: بيانات اعتماد قاعدة البيانات مكررة وثابتة في الكود — ✅ **مغلقة بالكامل في GF-0006**
+- ✅ `prisma.service.ts` + `prisma/seed.ts` (GF-0002): `DATABASE_URL` من البيئة فقط.
+- ✅ `docker-compose.yml` (GF-0006): صفر كلمات مرور ثابتة — كل القيم من `.env` بجذر المستودع بصيغة `${VAR:?msg}` (فشل تشغيل فوري عند النقص).
+- **الإثبات:** `git grep -nE "erp_password_2024|Admin@123" -- ':!docs/*' ':!.github/*'` → صفر نتائج + CI secret-scan يمر.
 
 ### P0-04: هوية المنشئ تُقبل من جسم الطلب — ✅ **مغلقة في GF-0002**
 - **الإصلاح المنفذ:** `@CurrentUser('id')` decorator يستخرج الهوية من الجلسة؛ `sales.service.createSalesOrder(body, userId)` و`accounting.service.createVoucher(body, createdById)` و`production.service.createWorkOrder(dto, creatorId)` تستقبل الهوية كمعامل من الـ controller وتتجاهل أي قيمة واردة من body.
@@ -35,16 +35,22 @@
 ### P1-01: CORS مفتوح بالكامل مع credentials — ✅ **مغلقة في GF-0002**
 - `CORS_ORIGINS` من البيئة (قائمة مفصولة بفواصل)؛ في الإنتاج: غيابها أو `*` → فشل إقلاع. في التطوير فقط تبقى `*` عند غياب القيمة.
 
-### P1-02: بيانات دخول admin منشورة في README وseed — ❌ مفتوحة → GF-0006
-- `README.md` (admin@factory.com / Admin@123) + `backend/prisma/seed.ts`. مؤجل عمدًا مع تصحيح README في GF-0006 (تغيير seed منفردًا يكسر الدخول الموثق دون تحديث README المتزامن).
+### P1-02: بيانات دخول admin منشورة في README وseed — ✅ **مغلقة في GF-0006**
+- README أُعيدت كتابته بالكامل: صفر بيانات دخول، وحالة صادقة (9 وحدات، المفعّل وغير المفعّل).
+- seed يقرأ `SEED_ADMIN_PASSWORD` من البيئة ويفشل بدونها (fail-closed).
+- login.dto example لم يعد يحمل كلمة المرور المنشورة.
 
 ### P1-03: token الجلسة في SharedPreferences — ❌ مفتوحة → GF-0010
 ### P1-04: ApiClient بلا auth interceptor ولا معالجة 401 — ❌ مفتوحة → GF-0010
 - الخادم محمي الآن؛ التطبيق يحتاج إرفاق التوكن ومعالجة 401 وإلا سترفضه كل الـ endpoints.
 
 ### P1-05: mock data صامتة في مسار إنتاجي (Reports) — ❌ مفتوحة → GF-0010/GF-0019
-### P1-06: Redis وpgAdmin منشوران على الشبكة بكلمات مرور ضعيفة — ❌ مفتوحة → GF-0006
-### P1-07: healthcheck لـ Postgres مكسور (erp_user غير معرف) — ❌ مفتوحة → GF-0006
+### P1-06: Redis وpgAdmin منشوران على الشبكة بكلمات مرور ضعيفة — ✅ **مغلقة في GF-0006**
+- الربط الخارجي أصبح `127.0.0.1` فقط لكل الخدمات (postgres/redis/pgAdmin) — لا نشر على الشبكة الخارجية.
+- pgAdmin تحت profile اختياري `tools` (لا يعمل افتراضيًا) وبيانات اعتماده من `.env`.
+
+### P1-07: healthcheck لـ Postgres مكسور — ✅ **مغلق في GF-0006**
+- أصبح `pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}` — المستخدم وقاعدة البيانات من env الحاوية (كان `erp_user` غير المعرف).
 ### P1-08: لا rate limiting ولا helmet ولا correlation IDs — ❌ مفتوحة → GF-0021
 ### P1-09: صلاحيات بلا مصفوفة معتمدة — 🟡 **منفذة تقنيًا في GF-0002** (مصفوفة `API_CONTRACT.md` مفعّلة ومختبرة 403) — تبقى موافقة مالك المنتج الرسمية على المصفوفة.
 ### P1-10: لا pagination في أي قائمة — ❌ مفتوحة → GF-0012
@@ -70,11 +76,13 @@
 |---|---|---|---|---|
 | P0-01 | حرجة | ✅ مغلقة | GF-0002 | e2e: 7×401 + 3×403 + مصفوفة أدوار |
 | P0-02 | حرجة | ✅ مغلقة | GF-0002 | fail-closed boot + main.spec.ts |
-| P0-03 | حرجة | 🟡 جزئية | GF-0002 (2/3 مواضع) | بقي docker-compose → GF-0006 |
+| P0-03 | حرجة | ✅ **مغلقة بالكامل** | GF-0002+GF-0006 | grep صفر نتائج + CI secret-scan يمر |
 | P0-04 | حرجة | ✅ مغلقة (ومقواة في GF-0004: حقن الهوية في body يُرفض 400) | GF-0002+0004 | e2e: تجاهل ثم رفض HACKED-USER-ID |
 | P0-05 | حرجة | ✅ مغلقة | GF-0004 | 19 اختبار 400 + 13 DTO |
 | P1-01 | عالية | ✅ مغلقة | GF-0002 | assertRequiredEnv + CORS_ORIGINS |
-| P1-02..12 | عالية | ❌/🟡 مفتوحة | — | انظر التفاصيل أعلاه |
+| P1-02 | عالية | ✅ مغلقة | GF-0006 | README صادق + seed من env |
+| P1-06/07 | عالية | ✅ مغلقة | GF-0006 | localhost فقط + profile tools + healthcheck مصلح |
+| P1-03/04/05/08..12 | عالية | ❌ مفتوحة | — | Flutter/GF-0010، rate-limit/GF-0021، pagination/GF-0012، ADR-0003 |
 | P2-01..08 | متوسطة | ❌ مفتوحة | — | المراحل 7-9 |
 
 **قاعدة الحوكمة:** لا تُغلق أي ثغرة في هذا الملف دون إشارة إلى commit الإغلاق واختبار يثبت السلوك (401/403/إقلاع فاشل…).

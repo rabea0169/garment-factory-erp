@@ -5,19 +5,19 @@
 ```text
 Project: Garment Factory ERP
 Current branch: stabilization/baseline-and-security
-Current commit: (التزام GF-0004 — يُحدّث في كل تسليم)
+Current commit: (التزام GF-0006 — يُحدّث في كل تسليم)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
-Last completed phase: المرحلة 1 — GF-0002/0003/0004 منجزتان: حماية fail-closed + اختبارات خضراء + DTOs كاملة — **كل P0 مغلقة** (P0-03 متبقٍ جزئ docker-compose فقط)
-Active task: GF-0006 — تنظيف docker-compose/README/seed وضبط secret-scan
-Blocked tasks: لا شيء محظور تقنيًا
-Known failing checks: CI secret-scan فقط (docker-compose/README/seed — نطاق GF-0006) — lint ✅ وbuild ✅ وtests ✅ في CI
+Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006): حماية fail-closed + اختبارات خضراء + DTOs + صفر أسرار + CI أخضر بالكامل
+Active task: GF-0007 — أساس المجال (Warehouse + Stock Ledger + idempotency + indexes) — المرحلة 2
+Blocked tasks: لا شيء
+Known failing checks: **لا شيء — CI أخضر بالكامل** (backend + secret-scan)
 Database migration state: migration واحدة فقط مطبقة (init 20260823183624)؛ لا توجد بيئة إنتاج
 Current API version: 1.0 (غير مقفل — العقد غير مستقر بعد)
 Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005 (مكتوبة داخل الكود، ليست من environment — GF-0010)
-Security blockers: لا P0 مفتوحة في الكود — المتبقي P1-02..P1-11 (docker-compose/README/Flutter) — انظر SECURITY_BASELINE.md
-Open decisions: ADR-0003 (مصير الأحداث المالية)، ADR-0004 (المنفذ — محسوم عمليًا 3005)
-Last handoff: docs/handoffs/HANDOFF-004.md
-Next exact action: تنفيذ GF-0006 وفق بطاقة المهمة في HANDOFF-004.md
+Security blockers: لا P0 ولا P1 مفتوحة في البنية التحتية — المتبقي P1-03/04/05 (Flutter — GF-0010) وP1-08..12 (موثقة بجدولها)
+Open decisions: ADR-0003 (مصير الأحداث المالية — يُحسم في المرحلة 2/7)، ADR-0004 (المنفذ — محسوم 3005)
+Last handoff: docs/handoffs/HANDOFF-005.md
+Next exact action: تنفيذ GF-0007 وفق بطاقة المهمة في HANDOFF-005.md
 ```
 
 ---

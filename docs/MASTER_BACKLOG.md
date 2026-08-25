@@ -6,18 +6,18 @@
 
 | ID | المهمة | الملفات الأساسية | معيار القبول | الحالة |
 |---|---|---|---|---|
-| GF-0001 | Baseline + Governance + CI | docs/**، .env.example، .gitignore، ci.yml | 13 ملف docs + CI يشتغل + baseline موثق | ✅ منجزة |
-| GF-0002 | **Fail-closed auth + حماية كل المسارات** | auth/**، app.module.ts، main.ts، prisma.service.ts، seed.ts، docker-compose.yml | 401/403 مختبرة، لا fallback لسر، DB من env فقط، CORS من env | ⏳ التالية |
-| GF-0003 | إصلاح الاختبارات + lint | backend/src/**/*.spec.ts، test/** | 19/19 suites تمر أو تستبدل بسلوكية، lint صفر errors | ⏳ |
-| GF-0004 | DTOs لكل مسارات الكتابة | controllers + dto/ | صفر `@Body() any`، 400 على مدخل غير صالح | ⏳ |
-| GF-0005 | CurrentUser من الجلسة + إزالة userId من body | sales/accounting/production services | الحقول تُستخرج من JWT، تجاهل قيم العميل | ⏳ |
-| GF-0006 | إصلاح docker-compose (healthcheck/env/ربط داخلي) + README الصادق | docker-compose.yml، README.md | healthcheck يمر، لا كلمات مرور ثابتة، README يطابق الواقع | ⏳ |
+| GF-0001 | Baseline + Governance + CI | docs/**، .env.example، .gitignore، ci.yml | 13 ملف docs + CI يشتغل + baseline موثق | ✅ منجزة (df13f8f) |
+| GF-0002 | **Fail-closed auth + حماية كل المسارات** | auth/**، app.module.ts، main.ts، prisma.service.ts، seed.ts | 401/403 مختبرة، لا fallback لسر، DB من env فقط، CORS من env | ✅ منجزة (02ec9cb) |
+| GF-0003 | إصلاح الاختبارات + lint | backend/src/**/*.spec.ts، test/** | 22/22 suites سلوكية، lint صفر errors وصفر تحذيرات | ✅ منجزة (b4ff13f) |
+| GF-0004 | DTOs لكل مسارات الكتابة | controllers + dto/ | صفر `@Body() any`، 400 على مدخل غير صالح (19 اختبارًا) | ✅ منجزة (f59154d) |
+| GF-0005 | CurrentUser من الجلسة + إزالة userId من body | sales/accounting/production services | الحقول تُستخرج من JWT، تجاهل قيم العميل | ✅ **مدمجة** في GF-0002 (التجاهل) + GF-0004 (الرفض 400) — أُغلقت دون مهمة منفصلة |
+| GF-0006 | إصلاح docker-compose (healthcheck/env/ربط داخلي) + README الصادق | docker-compose.yml، README.md، seed.ts، login.dto، ci.yml | healthcheck يعمل، لا كلمات مرور ثابتة، README يطابق الواقع، CI أخضر بالكامل | ✅ منجزة (التزام هذه المهمة) |
 
 ## P1 — أساس المجال والمخزون (المرحلة 2–3)
 
 | ID | المهمة | الملفات | معيار القبول |
 |---|---|---|---|
-| GF-0007 | Domain Foundation: Warehouse + Stock Ledger + idempotency + indexes | schema.prisma + migration + inventory | كل حركة عبر ledger، رصيد قابل للتدقيق، migration + rollback موثقة |
+| GF-0007 | Domain Foundation: Warehouse + Stock Ledger + idempotency + indexes | schema.prisma + migration + inventory | كل حركة عبر ledger، رصيد قابل للتدقيق، migration + rollback موثقة | ⏳ **التالية** |
 | GF-0008 | BOM versions + ربط WorkOrder بالـ variant/SKU | schema.prisma + production | أمر تشغيل يستهدف SKU + إصدار BOM مجمد |
 | GF-0009 | Inventory Application Service (receive/issue/reserve/transfer/adjust/waste/return/count) | inventory service | لا تعديل رصيد مباشر، transaction إلزامية، اختبارات تزامن |
 | GF-0010 | Flutter: secure storage + auth interceptor + 401 handling + إزالة mock | api_client.dart، auth/**، reports_cubit.dart | لا mock صامت، انتهاء الجلسة يعيد للدخول |

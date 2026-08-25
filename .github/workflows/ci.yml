@@ -8,11 +8,17 @@ on:
 
 jobs:
   backend:
-    name: Backend — Prisma / Lint / Build / Test
+    name: Backend — Prisma / Lint / Build / Unit / E2E
     runs-on: ubuntu-latest
     defaults:
       run:
         working-directory: backend
+
+    env:
+      # قيم اختبارية واضحة (ليست أسرارًا) — الاختبارات e2e تعمل بلا قاعدة بيانات
+      # (PrismaService مستبدل بـ mock) وتستخدم هذه القيم لفحص fail-closed فقط
+      JWT_SECRET: ci-test-secret-value-with-at-least-32-chars
+      DATABASE_URL: postgresql://localhost:5432/garment_erp
 
     steps:
       - name: Checkout
@@ -41,8 +47,12 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Tests
+      - name: Unit tests
         run: npm test -- --runInBand
+
+      # GF-0006: اختبارات e2e داخل CI — تعمل بلا قاعدة بيانات (mocked Prisma)
+      - name: E2E tests
+        run: npm run test:e2e -- --runInBand
 
   secret-scan:
     name: Secret Scan
@@ -51,10 +61,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # GF-0006: ضبط الفحص —
+      # مستثنى موثق (false positives): ملفات مهارات Prisma المولدة في
+      # backend/.agents/**, backend/.claude/**, backend/.windsurf/** تحتوي
+      # أمثلة توثيقية placeholder مثل postgresql://USER:PASSWORD@HOST — ليست أسرارًا
+      # فعلية ولا تُستخدم في أي كود تشغيلي. مصدرها أدوات توليد المهارات لا المطورين.
+      # مستثنى أيضًا: docs/* (توثيق تاريخي للثغرات المغلقة) و*.example (قوالب).
       - name: Fail on hardcoded secrets / credentials in tracked files
         run: |
           set -e
-          # أنماط ممنوعة في الملفات المتتبعة (استثناء مقصود: قوالب .env.example)
           PATTERNS=(
             "erp_password_2024"
             "postgres(ql)?://[^[:space:]'\"]+:[^[:space:]'\"]+@"
@@ -63,7 +78,7 @@ jobs:
           )
           FAIL=0
           for P in "${PATTERNS[@]}"; do
-            MATCHES=$(git grep -nE "$P" -- ':!*.example' ':!docs/*' ':!.github/*' || true)
+            MATCHES=$(git grep -nE "$P" -- ':!*.example' ':!docs/*' ':!.github/*' ':!backend/.agents/**' ':!backend/.claude/**' ':!backend/.windsurf/**' || true)
             if [ -n "$MATCHES" ]; then
               echo "::error::Pattern [$P] found:"
               echo "$MATCHES"
