@@ -11,11 +11,10 @@ import '../../features/sales/presentation/screens/sales_screen.dart';
 import '../../features/shipping/presentation/screens/shipping_screen.dart';
 import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
+import '../storage/auth_storage.dart';
 
 class AppRouter {
   AppRouter._();
-
-  static final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
   // Named Routes
   static const String login = '/login';
@@ -29,10 +28,37 @@ class AppRouter {
   static const String accounting = '/accounting';
   static const String reports = '/reports';
 
+  static final _rootNavigatorKey = GlobalKey<NavigatorState>();
+  static String _initialLocation = login;
+
+  /// يضبط أول مسار قبل أول استعمال لـ router في main.dart.
+  static void configureInitialLocation({required bool isAuthenticated}) {
+    _initialLocation = isAuthenticated ? dashboard : login;
+  }
+
+  /// يستدعى من ApiClient بعد مسح الجلسة عند وصول 401.
+  static void goToLogin() {
+    router.go(login);
+  }
+
   static final router = GoRouter(
     navigatorKey: _rootNavigatorKey,
-    initialLocation: login,
+    initialLocation: _initialLocation,
     debugLogDiagnostics: true,
+    redirect: (context, state) async {
+      final isLoginRoute = state.matchedLocation == login;
+      String? token;
+      try {
+        token = await AuthStorage().readAccessToken();
+      } catch (_) {
+        token = null;
+      }
+
+      final isAuthenticated = token?.isNotEmpty == true;
+      if (!isAuthenticated && !isLoginRoute) return login;
+      if (isAuthenticated && isLoginRoute) return dashboard;
+      return null;
+    },
     routes: [
       GoRoute(
         path: login,

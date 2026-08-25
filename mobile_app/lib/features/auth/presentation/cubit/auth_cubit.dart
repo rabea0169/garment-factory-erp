@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+
 import '../../../../core/network/api_client.dart';
+import '../../../../core/storage/auth_storage.dart';
 
 abstract class AuthState {}
 
@@ -9,29 +10,39 @@ class AuthInitial extends AuthState {}
 class AuthLoading extends AuthState {}
 
 class AuthAuthenticated extends AuthState {
-  final Map<String, dynamic> user;
   AuthAuthenticated(this.user);
+
+  final Map<String, dynamic> user;
 }
 
 class AuthUnauthenticated extends AuthState {}
 
 class AuthError extends AuthState {
-  final String message;
   AuthError(this.message);
+
+  final String message;
 }
 
 class AuthCubit extends Cubit<AuthState> {
-  AuthCubit() : super(AuthInitial());
+  AuthCubit({AuthStorage? storage, ApiClient? apiClient})
+      : _storage = storage ?? AuthStorage(),
+        _apiClient = apiClient ?? ApiClient.instance,
+        super(AuthInitial());
+
+  final AuthStorage _storage;
+  final ApiClient _apiClient;
 
   Future<void> checkAuthStatus() async {
-    final prefs = await SharedPreferences.getInstance();
-    final token = prefs.getString('access_token');
-    
-    if (token != null) {
-      ApiClient.instance.dio.options.headers['Authorization'] = 'Bearer $token';
-      // يمكن إضافة استدعاء لجلب بيانات المستخدم هنا
-      emit(AuthAuthenticated({})); 
-    } else {
+    try {
+      final token = await _storage.readAccessToken();
+      if (token == null || token.isEmpty) {
+        emit(AuthUnauthenticated());
+        return;
+      }
+
+      emit(AuthAuthenticated(<String, dynamic>{}));
+    } catch (error) {
+      await _apiClient.clearSession();
       emit(AuthUnauthenticated());
     }
   }
@@ -39,30 +50,38 @@ class AuthCubit extends Cubit<AuthState> {
   Future<void> login(String email, String password) async {
     emit(AuthLoading());
     try {
-      final dio = ApiClient.instance.dio;
-      final response = await dio.post('/auth/login', data: {
-        'email': email,
-        'password': password,
-      });
+      final response = await _apiClient.dio.post(
+        '/auth/login',
+        data: <String, dynamic>{
+          'email': email.trim(),
+          'password': password,
+        },
+      );
 
-      final token = response.data['access_token'];
-      final user = response.data['user'];
+      final responseData = response.data;
+      if (responseData is! Map || responseData['access_token'] is! String) {
+        throw const FormatException('استجابة تسجيل الدخول غير صالحة');
+      }
 
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString('access_token', token);
-      
-      ApiClient.instance.dio.options.headers['Authorization'] = 'Bearer $token';
-      
-      emit(AuthAuthenticated(user));
-    } catch (e) {
-      emit(AuthError('البريد الإلكتروني أو كلمة المرور غير صحيحة'));
+      final token = responseData['access_token'] as String;
+      final user = responseData['user'];
+      await _storage.writeAccessToken(token);
+      _apiClient.dio.options.headers['Authorization'] = 'Bearer $token';
+
+      emit(
+        AuthAuthenticated(
+          user is Map<String, dynamic>
+              ? user
+              : <String, dynamic>{},
+        ),
+      );
+    } catch (error) {
+      emit(AuthError(_apiClient.messageFor(error)));
     }
   }
 
   Future<void> logout() async {
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove('access_token');
-    ApiClient.instance.dio.options.headers.remove('Authorization');
+    await _apiClient.clearSession();
     emit(AuthUnauthenticated());
   }
 }

@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
+import '../../auth/presentation/cubit/auth_cubit.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
@@ -487,7 +488,10 @@ class DashboardScreen extends StatelessWidget {
           ListTile(
             leading: const Icon(Icons.logout, color: AppColors.error),
             title: const Text('تسجيل الخروج', style: TextStyle(fontFamily: 'Cairo', color: AppColors.error, fontSize: 14)),
-            onTap: () => context.go(AppRouter.login),
+            onTap: () async {
+              await context.read<AuthCubit>().logout();
+              if (context.mounted) context.go(AppRouter.login);
+            },
           ),
           const SizedBox(height: 8),
         ],
