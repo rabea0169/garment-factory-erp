@@ -32,7 +32,8 @@ import { EVENTS } from '../../events/event-types';
  */
 
 export interface ReceiveStockInput {
-  rawMaterialId: string;
+  rawMaterialId?: string;
+  productVariantId?: string;
   warehouseId: string;
   quantity: number;
   unitCost: number;
@@ -42,7 +43,8 @@ export interface ReceiveStockInput {
 }
 
 export interface IssueStockInput {
-  rawMaterialId: string;
+  rawMaterialId?: string;
+  productVariantId?: string;
   warehouseId: string;
   quantity: number;
   reference?: string;
@@ -51,7 +53,8 @@ export interface IssueStockInput {
 }
 
 export interface AdjustStockInput {
-  rawMaterialId: string;
+  rawMaterialId?: string;
+  productVariantId?: string;
   warehouseId: string;
   quantityDelta: number;
   reason: string;

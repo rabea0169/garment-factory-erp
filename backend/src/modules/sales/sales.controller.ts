@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -40,5 +40,15 @@ export class SalesController {
   ) {
     // P0-04: userId من الجلسة فقط — إرساله في body يُرفض بـ 400 (forbidNonWhitelisted)
     return this.salesService.createSalesOrder(body, userId);
+  }
+
+  @Post('orders/:id/confirm')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تأكيد أمر البيع وصرف المخزون' })
+  async confirmOrder(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.salesService.confirmOrder(id, userId);
   }
 }

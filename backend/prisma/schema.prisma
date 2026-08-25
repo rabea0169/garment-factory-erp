@@ -539,22 +539,30 @@ enum PaymentType {
   PARTIAL
 }
 
+enum SalesOrderStatus {
+  DRAFT
+  CONFIRMED
+  SHIPPED
+  CANCELLED
+}
+
 model SalesOrder {
-  id          String      @id @default(uuid())
-  code        String      @unique
+  id          String           @id @default(uuid())
+  code        String           @unique
   customerId  String
   userId      String
   paymentType PaymentType
-  totalAmount Decimal     @db.Decimal(10, 2)
-  paidAmount  Decimal     @db.Decimal(10, 2) @default(0)
-  discount    Decimal     @db.Decimal(10, 2) @default(0)
+  status      SalesOrderStatus @default(DRAFT)
+  totalAmount Decimal          @db.Decimal(10, 2)
+  paidAmount  Decimal          @db.Decimal(10, 2) @default(0)
+  discount    Decimal          @db.Decimal(10, 2) @default(0)
   dueDate     DateTime?
   notes       String?
-  createdAt   DateTime    @default(now())
-  updatedAt   DateTime    @updatedAt
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
 
-  customer  Customer         @relation(fields: [customerId], references: [id])
-  user      User             @relation(fields: [userId], references: [id])
+  customer  Customer          @relation(fields: [customerId], references: [id])
+  user      User              @relation(fields: [userId], references: [id])
   items     SalesOrderItem[]
   payments  CustomerPayment[]
   shipments Shipment[]

@@ -8,17 +8,17 @@ Current branch: phase2/domain-foundation (متفرعة من stabilization/baseli
 Current commit: 553fe9e (ci trigger fix بعد GF-0007؛ التنفيذ 9ab9baa)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
 Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006 على stabilization/baseline-and-security، CI أخضر بالكامل — Run #8/#9) — **PR #1 مفتوح للدمج في main: https://github.com/rabea0169/garment-factory-erp/pull/1 (mergeable، الفحوص خضراء)**
-Last completed task: GF-0009 — المشتريات والمرتجعات (Purchasing Module with transactions)
-Active task: GF-0010 — المبيعات (Sales Module)
+Last completed task: GF-0011 — المبيعات: منع البيع فوق المتاح وحساب الإجماليات خادمياً
+Active task: GF-0012 — Pagination لكل القوائم
 Blocked tasks: لا شيء
-Known failing checks: **لا شيء** (تم حل مشكلات E2E و lint و strict typecheck في GF-0008)
-Database migration state: migration الرابعة مطبقة (`gf_0009_purchasing_status`)
+Known failing checks: **لا شيء** (جميع الاختبارات خضراء)
+Database migration state: migration الخامسة مطبقة (`gf_0011_sales_status`)
 Current API version: 1.0 (غير مقفل — العقد غير مستقر بعد)
 Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005
 Security blockers: لا P0 ولا P1 مفتوحة في البنية التحتية
 Open decisions: ADR-0003
-Last handoff: docs/handoffs/HANDOFF-009.md
-Next exact action: البدء في مسودة GF-0010 (أوامر البيع والصرف والتسعير).
+Last handoff: docs/handoffs/HANDOFF-011.md
+Next exact action: البدء في مسودة GF-0012 (Pagination لكل القوائم).
 ```
 
 ---

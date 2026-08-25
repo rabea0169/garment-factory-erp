@@ -13,8 +13,4 @@ export class CreateSalesOrderItemDto {
   @IsInt({ message: 'الكمية يجب أن تكون عددًا صحيحًا' })
   @IsPositive({ message: 'الكمية يجب أن تكون عددًا موجبًا' })
   quantity: number;
-
-  @ApiProperty({ example: 100, description: 'سعر الوحدة (يجب أن يكون موجبًا)' })
-  @IsPositive({ message: 'سعر الوحدة يجب أن يكون رقمًا موجبًا' })
-  unitPrice: number;
 }

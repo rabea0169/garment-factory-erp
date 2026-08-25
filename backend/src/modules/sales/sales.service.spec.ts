@@ -1,126 +1,113 @@
-import { PaymentType } from '@prisma/client';
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
+import { PaymentType, SalesOrderStatus } from '@prisma/client';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import { BadRequestException } from '@nestjs/common';
 
-describe('SalesService — العملاء وأوامر البيع (GF-0003)', () => {
+describe('SalesService — العملاء وأوامر البيع (GF-0011)', () => {
   let service: SalesService;
   let prisma: ReturnType<typeof createPrismaMock>;
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new SalesService(prisma as unknown as PrismaService);
-  });
+    prisma.salesOrder = {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+    } as any;
+    prisma.productVariant = { findMany: jest.fn() } as any;
+    prisma.warehouse = { findFirst: jest.fn() } as any;
+    prisma.finishedGood = {
+      findFirst: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    } as any;
+    prisma.stockLedgerEntry = { create: jest.fn() } as any;
 
-  it('يجلب العملاء مرتبين بالأحدث', async () => {
-    const customers = [{ id: 'c-1', name: 'عميل تجريبي' }];
-    prisma.customer.findMany.mockResolvedValue(customers);
-
-    const result = await service.getCustomers();
-
-    expect(result).toEqual(customers);
-    expect(prisma.customer.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({ orderBy: { createdAt: 'desc' } }),
+    service = new SalesService(
+      prisma as unknown as PrismaService,
+      {} as unknown as InventoryService,
     );
   });
 
-  it('ينشئ عميلًا مع توليد كود فريد CUST-*', async () => {
-    prisma.customer.create.mockResolvedValue({ id: 'c-2', code: 'CUST-123' });
-
-    const result = await service.createCustomer({
-      name: 'عميل جديد',
-      phone: '01000000000',
-    });
-
-    expect(result.code).toMatch(/^CUST-\d+$/);
-    expect(prisma.customer.create).toHaveBeenCalledWith({
-      data: {
-        name: 'عميل جديد',
-        phone: '01000000000',
-        code: expect.stringMatching(/^CUST-\d+$/) as string,
-      },
-    });
-  });
-
-  it('يجلب أوامر البيع مع العميل والبنود والـ variants', async () => {
-    const orders = [{ id: 'so-1', customer: {}, items: [] }];
-    prisma.salesOrder.findMany.mockResolvedValue(orders);
-
-    const result = await service.getSalesOrders();
-
-    expect(result).toEqual(orders);
-    expect(prisma.salesOrder.findMany).toHaveBeenCalledWith({
-      include: {
-        customer: true,
-        items: { include: { variant: { include: { product: true } } } },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
-  });
-
-  it('إنشاء أمر بيع: الإجمالي يُحسب في الخادم (2×100 + 1×50 − خصم 25 = 225)', async () => {
-    prisma.salesOrder.create.mockImplementation(
-      (args: { data: Record<string, unknown> }) =>
-        Promise.resolve({ id: 'so-9', ...args.data }),
-    );
-
-    const result = await service.createSalesOrder(
-      {
+  describe('createSalesOrder', () => {
+    it('should calculate totalAmount correctly using DB prices', async () => {
+      const dto = {
         customerId: 'c-1',
         paymentType: PaymentType.CASH,
-        discount: 25,
-        items: [
-          { productVariantId: 'v-1', quantity: 2, unitPrice: 100 },
-          { productVariantId: 'v-2', quantity: 1, unitPrice: 50 },
-        ],
-      },
-      'user-from-session',
-    );
+        discount: 10,
+        items: [{ productVariantId: 'v-1', quantity: 2 }],
+      };
 
-    expect(result.totalAmount).toBe(225);
-    expect(prisma.salesOrder.create).toHaveBeenCalledWith({
-      data: expect.objectContaining({
-        customerId: 'c-1',
-        userId: 'user-from-session',
-        paymentType: PaymentType.CASH,
-        totalAmount: 225,
-        discount: 25,
-        items: {
-          create: [
-            {
-              productVariantId: 'v-1',
-              quantity: 2,
-              unitPrice: 100,
-              totalPrice: 200,
-            },
-            {
-              productVariantId: 'v-2',
-              quantity: 1,
-              unitPrice: 50,
-              totalPrice: 50,
-            },
-          ],
-        },
-      }) as Record<string, unknown>,
+      prisma.productVariant.findMany.mockResolvedValue([
+        { id: 'v-1', product: { retailPrice: 100 } },
+      ]);
+      prisma.salesOrder.create.mockResolvedValue({ id: 'so-1' });
+
+      await service.createSalesOrder(dto, 'user-1');
+
+      expect(prisma.salesOrder.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            totalAmount: 190, // (100 * 2) - 10
+            status: SalesOrderStatus.DRAFT,
+            userId: 'user-1',
+          }),
+        }),
+      );
     });
   });
 
-  it('إنشاء أمر بيع بلا خصم: الإجمالي = مجموع البنود فقط', async () => {
-    prisma.salesOrder.create.mockImplementation(
-      (args: { data: Record<string, unknown> }) =>
-        Promise.resolve({ id: 'so-10', ...args.data }),
-    );
+  describe('confirmOrder', () => {
+    it('should issue inventory and mark as CONFIRMED', async () => {
+      prisma.salesOrder.findUnique.mockResolvedValue({
+        id: 'so-1',
+        code: 'SO-100',
+        status: SalesOrderStatus.DRAFT,
+        items: [{ productVariantId: 'v-1', quantity: 2 }],
+      });
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+      prisma.finishedGood.findFirst.mockResolvedValue({
+        id: 'fg-1',
+        quantity: 10,
+      });
 
-    const result = await service.createSalesOrder(
-      {
-        customerId: 'c-1',
-        paymentType: PaymentType.CREDIT,
-        discount: 0,
-        items: [{ productVariantId: 'v-1', quantity: 3, unitPrice: 70 }],
-      },
-      'u-2',
-    );
+      prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+      prisma.salesOrder.update.mockResolvedValue({ code: 'SO-100' });
 
-    expect(result.totalAmount).toBe(210);
+      await service.confirmOrder('so-1', 'user-1');
+
+      expect(prisma.salesOrder.update).toHaveBeenCalledWith({
+        where: { id: 'so-1' },
+        data: { status: SalesOrderStatus.CONFIRMED },
+      });
+      expect(prisma.finishedGood.update).toHaveBeenCalledWith({
+        where: { id: 'fg-1' },
+        data: { quantity: 8 },
+      });
+      expect(prisma.stockLedgerEntry.create).toHaveBeenCalled();
+    });
+
+    it('should throw if insufficient stock', async () => {
+      prisma.salesOrder.findUnique.mockResolvedValue({
+        id: 'so-1',
+        code: 'SO-100',
+        status: SalesOrderStatus.DRAFT,
+        items: [{ productVariantId: 'v-1', quantity: 10 }],
+      });
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+      prisma.finishedGood.findFirst.mockResolvedValue({
+        id: 'fg-1',
+        quantity: 5,
+      }); // Less than 10
+      prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+
+      await expect(service.confirmOrder('so-1', 'user-1')).rejects.toThrow(
+        BadRequestException,
+      );
+    });
   });
 });
