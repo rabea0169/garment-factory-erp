@@ -233,10 +233,11 @@ export class InventoryService {
     tx?: TxClient,
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
+    const rawMaterialId = this.requireRawMaterialId(input.rawMaterialId);
     return this.executeMovement(
       {
         type: StockMovementType.RECEIVE,
-        rawMaterialId: input.rawMaterialId,
+        rawMaterialId,
         warehouseId: input.warehouseId,
         delta: input.quantity,
         unsignedQuantity: input.quantity,
@@ -256,10 +257,11 @@ export class InventoryService {
     tx?: TxClient,
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
+    const rawMaterialId = this.requireRawMaterialId(input.rawMaterialId);
     return this.executeMovement(
       {
         type: StockMovementType.ISSUE,
-        rawMaterialId: input.rawMaterialId,
+        rawMaterialId,
         warehouseId: input.warehouseId,
         delta: -input.quantity,
         unsignedQuantity: input.quantity,
@@ -277,9 +279,10 @@ export class InventoryService {
     userId?: string,
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
+    const rawMaterialId = this.requireRawMaterialId(input.rawMaterialId);
     return this.executeMovement({
       type: StockMovementType.ADJUSTMENT,
-      rawMaterialId: input.rawMaterialId,
+      rawMaterialId,
       warehouseId: input.warehouseId,
       delta: input.quantityDelta,
       unsignedQuantity: Math.abs(input.quantityDelta),
@@ -360,6 +363,15 @@ export class InventoryService {
   // ===================== CORE (private) =====================
 
   /** حركات الخامات تُقبل في مخازن خامات أو عامة فقط — لا في مخازن التام. */
+  private requireRawMaterialId(rawMaterialId: string | undefined): string {
+    if (!rawMaterialId) {
+      throw new BadRequestException(
+        'rawMaterialId is required for raw-material movements',
+      );
+    }
+    return rawMaterialId;
+  }
+
   private async assertMaterialWarehouse(warehouseId: string): Promise<void> {
     const warehouse = await this.prisma.warehouse.findUnique({
       where: { id: warehouseId },

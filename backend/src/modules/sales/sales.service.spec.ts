@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 import { PaymentType, SalesOrderStatus } from '@prisma/client';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -17,7 +17,7 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011)', ()
       findMany: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
-    } as any;
+    };
     prisma.productVariant = { findMany: jest.fn() } as any;
     prisma.warehouse = { findFirst: jest.fn() } as any;
     prisma.finishedGood = {

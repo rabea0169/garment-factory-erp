@@ -4,6 +4,8 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CreateProductDto } from './dto/create-product.dto';
+import { CreateProductVariantDto } from './dto/create-product-variant.dto';
+import { CreateBomLineDto } from './dto/create-bom-line.dto';
 
 @ApiTags('Products (المنتجات)')
 @Controller('products')
@@ -39,14 +41,22 @@ export class ProductsController {
 
   @Post(':id/variants')
   @ApiOperation({ summary: 'إضافة مقاس/لون جديد للمنتج' })
-  async createVariant(@Param('id') id: string, @Body() body: any) {
+  async createVariant(
+    @Param('id') id: string,
+    @Body() body: CreateProductVariantDto,
+  ) {
     return this.productsService.createVariant(id, body.size, body.color);
   }
 
   @Post(':id/bom')
   @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
-  async addBomItem(@Param('id') id: string, @Body() body: any) {
-    return this.productsService.addBomItem(id, body.rawMaterialId, body.quantity, body.unit);
+  async addBomItem(@Param('id') id: string, @Body() body: CreateBomLineDto) {
+    return this.productsService.addBomItem(
+      id,
+      body.rawMaterialId,
+      body.quantity,
+      body.unit,
+    );
   }
 
   @Post('bom/:bomId/delete') // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
