@@ -59,7 +59,7 @@
 
 ### قواعد مراحل GF-0013
 
-المراحل المسموحة بالترتيب هي `CUTTING`, ثم `SEWING`, ثم `IRONING`, ثم `PACKING`. لا يقبل API القفز بين المراحل، ولا تسجيل مخرج لمرحلة غير `currentStage`. يجب أن تحقق مخرجات المرحلة `inputQty = acceptedQty + rejectedQty + wasteQty` قبل إغلاقها. أما تكلفة الوحدة فتستخدم accepted output لآخر مرحلة مكتملة، وتبقى التكلفة الحالية تكلفة مواد فقط إلى أن تعتمد مكونات العمالة والمصاريف العامة.
+المراحل المسموحة بالترتيب هي `CUTTING`, ثم `SEWING`, ثم `IRONING`, ثم `PACKING`. لا يقبل API القفز بين المراحل، ولا تسجيل مخرج لمرحلة غير `currentStage`. يجب أن تحقق مخرجات المرحلة `inputQty = acceptedQty + rejectedQty + wasteQty` قبل إغلاقها. عند إكمال `PACKING` تُستلم الكمية المقبولة فقط في `FinishedGoodStock` حسب `warehouseId + productVariantId` وتُنشأ حركة `RECEIVE` في ledger داخل نفس transaction؛ إذا كانت الكمية المقبولة صفرًا فلا تُنشأ حركة صفرية. يمكن تحديد `finishedGoodsWarehouseId` في body، وإلا يُستخدم أول مخزن نشط من نوع `FINISHED_GOODS`. أما تكلفة الوحدة فتستخدم accepted output لآخر مرحلة مكتملة، وتبقى التكلفة الحالية تكلفة مواد فقط إلى أن تعتمد مكونات العمالة والمصاريف العامة.
 
 ## الجودة — `/quality`
 
@@ -174,6 +174,7 @@
 // Body: { "toStage": "CUTTING", "reason": "بدء القص" }
 // POST /production/work-orders/:uuid/stage-output
 // Body: { "stage": "CUTTING", "inputQty": 100, "acceptedQty": 95, "rejectedQty": 3, "wasteQty": 2 }
+// عند PACKING يمكن إضافة: "finishedGoodsWarehouseId": "uuid"
 // POST /production/work-orders/:uuid/material-consumptions
 // Header: Idempotency-Key: consumption-2026-001
 // Body: { "stageRunId": "uuid", "rawMaterialId": "uuid", "warehouseId": "uuid", "plannedQuantity": 50, "actualQuantity": 52, "wasteQuantity": 2, "unit": "METER", "wasteReason": "CUTTING_LOSS" }

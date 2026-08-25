@@ -84,11 +84,21 @@ export class ProductionController {
     @Body() body: RecordStageOutputDto,
     @CurrentUser('id') actorId: string,
   ) {
-    await this.workflowService.recordStageOutput(
+    const result = await this.workflowService.recordStageOutput(
       { workOrderId, ...body },
       actorId,
     );
-    return { workOrderId, stage: body.stage, status: 'COMPLETED' };
+    const response = {
+      workOrderId,
+      stage: body.stage,
+      status: 'COMPLETED',
+    };
+    if (!result?.finishedGoodStockId) return response;
+    return {
+      ...response,
+      finishedGoodStockId: result.finishedGoodStockId,
+      finishedGoodQuantity: result.finishedGoodQuantity,
+    };
   }
 
   @Post('work-orders/:id/material-consumptions')

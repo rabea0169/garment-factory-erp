@@ -20,6 +20,7 @@ const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
 type Scenario = {
   userId: string;
   rawWarehouseId: string;
+  finishedGoodsWarehouseId: string;
   rawMaterialId: string;
   productVariantId: string;
   bomVersionId: string;
@@ -91,6 +92,14 @@ integrationDescribe('GF-0013 production workflow integration', () => {
       },
     });
 
+    const finishedGoodsWarehouse = await prisma.warehouse.create({
+      data: {
+        code: `GF13-FG-${randomUUID().slice(0, 8)}`,
+        name: 'GF-0013 Finished Goods Test Warehouse',
+        type: WarehouseType.FINISHED_GOODS,
+      },
+    });
+
     const rawMaterial = await prisma.rawMaterial.create({
       data: {
         code: `RM-GF13-${randomUUID().slice(0, 8)}`,
@@ -159,6 +168,7 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     return {
       userId: user.id,
       rawWarehouseId: rawWarehouse.id,
+      finishedGoodsWarehouseId: finishedGoodsWarehouse.id,
       rawMaterialId: rawMaterial.id,
       productVariantId: variant.id,
       bomVersionId: bomVersion.id,
@@ -443,6 +453,97 @@ integrationDescribe('GF-0013 production workflow integration', () => {
         where: {
           rawMaterialId: scenario.rawMaterialId,
           type: StockMovementType.ISSUE,
+        },
+      }),
+    ).toBe(1);
+  });
+
+  it('posts accepted PACKING output to finished-good stock and ledger exactly once', async () => {
+    const stages = [
+      { stage: ProductionStage.CUTTING, inputQty: 10, acceptedQty: 9 },
+      { stage: ProductionStage.SEWING, inputQty: 9, acceptedQty: 8 },
+      { stage: ProductionStage.IRONING, inputQty: 8, acceptedQty: 7 },
+      { stage: ProductionStage.PACKING, inputQty: 7, acceptedQty: 6 },
+    ];
+
+    for (const [index, output] of stages.entries()) {
+      const transition = await workflowService.transitionStage(
+        {
+          workOrderId: scenario.workOrderId,
+          toStage: output.stage,
+        },
+        scenario.userId,
+      );
+      expect(transition.toStage).toBe(output.stage);
+
+      await workflowService.recordStageOutput(
+        {
+          workOrderId: scenario.workOrderId,
+          stage: output.stage,
+          inputQty: output.inputQty,
+          acceptedQty: output.acceptedQty,
+          rejectedQty: index === stages.length - 1 ? 0 : 1,
+          wasteQty: index === stages.length - 1 ? 1 : 0,
+          ...(output.stage === ProductionStage.PACKING
+            ? { finishedGoodsWarehouseId: scenario.finishedGoodsWarehouseId }
+            : {}),
+        },
+        scenario.userId,
+      );
+    }
+
+    const stock = await prisma.finishedGoodStock.findUnique({
+      where: {
+        warehouseId_productVariantId: {
+          warehouseId: scenario.finishedGoodsWarehouseId,
+          productVariantId: scenario.productVariantId,
+        },
+      },
+    });
+    expect(stock?.quantity).toBe(6);
+
+    const finishedLedger = await prisma.stockLedgerEntry.findFirst({
+      where: {
+        warehouseId: scenario.finishedGoodsWarehouseId,
+        productVariantId: scenario.productVariantId,
+        type: StockMovementType.RECEIVE,
+      },
+    });
+    expect(Number(finishedLedger?.quantityDelta)).toBe(6);
+    expect(Number(finishedLedger?.balanceAfter)).toBe(6);
+
+    const workOrder = await prisma.workOrder.findUnique({
+      where: { id: scenario.workOrderId },
+    });
+    expect(workOrder).toMatchObject({
+      status: WorkOrderStatus.COMPLETED,
+      currentStage: ProductionStage.PACKING,
+      completedQty: 6,
+      rejectedQty: 0,
+      wasteQty: 1,
+    });
+
+    await expect(
+      workflowService.recordStageOutput(
+        {
+          workOrderId: scenario.workOrderId,
+          stage: ProductionStage.PACKING,
+          inputQty: 7,
+          acceptedQty: 6,
+          rejectedQty: 0,
+          wasteQty: 1,
+          finishedGoodsWarehouseId: scenario.finishedGoodsWarehouseId,
+        },
+        scenario.userId,
+      ),
+    ).rejects.toThrow('already completed');
+
+    expect(
+      await prisma.stockLedgerEntry.count({
+        where: {
+          warehouseId: scenario.finishedGoodsWarehouseId,
+          productVariantId: scenario.productVariantId,
+          type: StockMovementType.RECEIVE,
         },
       }),
     ).toBe(1);
