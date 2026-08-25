@@ -4,6 +4,7 @@ import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { JwtService } from '@nestjs/jwt';
 import { UserRole } from '@prisma/client';
 
@@ -76,6 +77,20 @@ describe('Auth guard (e2e) — GF-0002', () => {
     workerAdvance: { create: jest.fn() },
   };
 
+  // A1/A2/A3: mock مبسّط لـ FinancialPostingService — لا يحتاج DB فعلي.
+  const financialFns = {
+    postJournalEntry: jest.fn().mockResolvedValue({
+      entryId: 'je-mock-001',
+      entryCode: 'JE-20260827-AAAAAAAA',
+      totalDebit: 100,
+      totalCredit: 100,
+      linesCount: 1,
+      createdAt: new Date('2026-08-27T00:00:00Z'),
+    }),
+    postJournalEntryInTx: jest.fn(),
+    reverseJournalEntry: jest.fn(),
+  };
+
   beforeAll(async () => {
     prismaFns.user.findUnique.mockImplementation(
       ({ where }: { where: { id: string } }) =>
@@ -87,6 +102,8 @@ describe('Auth guard (e2e) — GF-0002', () => {
     })
       .overrideProvider(PrismaService)
       .useValue(prismaFns)
+      .overrideProvider(FinancialPostingService)
+      .useValue(financialFns)
       .compile();
 
     app = moduleFixture.createNestApplication();
@@ -255,6 +272,7 @@ describe('Auth guard (e2e) — GF-0002', () => {
         type: 'PAYMENT',
         amount: 100,
         description: 'اختبار',
+        treasuryId: '00000000-0000-4000-8000-000000000000',
       })
       .expect(201);
 

@@ -195,23 +195,97 @@ export class InventoryService {
   }
 
   async getLowStockMaterials(pagination: PaginationDto) {
-    // Cannot easily paginate after manual filter, so we filter in DB.
+    // B2: نستخدم $queryRaw SQL بدلاً من findMany + in-memory filter.
+    // الفلاتر في الـ SQL تقلل نقل البيانات وتسمح للـ DB بـ index scans.
+    // D7 (partial): لا نُرجع costPerUnit — بيانات التكلفة role-restricted.
     const page = pagination.page || 1;
     const limit = pagination.limit || 20;
-    const skip = (page - 1) * limit;
+    const offset = (page - 1) * limit;
 
-    // Prisma doesn't natively support comparing two columns directly in where,
-    // so we might have to use raw query, or just fetch all and paginate in memory.
-    // For now we will fetch all and paginate in memory.
-    const materials = await this.prisma.rawMaterial.findMany({
-      include: { supplier: true },
-    });
-    const lowStock = materials.filter(
-      (m) => Number(m.currentStock) <= Number(m.minStockLevel),
-    );
+    // PostgreSQL syntax — `currentStock` و `minStockLevel` columns من نوع Decimal
+    // نُرجعها كـ numeric، نُحوّلها لـ number في TS.
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        id: string;
+        code: string;
+        name: string;
+        currentStock: import('@prisma/client').Prisma.Decimal;
+        minStockLevel: import('@prisma/client').Prisma.Decimal;
+        unit: string | null;
+        supplierId: string | null;
+      }>
+    >`
+      SELECT id, code, name, "currentStock", "minStockLevel", unit, "supplierId"
+      FROM raw_materials
+      WHERE "currentStock" <= "minStockLevel"
+      ORDER BY (("minStockLevel" - "currentStock")) DESC, name ASC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
 
-    const data = lowStock.slice(skip, skip + limit);
-    return new PaginatedResult(data, lowStock.length, page, limit);
+    // عدّ الإجمالي للـ pagination meta
+    const totalRows = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
+      SELECT COUNT(*)::bigint AS count
+      FROM raw_materials
+      WHERE "currentStock" <= "minStockLevel"
+    `;
+    const total = Number(totalRows[0]?.count ?? 0);
+
+    // نُنظّف الـ rows من Big number إلى plain JS objects
+    const data = rows.map((r) => ({
+      id: r.id,
+      code: r.code,
+      name: r.name,
+      // D7: costPerUnit غائب عمداً — لا يُرجع من هنا.
+      currentStock: Number(r.currentStock),
+      minStockLevel: Number(r.minStockLevel),
+      unit: r.unit,
+      supplierId: r.supplierId,
+    }));
+
+    return new PaginatedResult(data, total, page, limit);
+  }
+
+  /**
+   * A6: يجلب رصيد المادة الخام لكل مستودع عبر aggregate من StockLedgerEntry.
+   *
+   * RawMaterial.currentStock هو الإجمالي الكلي (موجود كـ snapshot للقراءة السريعة)،
+   * لكن قد يحتاج المستخدم لمعرفة التوزيع لكل مستودع. هذه الدالة تجمع
+   * الـ balanceAfter الأخير لكل (warehouse, rawMaterial) من الـ ledger.
+   *
+   * @param rawMaterialId المادة الخام المطلوبة
+   * @returns مصفوفة لكل مستودع يحوي الكمية الحالية + آخر تحديث
+   */
+  async getMaterialBalanceByWarehouse(rawMaterialId: string) {
+    // Prisma لا يدعم DISTINCT ON نatively — نستخدم $queryRaw لـ PostgreSQL.
+    const rows = await this.prisma.$queryRaw<
+      Array<{
+        warehouseId: string;
+        warehouseCode: string;
+        warehouseName: string;
+        balance: import('@prisma/client').Prisma.Decimal;
+        lastUpdate: Date;
+      }>
+    >`
+      SELECT DISTINCT ON (sle."warehouseId")
+        sle."warehouseId",
+        w.code  AS "warehouseCode",
+        w.name  AS "warehouseName",
+        sle."balanceAfter" AS balance,
+        sle."createdAt"    AS "lastUpdate"
+      FROM stock_ledger_entries sle
+      JOIN warehouses w ON w.id = sle."warehouseId"
+      WHERE sle."rawMaterialId" = ${rawMaterialId}
+        AND sle."rawMaterialId" IS NOT NULL
+      ORDER BY sle."warehouseId", sle."createdAt" DESC
+    `;
+
+    return rows.map((r) => ({
+      warehouseId: r.warehouseId,
+      warehouseCode: r.warehouseCode,
+      warehouseName: r.warehouseName,
+      balance: Number(r.balance),
+      lastUpdate: r.lastUpdate,
+    }));
   }
 
   // ===================== WAREHOUSES (GF-0007) =====================
@@ -636,7 +710,7 @@ export class InventoryService {
         const isInbound =
           input.type === StockMovementType.RECEIVE ||
           input.type === StockMovementType.RETURN;
-        this.eventEmitter.emit(
+        void this.eventEmitter.emitAsync(
           isInbound ? EVENTS.STOCK_ADDED : EVENTS.STOCK_DEDUCTED,
           {
             materialId: eventContext.materialId,
@@ -649,7 +723,7 @@ export class InventoryService {
           eventContext.newBalance <= eventContext.minStockLevel &&
           eventContext.minStockLevel > 0
         ) {
-          this.eventEmitter.emit(EVENTS.STOCK_LOW, {
+          void this.eventEmitter.emitAsync(EVENTS.STOCK_LOW, {
             materialId: eventContext.materialId,
             currentStock: eventContext.newBalance,
             minStockLevel: eventContext.minStockLevel,

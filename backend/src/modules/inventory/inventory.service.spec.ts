@@ -95,12 +95,14 @@ describe('InventoryService — أساس المخزون القابل للتدقي
   let service: InventoryService;
   let prisma: ExtendedPrismaMock;
   let tx: ReturnType<typeof createTxMock>;
-  let eventEmitter: { emit: jest.Mock };
+  let eventEmitter: { emitAsync: jest.Mock };
 
   beforeEach(() => {
     prisma = createInventoryPrismaMock();
     tx = createTxMock();
-    eventEmitter = createEventEmitterMock() as unknown as { emit: jest.Mock };
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
     prisma.$transaction.mockImplementation(
       async (
         fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
@@ -217,7 +219,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         'user-1',
       );
 
-      expect(eventEmitter.emit).toHaveBeenCalledWith(EVENTS.STOCK_ADDED, {
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(EVENTS.STOCK_ADDED, {
         materialId: 'rm-1',
         warehouseId: 'wh-1',
         quantity: 50,
@@ -289,13 +291,16 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         'user-1',
       );
 
-      expect(eventEmitter.emit).toHaveBeenCalledWith(EVENTS.STOCK_DEDUCTED, {
-        materialId: 'rm-1',
-        warehouseId: 'wh-1',
-        quantity: 10,
-        newStock: 40,
-      });
-      expect(eventEmitter.emit).toHaveBeenCalledWith(EVENTS.STOCK_LOW, {
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
+        EVENTS.STOCK_DEDUCTED,
+        {
+          materialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantity: 10,
+          newStock: 40,
+        },
+      );
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(EVENTS.STOCK_LOW, {
         materialId: 'rm-1',
         currentStock: 40,
         minStockLevel: 50,
@@ -726,7 +731,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         select: { entryCode: true, createdAt: true },
       });
       expect(result.balanceAfter).toBe(200);
-      expect(eventEmitter.emit).toHaveBeenCalledWith(EVENTS.STOCK_ADDED, {
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(EVENTS.STOCK_ADDED, {
         materialId: 'rm-1',
         warehouseId: 'wh-1',
         quantity: 50,
@@ -811,16 +816,45 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       );
     });
 
-    it('يعرض فقط الخامات التي رصيدها عند حد الطلب أو أقل (low stock)', async () => {
-      prisma.rawMaterial.findMany.mockResolvedValue([
-        { id: 'rm-1', currentStock: 5, minStockLevel: 20 }, // منخفض
-        { id: 'rm-2', currentStock: 50, minStockLevel: 20 }, // سليم
-        { id: 'rm-3', currentStock: 20, minStockLevel: 20 }, // عند الحد بالضبط = منخفض
-      ]);
+    it('يعرض فقط الخامات التي رصيدها عند حد الطلب أو أقل (low stock) — B2 $queryRaw', async () => {
+      // B2: getLowStockMaterials uses $queryRaw instead of findMany+filter.
+      // Mock $queryRaw to return only low-stock rows (matching the SQL WHERE).
+      prisma.$queryRaw = jest
+        .fn()
+        .mockImplementation((strings: TemplateStringsArray) => {
+          // SQL strings come as a tagged template array; values are the params.
+          const sql = strings.join('?');
+          if (sql.includes('COUNT(*)')) {
+            return Promise.resolve([{ count: 2n }]);
+          }
+          // Data rows — simulating the WHERE currentStock <= minStockLevel filter
+          return Promise.resolve([
+            {
+              id: 'rm-1',
+              code: 'RM-001',
+              name: 'قماش قطني',
+              currentStock: 5,
+              minStockLevel: 20,
+              unit: 'METER',
+              supplierId: 'sup-1',
+            },
+            {
+              id: 'rm-3',
+              code: 'RM-003',
+              name: 'خيط',
+              currentStock: 20,
+              minStockLevel: 20,
+              unit: 'SPOOL',
+              supplierId: 'sup-2',
+            },
+          ]);
+        });
 
       const result = await service.getLowStockMaterials({});
 
       expect(result.data.map((m) => m.id)).toEqual(['rm-1', 'rm-3']);
+      // D7: costPerUnit must NOT be returned
+      expect(result.data[0]).not.toHaveProperty('costPerUnit');
     });
 
     it('يجلب المنتج التام مع الـ variant والمنتج', async () => {
@@ -839,11 +873,38 @@ describe('InventoryService — أساس المخزون القابل للتدقي
 
     it('الملخص يجمع العدادات: خامات + منخفض + أنواع منتج تام', async () => {
       prisma.rawMaterial.count.mockResolvedValue(10);
-      prisma.rawMaterial.findMany.mockResolvedValue([
-        { currentStock: 1, minStockLevel: 5 },
-        { currentStock: 2, minStockLevel: 5 },
-        { currentStock: 100, minStockLevel: 5 },
-      ]);
+      // B2: getLowStockMaterials now uses $queryRaw instead of findMany.
+      // The dashboard summary calls it — mock $queryRaw to simulate low-stock
+      // count. SQL with COUNT(*) returns count; otherwise returns 2 data rows.
+      prisma.$queryRaw = jest
+        .fn()
+        .mockImplementation((strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.includes('COUNT(*)')) {
+            return Promise.resolve([{ count: 2n }]);
+          }
+          // Data rows — 2 low-stock items
+          return Promise.resolve([
+            {
+              id: 'rm-1',
+              code: 'RM-001',
+              name: 'A',
+              currentStock: 5,
+              minStockLevel: 20,
+              unit: 'M',
+              supplierId: 's1',
+            },
+            {
+              id: 'rm-2',
+              code: 'RM-002',
+              name: 'B',
+              currentStock: 10,
+              minStockLevel: 20,
+              unit: 'M',
+              supplierId: 's2',
+            },
+          ]);
+        });
       prisma.finishedGood.count.mockResolvedValue(4);
 
       const result = await service.getDashboardSummary();

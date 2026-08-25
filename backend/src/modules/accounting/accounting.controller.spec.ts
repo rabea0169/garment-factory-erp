@@ -32,6 +32,7 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
       type: VoucherType.PAYMENT,
       amount: 100,
       description: 'اختبار',
+      treasuryId: '00000000-0000-0000-0000-000000000001',
       createdById: 'HACKED-USER-ID',
     };
     await controller.createVoucher('user-from-session', body);

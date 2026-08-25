@@ -10,8 +10,10 @@ export function createPrismaMock() {
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $transaction: jest.fn(),
+    // B2: $queryRaw mock — default returns empty array. Override per-test with
+    // prisma.$queryRaw = jest.fn().mockResolvedValue([...])
+    $queryRaw: jest.fn().mockResolvedValue([]),
     user: { findUnique: jest.fn() },
-    customer: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
     salesOrder: {
       findMany: jest.fn(),
       create: jest.fn(),
@@ -29,9 +31,12 @@ export function createPrismaMock() {
     finishedGood: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      // A5: updateMany للاختبار atomic decrement (WHERE quantity >= N)
+      updateMany: jest.fn(),
     },
     product: {
       findMany: jest.fn(),
@@ -81,8 +86,46 @@ export function createPrismaMock() {
     },
     dailyProduction: { create: jest.fn() },
     workerAdvance: { create: jest.fn() },
-    account: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
-    voucher: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
+    account: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+      update: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    voucher: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    treasury: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+    journalEntry: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+    },
+    journalLine: { create: jest.fn() },
+    customer: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+    supplier: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
     shipment: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
   };
 }
@@ -90,9 +133,14 @@ export function createPrismaMock() {
 export type PrismaMock = ReturnType<typeof createPrismaMock>;
 
 /**
- * mock لـ EventEmitter2 — يلتقط emit دون تفعيل أي listeners فعليين،
+ * mock لـ EventEmitter2 — يلتقط emit + emitAsync دون تفعيل أي listeners فعليين،
  * ما يسمح بالتحقق من إطلاق الأحداث (EVENTS.*) في اختبارات الخدمات.
+ *
+ * B7: emitAsync تُرجع Promise (fire-and-forget) — نُعيدها كـ resolved Promise
+ * كي لا يظهر unhandled rejection عند استخدام `void` operator في الكود.
  */
 export function createEventEmitterMock(): EventEmitter2 {
-  return { emit: jest.fn() } as unknown as EventEmitter2;
+  const emit = jest.fn();
+  const emitAsync = jest.fn().mockResolvedValue(undefined);
+  return { emit, emitAsync } as unknown as EventEmitter2;
 }

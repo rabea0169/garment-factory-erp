@@ -2,12 +2,17 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  ConflictException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaymentType, SalesOrderStatus, Prisma } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import {
+  generateDocumentCode,
+  DocumentCodePrefix,
+} from '../../core/common/codes.util';
 
 @Injectable()
 export class SalesService {
@@ -41,7 +46,8 @@ export class SalesService {
     return this.prisma.customer.create({
       data: {
         ...data,
-        code: `CUST-${Date.now()}`,
+        // A7: كود عشوائي مشفّر بدل Date.now() — يمنع الاصطدامات وكشف التوقيت.
+        code: generateDocumentCode(DocumentCodePrefix.CUSTOMER),
       },
     });
   }
@@ -55,8 +61,13 @@ export class SalesService {
       this.prisma.salesOrder.findMany({
         skip,
         take: limit,
+        // B1: include مختصر — نعرض فقط بيانات العميل الأدنى (id/name/code)
+        // بدلاً من كائن العميل الكامل (الذي يحوي phone/address/balance/creditLimit
+        // ومعلومات حساسة). تقليل حجم الـ response ومنع تسريب بيانات غير ضرورية.
         include: {
-          customer: true,
+          customer: {
+            select: { id: true, name: true, code: true },
+          },
           items: {
             include: { variant: { include: { product: true } } },
           },
@@ -93,6 +104,36 @@ export class SalesService {
       throw new BadRequestException('One or more product variants not found');
     }
 
+    // A5 (pre-check): تأكد من وفرة المخزون قبل إنشاء الأمر (fail-fast).
+    // هذا الفحص استشاري فقط — الفحص atomic الحقيقي يحدث في confirmOrder
+    // (لا يمكن ضمان atomicity عبر عدة طلبات HTTP). الهدف هنا منع إنشاء
+    // أمر بيع لمستحيل من البداية (كمية أكبر بكثير من المتوفر).
+    const availability = await Promise.all(
+      data.items.map(async (item) => {
+        const fg = await this.prisma.finishedGood.findFirst({
+          where: { productVariantId: item.productVariantId },
+          select: { quantity: true },
+        });
+        return {
+          productVariantId: item.productVariantId,
+          available: fg?.quantity ?? 0,
+          requested: item.quantity,
+        };
+      }),
+    );
+    const insufficient = availability.filter((a) => a.available < a.requested);
+    if (insufficient.length > 0) {
+      const detail = insufficient
+        .map(
+          (a) =>
+            `${a.productVariantId}: مطلوب ${a.requested}، متوفر ${a.available}`,
+        )
+        .join('; ');
+      throw new BadRequestException(
+        `مخزون غير كافٍ قبل إنشاء الأمر — ${detail}. يُنصح بمراجعة المخزون أو تقليل الكمية.`,
+      );
+    }
+
     let totalAmount = 0;
     const orderItemsData = data.items.map((item) => {
       const variant = variants.find((v) => v.id === item.productVariantId);
@@ -115,7 +156,8 @@ export class SalesService {
     // 2. Create the order as DRAFT
     return this.prisma.salesOrder.create({
       data: {
-        code: `SO-${Date.now()}`,
+        // A7: كود عشوائي مشفّر YYYYMMDD-XXXXXXXX بدل Date.now().
+        code: generateDocumentCode(DocumentCodePrefix.SALES_ORDER),
         customerId: data.customerId,
         userId,
         paymentType: data.paymentType,
@@ -155,27 +197,52 @@ export class SalesService {
       });
 
       // 2. Issue items from Inventory (Finished Goods)
+      // A5: الطريقة atomic — نستخدم updateMany WHERE quantity >= N
+      // بدلاً من findFirst+update (الذي يسمح بـ race condition بين طلبين متزامنين).
+      // إذا count === 0، يعني أن مخزون آخر لحظة غير كافٍ (race-loser) — نرمي ConflictException.
       for (const item of order.items) {
         const fgRecord = await tx.finishedGood.findFirst({
           where: { productVariantId: item.productVariantId },
         });
-
-        const currentQty = fgRecord?.quantity || 0;
-        if (currentQty < item.quantity) {
+        if (!fgRecord) {
           throw new BadRequestException(
-            `Insufficient stock for product variant ${item.productVariantId}`,
+            `لا يوجد سجل مخزون نهائي للمنتج ${item.productVariantId}`,
           );
         }
 
-        const newBalance = currentQty - item.quantity;
-        await tx.finishedGood.update({
-          where: { id: fgRecord!.id },
-          data: { quantity: newBalance },
+        // A5: الـ atomic decrement — WHERE quantity >= item.quantity
+        // يضمن أن المستخدم الذي "يفوز" بالـ update هو الذي يرى الكمية الكافية.
+        // المتزامن الآخر يرى count=0 (لأن الكمية نقصت) ويرمي ConflictException.
+        const updateResult = await tx.finishedGood.updateMany({
+          where: {
+            id: fgRecord.id,
+            quantity: { gte: item.quantity },
+          },
+          data: {
+            quantity: { decrement: item.quantity },
+          },
         });
+
+        if (updateResult.count === 0) {
+          // Race-loser — مستخدم آخر أخذ المخزون بين pre-check و update.
+          throw new ConflictException(
+            `فشل صرف ${item.quantity} من المنتج ${item.productVariantId} — المخزون الحالي غير كافٍ. يُرجى إعادة المراجعة.`,
+          );
+        }
+
+        // A5: الكمية الجديدة محسوبة بعد الـ atomic update — نقرأها مرة أخرى.
+        const updatedFg = await tx.finishedGood.findUnique({
+          where: { id: fgRecord.id },
+          select: { quantity: true },
+        });
+        const newBalance = updatedFg?.quantity ?? 0;
 
         await tx.stockLedgerEntry.create({
           data: {
-            entryCode: `SLE-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+            // A7: كود عشوائي مشفّر
+            entryCode: generateDocumentCode(
+              DocumentCodePrefix.STOCK_LEDGER_ENTRY,
+            ),
             type: 'ISSUE', // StockMovementType.ISSUE
             warehouseId: fgWarehouse.id,
             productVariantId: item.productVariantId,

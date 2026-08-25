@@ -56,7 +56,7 @@ export class ProductionService {
       },
     });
 
-    this.eventEmitter.emit(EVENTS.WORK_ORDER_CREATED, workOrder);
+    void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_CREATED, workOrder);
     return workOrder;
   }
 
@@ -162,7 +162,7 @@ export class ProductionService {
       },
     );
 
-    this.eventEmitter.emit(EVENTS.WORK_ORDER_COMPLETED, updatedOrder);
+    void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_COMPLETED, updatedOrder);
     return updatedOrder;
   }
 }
