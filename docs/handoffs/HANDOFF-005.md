@@ -2,7 +2,7 @@
 
 ## Status
 - Branch: `stabilization/baseline-and-security`
-- Commit: c347e3c
+- Commit: 119653c
 - Phase: 1 — Security & Stabilization (**مكتملة — بوابة G1 معبورة**)
 - Task ID: GF-0006
 - Date: 2026-08-25
@@ -35,7 +35,7 @@
 | Unit tests | ✅ 22/22 — 89/89 | |
 | E2E tests | ✅ 2/2 — 36/36 (بلا DB) | |
 | Lint / Build / Prisma validate | ✅ / ✅ / ✅ | |
-| **CI على GitHub (الوظيفتان)** | ✅ **أخضر بالكامل** — دليل Run في PROJECT_STATE | معيار القبول 7 |
+| **CI على GitHub (الوظيفتان)** | ✅ **أخضر بالكامل — Run #7 @ 119653c** (Backend كله + Secret Scan) | معيار القبول 7 — بعد إصلاح خطأ TS في seed (requireEnv) |
 
 ## Known Issues
 - docker غير متاح في بيئة القياس — تحقق compose كان YAML/بنية فقط؛ أول تشغيل فعلي للحاويات على جهاز المطور يتحقق من runtime (متوقع سليم: متغيرات ?{} قياسية).
@@ -72,6 +72,9 @@ ACCEPTANCE CRITERIA:
 7. كل الفحوصات القائمة (89 unit + 36 e2e + lint + build + CI أخضر) تبقى خضراء.
 ```
 
+## إصلاح لاحق ضمن المهمة (Run #6 → #7)
+- فشل Build في CI بخطأ TS2345 في seed.ts: تضييق `string | undefined` عبر `process.exit` لا يثبت تحت نسخة TS في CI (محليًا أخفاه كاش تزايدي). الحل: دالة `requireEnv(name, hint): string` — حتمية عبر كل إصدارات TS، مع بقاء fail-closed مثبتًا (exit 1 بدون SEED_ADMIN_PASSWORD). التزام 119653c.
+
 ## Rollback
-- `git revert c347e3c` — لا schema ولا بيانات؛ config وdocs فقط.
+- `git revert 119653c` — لا schema ولا بيانات؛ config وdocs فقط.
 - استرجاع الحاويات القديمة: revert docker-compose.yml و`.env.example` الجذري.

@@ -5,7 +5,7 @@
 ```text
 Project: Garment Factory ERP
 Current branch: stabilization/baseline-and-security
-Current commit: (التزام GF-0006 — يُحدّث في كل تسليم)
+Current commit: 119653c (GF-0006 + إصلاح build CI)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
 Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006): حماية fail-closed + اختبارات خضراء + DTOs + صفر أسرار + CI أخضر بالكامل
 Active task: GF-0007 — أساس المجال (Warehouse + Stock Ledger + idempotency + indexes) — المرحلة 2
@@ -62,8 +62,10 @@ Next exact action: تنفيذ GF-0007 وفق بطاقة المهمة في HANDOF
 
 ### دليل CI الفعلي
 - **Run #1 (2026-08-25، sha 02ec9cb بعد GF-0002):** backend job فشل في lint (الأخطاء القديمة) + secret-scan فشل (مقصود).
-- **Run #3 (2026-08-25، sha b4ff13f بعد GF-0003):** ✅ **Backend job أخضر بالكامل** — npm ci → prisma generate → validate → **Lint ✅** → **Build ✅** → **Tests ✅**. الوحيد الأحمر: secret-scan (docker-compose/README/seed — نطاق GF-0006 المقصود).
-- الخلاصة: CI يحمي المستودع بالكامل الآن؛ يخضرّ كليًا مع GF-0006.
+- **Run #3 (بعد GF-0003):** Backend job أخضر — secret-scan أحمر (مقصود).
+- **Run #6 (بعد GF-0006):** Secret Scan ✅ لأول مرة — لكن فشل Build بخطأ TS في seed.ts (narrowing عبر process.exit لا يثبت تحت نسخة TS في CI؛ أخفاه كاش تزايدي محلي).
+- **Run #7 (2026-08-25، sha 119653c):** 🎉 **CI أخضر بالكامل — الوظيفتان معًا**: Backend (generate→validate→lint→build→unit 89→e2e 36) ✅ + Secret Scan ✅.
+- الخلاصة: **بوابة G1 معبورة رسميًا** — الالتزام 119653c هو خط الأساس الأخضر القابل لإعادة الإنتاج.
 
 ## 3. جرد المكونات الفعلي (مقابل ما يعلنه README)
 
