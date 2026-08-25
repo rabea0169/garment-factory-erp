@@ -1,6 +1,10 @@
 -- GF-0013: production workflow, stage output, material consumption and cost snapshots.
 -- This migration is additive. It intentionally preserves legacy production tables.
 
+-- The Prisma schema already declares IN_PROGRESS for WorkOrderStatus, but the
+-- legacy initial migration predates that value. Add it without rewriting the enum.
+ALTER TYPE "WorkOrderStatus" ADD VALUE IF NOT EXISTS 'IN_PROGRESS';
+
 CREATE TYPE "ProductionStage" AS ENUM ('CUTTING', 'SEWING', 'IRONING', 'PACKING');
 
 CREATE TYPE "ProductionStageRunStatus" AS ENUM ('PENDING', 'IN_PROGRESS', 'COMPLETED', 'CANCELLED');
