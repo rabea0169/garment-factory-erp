@@ -7,7 +7,7 @@ export class ProductsService {
 
   async getAllSeasons() {
     return this.prisma.season.findMany({
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
     });
   }
 
@@ -17,7 +17,7 @@ export class ProductsService {
         season: true,
         variants: true,
       },
-      orderBy: { name: 'asc' }
+      orderBy: { name: 'asc' },
     });
   }
 
@@ -28,9 +28,9 @@ export class ProductsService {
         season: true,
         variants: true,
         bomItems: {
-          include: { rawMaterial: true }
-        }
-      }
+          include: { rawMaterial: true },
+        },
+      },
     });
 
     if (!product) throw new NotFoundException('المنتج غير موجود');
@@ -50,7 +50,7 @@ export class ProductsService {
 
   async createVariant(productId: string, size: string, color: string) {
     return this.prisma.productVariant.create({
-      data: { productId, size, color }
+      data: { productId, size, color },
     });
   }
 }

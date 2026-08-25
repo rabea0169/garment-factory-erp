@@ -4,6 +4,6 @@ import { QualityService } from './quality.service';
 
 @Module({
   controllers: [QualityController],
-  providers: [QualityService]
+  providers: [QualityService],
 })
 export class QualityModule {}

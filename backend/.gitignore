@@ -1,5 +1,27 @@
+# Dependencies
 node_modules
-# Keep environment variables out of version control
-.env
 
+# Environment variables — لا تُنشر أبدًا
+.env
+.env.local
+.env.*.local
+
+# Prisma generated client
 /generated/prisma
+
+# Build output
+dist
+build
+
+# Test coverage
+coverage
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea
+.vscode

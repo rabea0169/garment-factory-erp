@@ -21,15 +21,21 @@ export class InventoryService {
 
   async getLowStockMaterials() {
     const materials = await this.prisma.rawMaterial.findMany();
-    return materials.filter(m => m.currentStock <= m.minStockLevel);
+    return materials.filter((m) => m.currentStock <= m.minStockLevel);
   }
 
-  async addRawMaterialStock(materialId: string, quantity: number, costPerUnit: number) {
-    const material = await this.prisma.rawMaterial.findUnique({ where: { id: materialId } });
+  async addRawMaterialStock(
+    materialId: string,
+    quantity: number,
+    costPerUnit: number,
+  ) {
+    const material = await this.prisma.rawMaterial.findUnique({
+      where: { id: materialId },
+    });
     if (!material) throw new NotFoundException('المادة الخام غير موجودة');
 
     // إنشاء حركة مخزن
-    const transaction = await this.prisma.rawMaterialTransaction.create({
+    await this.prisma.rawMaterialTransaction.create({
       data: {
         rawMaterialId: materialId,
         type: 'PURCHASE',
@@ -46,7 +52,11 @@ export class InventoryService {
       data: { currentStock: newStock },
     });
 
-    this.eventEmitter.emit(EVENTS.STOCK_ADDED, { materialId, quantity, newStock });
+    this.eventEmitter.emit(EVENTS.STOCK_ADDED, {
+      materialId,
+      quantity,
+      newStock,
+    });
     return updated;
   }
 

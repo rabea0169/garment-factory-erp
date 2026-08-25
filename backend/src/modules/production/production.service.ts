@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkOrderStatus } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -21,14 +21,18 @@ export class ProductionService {
     });
   }
 
-  async createWorkOrder(dto: { productId: string; quantity: number; creatorId: string }) {
+  async createWorkOrder(
+    dto: { productId: string; quantity: number },
+    creatorId: string,
+  ) {
     const workOrder = await this.prisma.workOrder.create({
       data: {
         code: `WO-${Date.now()}`,
         productId: dto.productId,
         quantity: dto.quantity,
         status: WorkOrderStatus.PLANNED,
-        createdById: dto.creatorId,
+        // P0-04: الهوية من الجلسة (يمررها الـ controller) — تُتجاهل أي قيمة من body
+        createdById: creatorId,
       },
     });
 
@@ -45,7 +49,7 @@ export class ProductionService {
     if (status === WorkOrderStatus.COMPLETED) {
       // NOTE: Should map to a variant in a real app, assuming first variant for now
       const variant = await this.prisma.productVariant.findFirst({
-        where: { productId: order.productId }
+        where: { productId: order.productId },
       });
       if (variant) {
         await this.prisma.finishedGood.create({

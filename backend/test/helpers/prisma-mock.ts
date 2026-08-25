@@ -1,0 +1,46 @@
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+/**
+ * GF-0003: مصنع mock موحد لـ PrismaService — يُستخدم في كل specs الوحدات
+ * والاختبارات e2e كي لا تحتاج أي قاعدة بيانات فعلية.
+ * كل استدعاء prisma يصبح jest.fn() قابلًا للضبط (mockResolvedValue) والتحقق (toHaveBeenCalledWith).
+ */
+export function createPrismaMock() {
+  return {
+    $connect: jest.fn(),
+    $disconnect: jest.fn(),
+    $transaction: jest.fn(),
+    user: { findUnique: jest.fn() },
+    customer: { findMany: jest.fn(), create: jest.fn() },
+    salesOrder: { findMany: jest.fn(), create: jest.fn() },
+    rawMaterial: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+    rawMaterialTransaction: { create: jest.fn() },
+    finishedGood: { findMany: jest.fn(), count: jest.fn(), create: jest.fn() },
+    product: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
+    season: { findMany: jest.fn(), create: jest.fn() },
+    productVariant: { create: jest.fn(), findFirst: jest.fn() },
+    workOrder: { findMany: jest.fn(), create: jest.fn(), update: jest.fn() },
+    qualityCheck: { findMany: jest.fn(), create: jest.fn() },
+    worker: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
+    dailyProduction: { create: jest.fn() },
+    workerAdvance: { create: jest.fn() },
+    account: { findMany: jest.fn(), create: jest.fn() },
+    voucher: { findMany: jest.fn(), create: jest.fn() },
+    shipment: { findMany: jest.fn(), create: jest.fn() },
+  };
+}
+
+export type PrismaMock = ReturnType<typeof createPrismaMock>;
+
+/**
+ * mock لـ EventEmitter2 — يلتقط emit دون تفعيل أي listeners فعليين،
+ * ما يسمح بالتحقق من إطلاق الأحداث (EVENTS.*) في اختبارات الخدمات.
+ */
+export function createEventEmitterMock(): EventEmitter2 {
+  return { emit: jest.fn() } as unknown as EventEmitter2;
+}

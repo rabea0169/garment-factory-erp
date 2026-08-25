@@ -1,17 +1,43 @@
-import { PrismaClient, UserRole, RawMaterialUnit, WorkOrderStatus, WorkerSpecialty } from '@prisma/client';
+import 'dotenv/config';
+import { PrismaClient, UserRole, RawMaterialUnit, WorkerSpecialty } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 
-const pool = new Pool({ connectionString: 'postgresql://postgres:erp_password_2024@localhost:5432/garment_erp?schema=public' });
+/**
+ * GF-0006: قراءة متغير بيئة إلزامي مع فشل فوري (fail-closed).
+ * دالة تُرجع string بدل التضييق عبر process.exit — تضمن صحة الأنواع
+ * في كل إصدارات TypeScript (لا تعتمد على control-flow analysis للـ never).
+ */
+function requireEnv(name: string, hint: string): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`${name} مفقود — ${hint}`);
+    process.exit(1);
+  }
+  return value;
+}
+
+// GF-0002 / P0-03: الاتصال من البيئة فقط — لا connection string مكتوب في الكود
+const connectionString = requireEnv(
+  'DATABASE_URL',
+  'انسخ backend/.env.example إلى backend/.env واضبط قيمة الاتصال.',
+);
+const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
+
+// GF-0006 / P1-02: كلمة مرور admin الأولية من البيئة — لا قيمة منشورة في الكود أو README
+const seedAdminPassword = requireEnv(
+  'SEED_ADMIN_PASSWORD',
+  'حدد كلمة مرور أولية للتطوير في backend/.env (مثال في backend/.env.example). لا قيمة افتراضية لأسباب أمنية.',
+);
 
 async function main() {
   console.log('Seeding database...');
 
   // 1. Create Admin User
-  const hashedPassword = await bcrypt.hash('Admin@123', 10);
+  const hashedPassword = await bcrypt.hash(seedAdminPassword, 10);
   const admin = await prisma.user.upsert({
     where: { email: 'admin@factory.com' },
     update: {},

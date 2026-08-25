@@ -1,6 +1,16 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { InventoryService } from './inventory.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.guard';
+import { AddStockDto } from './dto/add-stock.dto';
 
 @ApiTags('Inventory (المخزون)')
 @Controller('inventory')
@@ -20,12 +30,17 @@ export class InventoryController {
   }
 
   @Post('raw-materials/:id/add-stock')
+  @Roles(UserRole.INVENTORY_MANAGER)
   @ApiOperation({ summary: 'إضافة رصيد لمادة خام' })
   async addStock(
-    @Param('id') id: string,
-    @Body() body: { quantity: number; costPerUnit: number },
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: AddStockDto,
   ) {
-    return this.inventoryService.addRawMaterialStock(id, body.quantity, body.costPerUnit);
+    return this.inventoryService.addRawMaterialStock(
+      id,
+      body.quantity,
+      body.costPerUnit,
+    );
   }
 
   @Get('finished-goods')

@@ -1,6 +1,9 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
 import { QualityService } from './quality.service';
 import { ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
+import { Roles } from '../auth/roles.guard';
+import { CreateQualityCheckDto } from './dto/create-quality-check.dto';
 
 @ApiTags('Quality Control (مراقبة الجودة)')
 @Controller('quality')
@@ -13,7 +16,8 @@ export class QualityController {
   }
 
   @Post()
-  async addCheck(@Body() body: any) {
+  @Roles(UserRole.PRODUCTION_MANAGER, UserRole.GENERAL_MANAGER)
+  async addCheck(@Body() body: CreateQualityCheckDto) {
     return this.qualityService.addQualityCheck(body);
   }
 }

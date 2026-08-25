@@ -1,4 +1,11 @@
-version: '3.8'
+# GF-0006 / P0-03 + P1-06 + P1-07:
+# - لا كلمة مرور ثابتة: كل القيم من البيئة عبر .env بجذر المستودع (انسخ .env.example)
+#   الصيغة ${VAR:?msg} تفشل التشغيل فورًا مع رسالة واضحة عند نقص القيمة (fail-closed).
+# - healthcheck لـ postgres يعمل فعليًا: pg_isready بالمستخدم وقاعدة البيانات من env
+#   (الـ $$ لإفلات متغيرات الحاوية من substitution الخاص بـ compose).
+# - الربط الخارجي على localhost فقط (127.0.0.1) — لا نشر للشبكة الخارجية.
+# - pgAdmin تحت profile "tools" اختياري: لا يعمل افتراضيًا
+#   (docker compose --profile tools up pgadmin).
 
 services:
   postgres:
@@ -6,42 +13,52 @@ services:
     container_name: garment_erp_db
     restart: always
     environment:
-      POSTGRES_DB: garment_erp
-      POSTGRES_PASSWORD: erp_password_2024
+      POSTGRES_USER: ${POSTGRES_USER:?انسخ .env.example إلى .env وحدد POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?انسخ .env.example إلى .env وحدد POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-garment_erp}
     ports:
-      - "5432:5432"
+      # ربط محلي فقط للتطوير — لا يُنشر على الشبكة الخارجية
+      - '127.0.0.1:5432:5432'
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U erp_user -d garment_erp"]
+      test:
+        [
+          'CMD-SHELL',
+          'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}',
+        ]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # ملاحظة: Redis غير مستخدم في كود الـ backend حاليًا (موثق في PROJECT_STATE §3)
+  # يُدار هنا للجاهزية المستقبلية فقط (rate-limit/cache — GF-0021)
   redis:
     image: redis:7-alpine
     container_name: garment_erp_redis
     restart: always
     ports:
-      - "6379:6379"
+      - '127.0.0.1:6379:6379'
     volumes:
       - redis_data:/data
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ['CMD', 'redis-cli', 'ping']
       interval: 10s
       timeout: 5s
       retries: 5
 
-  # pgAdmin (اختياري - لإدارة قاعدة البيانات بصرياً)
+  # pgAdmin اختياري — لا يعمل افتراضيًا (profile: tools)
+  # تشغيله: docker compose --profile tools up -d pgadmin
   pgadmin:
     image: dpage/pgadmin4:latest
     container_name: garment_erp_pgadmin
     restart: always
+    profiles: ['tools']
     environment:
-      PGADMIN_DEFAULT_EMAIL: admin@factory.com
-      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL:?حدد PGADMIN_DEFAULT_EMAIL في .env (profile tools فقط)}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD:?حدد PGADMIN_DEFAULT_PASSWORD في .env (profile tools فقط)}
     ports:
-      - "5050:80"
+      - '127.0.0.1:5050:80'
     depends_on:
       - postgres
 
