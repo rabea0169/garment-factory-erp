@@ -6,6 +6,8 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaymentType, SalesOrderStatus, Prisma } from '@prisma/client';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 @Injectable()
 export class SalesService {
@@ -14,10 +16,21 @@ export class SalesService {
     private readonly inventoryService: InventoryService,
   ) {}
 
-  async getCustomers() {
-    return this.prisma.customer.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+  async getCustomers(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.customer.findMany({
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.customer.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   async createCustomer(data: {
@@ -33,16 +46,27 @@ export class SalesService {
     });
   }
 
-  async getSalesOrders() {
-    return this.prisma.salesOrder.findMany({
-      include: {
-        customer: true,
-        items: {
-          include: { variant: { include: { product: true } } },
+  async getSalesOrders(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.salesOrder.findMany({
+        skip,
+        take: limit,
+        include: {
+          customer: true,
+          items: {
+            include: { variant: { include: { product: true } } },
+          },
         },
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.salesOrder.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   async createSalesOrder(

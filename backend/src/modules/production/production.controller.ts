@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   ParseUUIDPipe,
+  Query,
 } from '@nestjs/common';
 import { ProductionService } from './production.service';
 import { UserRole } from '@prisma/client';
@@ -14,6 +15,7 @@ import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { UpdateWorkOrderStatusDto } from './dto/update-work-order-status.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Production (الإنتاج)')
 @Controller('production')
@@ -22,8 +24,8 @@ export class ProductionController {
 
   @Get('work-orders')
   @ApiOperation({ summary: 'الحصول على جميع أوامر التشغيل' })
-  async getWorkOrders() {
-    return this.productionService.getAllWorkOrders();
+  async getWorkOrders(@Query() pagination: PaginationDto) {
+    return this.productionService.getAllWorkOrders(pagination);
   }
 
   @Post('work-orders')

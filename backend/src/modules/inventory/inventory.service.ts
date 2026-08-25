@@ -9,6 +9,8 @@ import { createHash, randomBytes } from 'node:crypto';
 import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EVENTS } from '../../events/event-types';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 /**
  * GF-0007 — Domain Foundation: Inventory Application Service (مبدئي).
@@ -174,36 +176,71 @@ export class InventoryService {
 
   // ===================== RAW MATERIALS (reads) =====================
 
-  async getAllRawMaterials() {
-    return this.prisma.rawMaterial.findMany({
-      include: { supplier: true },
-      orderBy: { name: 'asc' },
-    });
+  async getAllRawMaterials(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.rawMaterial.findMany({
+        skip,
+        take: limit,
+        include: { supplier: true },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.rawMaterial.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
-  async getLowStockMaterials() {
-    const materials = await this.prisma.rawMaterial.findMany();
-    return materials.filter(
+  async getLowStockMaterials(pagination: PaginationDto) {
+    // Cannot easily paginate after manual filter, so we filter in DB.
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    // Prisma doesn't natively support comparing two columns directly in where,
+    // so we might have to use raw query, or just fetch all and paginate in memory.
+    // For now we will fetch all and paginate in memory.
+    const materials = await this.prisma.rawMaterial.findMany({
+      include: { supplier: true },
+    });
+    const lowStock = materials.filter(
       (m) => Number(m.currentStock) <= Number(m.minStockLevel),
     );
+
+    const data = lowStock.slice(skip, skip + limit);
+    return new PaginatedResult(data, lowStock.length, page, limit);
   }
 
   // ===================== WAREHOUSES (GF-0007) =====================
 
-  async getWarehouses() {
-    return this.prisma.warehouse.findMany({
-      where: { isActive: true },
-      orderBy: { code: 'asc' },
-    });
+  async getWarehouses(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.warehouse.findMany({
+        where: { isActive: true },
+        skip,
+        take: limit,
+        orderBy: { code: 'asc' },
+      }),
+      this.prisma.warehouse.count({ where: { isActive: true } }),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   // ===================== STOCK LEDGER (GF-0007) =====================
 
-  /**
-   * قراءة سجل الحركات (الأحدث أولًا) بحد أقصى 200 سطر للحماية من استجابات
-   * ضخمة — الـ pagination الكامل لكل القوائم مقرر في GF-0012.
-   */
-  async getLedgerEntries(filter: LedgerFilter) {
+  async getLedgerEntries(filter: LedgerFilter & PaginationDto) {
+    const page = filter.page || 1;
+    const limit = filter.limit || 20;
+    const skip = (page - 1) * limit;
+
     const where: Prisma.StockLedgerEntryWhereInput = {};
     if (filter.rawMaterialId) where.rawMaterialId = filter.rawMaterialId;
     if (filter.warehouseId) where.warehouseId = filter.warehouseId;
@@ -214,15 +251,21 @@ export class InventoryService {
         ...(filter.to ? { lte: new Date(filter.to) } : {}),
       };
     }
-    return this.prisma.stockLedgerEntry.findMany({
-      where,
-      include: {
-        warehouse: { select: { code: true, name: true } },
-        rawMaterial: { select: { code: true, name: true, unit: true } },
-      },
-      orderBy: { createdAt: 'desc' },
-      take: 200,
-    });
+    const [data, total] = await Promise.all([
+      this.prisma.stockLedgerEntry.findMany({
+        where,
+        skip,
+        take: limit,
+        include: {
+          warehouse: { select: { code: true, name: true } },
+          rawMaterial: { select: { code: true, name: true, unit: true } },
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.stockLedgerEntry.count({ where }),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   // ===================== MOVEMENT OPERATIONS (GF-0007) =====================
@@ -236,7 +279,7 @@ export class InventoryService {
     return this.executeMovement(
       {
         type: StockMovementType.RECEIVE,
-        rawMaterialId: input.rawMaterialId,
+        rawMaterialId: input.rawMaterialId as string,
         warehouseId: input.warehouseId,
         delta: input.quantity,
         unsignedQuantity: input.quantity,
@@ -259,7 +302,7 @@ export class InventoryService {
     return this.executeMovement(
       {
         type: StockMovementType.ISSUE,
-        rawMaterialId: input.rawMaterialId,
+        rawMaterialId: input.rawMaterialId as string,
         warehouseId: input.warehouseId,
         delta: -input.quantity,
         unsignedQuantity: input.quantity,
@@ -279,7 +322,7 @@ export class InventoryService {
     await this.assertMaterialWarehouse(input.warehouseId);
     return this.executeMovement({
       type: StockMovementType.ADJUSTMENT,
-      rawMaterialId: input.rawMaterialId,
+      rawMaterialId: input.rawMaterialId as string,
       warehouseId: input.warehouseId,
       delta: input.quantityDelta,
       unsignedQuantity: Math.abs(input.quantityDelta),
@@ -297,7 +340,7 @@ export class InventoryService {
     await this.assertMaterialWarehouse(input.warehouseId);
     return this.executeMovement({
       type: StockMovementType.WASTE,
-      rawMaterialId: input.rawMaterialId,
+      rawMaterialId: input.rawMaterialId as string,
       warehouseId: input.warehouseId,
       delta: -input.quantity,
       unsignedQuantity: input.quantity,
@@ -334,20 +377,33 @@ export class InventoryService {
 
   // ===================== FINISHED GOODS =====================
 
-  async getAllFinishedGoods() {
-    return this.prisma.finishedGood.findMany({
-      include: {
-        variant: {
-          include: { product: true },
+  async getAllFinishedGoods(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.finishedGood.findMany({
+        skip,
+        take: limit,
+        include: {
+          variant: {
+            include: { product: true },
+          },
         },
-      },
-      orderBy: { variant: { product: { name: 'asc' } } },
-    });
+        orderBy: { variant: { product: { name: 'asc' } } },
+      }),
+      this.prisma.finishedGood.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   async getDashboardSummary() {
     const materials = await this.prisma.rawMaterial.count();
-    const lowStock = (await this.getLowStockMaterials()).length;
+    const lowStock = (
+      await this.getLowStockMaterials({ page: 1, limit: 10000 })
+    ).data.length;
     const finishedGoods = await this.prisma.finishedGood.count();
 
     return {
@@ -406,7 +462,7 @@ export class InventoryService {
     const scope = IDEMPOTENCY_SCOPES[input.type];
     const requestPayload: Record<string, unknown> = {
       operation: scope,
-      rawMaterialId: input.rawMaterialId,
+      rawMaterialId: input.rawMaterialId as string,
       warehouseId: input.warehouseId,
       quantityDelta: input.delta,
       ...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
@@ -519,7 +575,7 @@ export class InventoryService {
           entryCode: generateEntryCode(),
           type: input.type,
           warehouseId: input.warehouseId,
-          rawMaterialId: input.rawMaterialId,
+          rawMaterialId: input.rawMaterialId as string,
           quantityDelta: input.delta,
           balanceAfter: newBalance,
           unitCost: appliedUnitCost,
@@ -535,7 +591,7 @@ export class InventoryService {
       const response: Omit<StockMovementResult, 'replayed'> = {
         entryCode: entry.entryCode,
         type: input.type,
-        rawMaterialId: input.rawMaterialId,
+        rawMaterialId: input.rawMaterialId as string,
         warehouseId: input.warehouseId,
         quantityDelta: input.delta,
         balanceAfter: newBalance,

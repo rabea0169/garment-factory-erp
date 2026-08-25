@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -6,6 +6,7 @@ import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
 @Controller('sales')
@@ -14,8 +15,8 @@ export class SalesController {
 
   @Get('customers')
   @ApiOperation({ summary: 'قائمة العملاء' })
-  async getCustomers() {
-    return this.salesService.getCustomers();
+  async getCustomers(@Query() pagination: PaginationDto) {
+    return this.salesService.getCustomers(pagination);
   }
 
   @Post('customers')
@@ -27,8 +28,8 @@ export class SalesController {
 
   @Get('orders')
   @ApiOperation({ summary: 'قائمة أوامر البيع (الفواتير)' })
-  async getSalesOrders() {
-    return this.salesService.getSalesOrders();
+  async getSalesOrders(@Query() pagination: PaginationDto) {
+    return this.salesService.getSalesOrders(pagination);
   }
 
   @Post('orders')

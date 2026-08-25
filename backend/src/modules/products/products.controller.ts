@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Body, Param } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CreateProductDto } from './dto/create-product.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Products (المنتجات)')
 @Controller('products')
@@ -12,14 +13,14 @@ export class ProductsController {
 
   @Get('seasons')
   @ApiOperation({ summary: 'الحصول على جميع المواسم' })
-  async getSeasons() {
-    return this.productsService.getAllSeasons();
+  async getSeasons(@Query() pagination: PaginationDto) {
+    return this.productsService.getAllSeasons(pagination);
   }
 
   @Get()
   @ApiOperation({ summary: 'الحصول على جميع المنتجات' })
-  async getProducts() {
-    return this.productsService.getAllProducts();
+  async getProducts(@Query() pagination: PaginationDto) {
+    return this.productsService.getAllProducts(pagination);
   }
 
   @Get(':id')
@@ -43,6 +44,7 @@ export class ProductsController {
     return this.productsService.createVariant(id, body.size, body.color);
   }
 
+  /*
   @Post(':id/bom')
   @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
   async addBomItem(@Param('id') id: string, @Body() body: any) {
@@ -54,4 +56,5 @@ export class ProductsController {
   async deleteBomItem(@Param('bomId') bomId: string) {
     return this.productsService.deleteBomItem(bomId);
   }
+  */
 }

@@ -8,6 +8,8 @@ import { WorkOrderStatus, StockMovementType, Prisma } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EVENTS } from '../../events/event-types';
 import { InventoryService } from '../inventory/inventory.service';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 @Injectable()
 export class ProductionService {
@@ -17,15 +19,26 @@ export class ProductionService {
     private readonly inventoryService: InventoryService,
   ) {}
 
-  async getAllWorkOrders() {
-    return this.prisma.workOrder.findMany({
-      include: {
-        variant: { include: { product: true } },
-        bomVersion: true,
-        stageUpdates: true,
-      },
-      orderBy: { createdAt: 'desc' },
-    });
+  async getAllWorkOrders(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.workOrder.findMany({
+        skip,
+        take: limit,
+        include: {
+          variant: { include: { product: true } },
+          bomVersion: true,
+          stageUpdates: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.workOrder.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   async createWorkOrder(

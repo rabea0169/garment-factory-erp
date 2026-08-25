@@ -19,6 +19,7 @@ import { IssueStockDto } from './dto/issue-stock.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { WasteStockDto } from './dto/waste-stock.dto';
 import { LedgerQueryDto } from './dto/ledger-query.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 /**
  * GF-0007 — مسارات المخزون على أساس الـ ledger:
@@ -34,14 +35,14 @@ export class InventoryController {
 
   @Get('raw-materials')
   @ApiOperation({ summary: 'الحصول على جميع المواد الخام' })
-  async getRawMaterials() {
-    return this.inventoryService.getAllRawMaterials();
+  async getRawMaterials(@Query() pagination: PaginationDto) {
+    return this.inventoryService.getAllRawMaterials(pagination);
   }
 
   @Get('raw-materials/low-stock')
   @ApiOperation({ summary: 'المواد الخام التي قاربت على الانتهاء' })
-  async getLowStockMaterials() {
-    return this.inventoryService.getLowStockMaterials();
+  async getLowStockMaterials(@Query() pagination: PaginationDto) {
+    return this.inventoryService.getLowStockMaterials(pagination);
   }
 
   @Post('raw-materials/:id/add-stock')
@@ -67,13 +68,13 @@ export class InventoryController {
 
   @Get('warehouses')
   @ApiOperation({ summary: 'المخازن النشطة' })
-  async getWarehouses() {
-    return this.inventoryService.getWarehouses();
+  async getWarehouses(@Query() pagination: PaginationDto) {
+    return this.inventoryService.getWarehouses(pagination);
   }
 
   @Get('ledger')
   @ApiOperation({
-    summary: 'سجل حركات المخزون (أحدث 200 حركة) بمرشحات خامة/مخزن/نوع/فترة',
+    summary: 'سجل حركات المخزون بمرشحات خامة/مخزن/نوع/فترة',
   })
   async getLedger(@Query() query: LedgerQueryDto) {
     return this.inventoryService.getLedgerEntries(query);
@@ -135,8 +136,8 @@ export class InventoryController {
 
   @Get('finished-goods')
   @ApiOperation({ summary: 'الحصول على المنتجات التامة الصنع' })
-  async getFinishedGoods() {
-    return this.inventoryService.getAllFinishedGoods();
+  async getFinishedGoods(@Query() pagination: PaginationDto) {
+    return this.inventoryService.getAllFinishedGoods(pagination);
   }
 
   @Get('summary')

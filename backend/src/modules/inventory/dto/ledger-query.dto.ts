@@ -1,12 +1,13 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { StockMovementType } from '@prisma/client';
 import { IsDateString, IsEnum, IsOptional, IsUUID } from 'class-validator';
+import { PaginationDto } from '../../../common/dto/pagination.dto';
 
 /**
  * GF-0007: مرشحات قراءة سجل حركات المخزون — كلها اختيارية.
  * التواريخ ISO 8601 (مثل 2026-08-25T00:00:00Z).
  */
-export class LedgerQueryDto {
+export class LedgerQueryDto extends PaginationDto {
   @ApiProperty({
     example: 'uuid-of-raw-material',
     description: 'تصفية بخامة محددة',

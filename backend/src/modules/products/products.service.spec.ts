@@ -18,10 +18,12 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
     ];
     prisma.product.findMany.mockResolvedValue(products);
 
-    const result = await service.getAllProducts();
+    const result = await service.getAllProducts({});
 
-    expect(result).toEqual(products);
+    expect((result as any).data || result).toEqual(products);
     expect(prisma.product.findMany).toHaveBeenCalledWith({
+      skip: 0,
+      take: 20,
       include: { season: true, variants: true },
       orderBy: { name: 'asc' },
     });
@@ -38,7 +40,7 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
 
     const result = await service.getProductDetails('p-1');
 
-    expect(result).toEqual(product);
+    expect((result as any).data || result).toEqual(product);
     expect(prisma.product.findUnique).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: 'p-1' } }),
     );

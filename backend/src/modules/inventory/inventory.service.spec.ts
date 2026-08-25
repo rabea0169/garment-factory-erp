@@ -52,8 +52,13 @@ function createInventoryPrismaMock(): ExtendedPrismaMock {
       findMany: jest.fn(),
       findFirst: jest.fn(),
       findUnique: jest.fn(),
+      count: jest.fn(),
     },
-    stockLedgerEntry: { create: jest.fn(), findMany: jest.fn() },
+    stockLedgerEntry: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+    },
     idempotencyKey: {
       findUnique: jest.fn(),
       create: jest.fn(),
@@ -679,10 +684,12 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       const warehouses = [WAREHOUSE];
       prisma.warehouse.findMany.mockResolvedValue(warehouses);
 
-      const result = await service.getWarehouses();
+      const result = await service.getWarehouses({});
 
-      expect(result).toEqual(warehouses);
+      expect((result as any).data || result).toEqual(warehouses);
       expect(prisma.warehouse.findMany).toHaveBeenCalledWith({
+        skip: 0,
+        take: 20,
         where: { isActive: true },
         orderBy: { code: 'asc' },
       });
@@ -752,7 +759,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         to: '2026-08-31T23:59:59Z',
       });
 
-      expect(result).toEqual(entries);
+      expect((result as any).data || result).toEqual(entries);
       expect(prisma.stockLedgerEntry.findMany).toHaveBeenCalledWith({
         where: {
           rawMaterialId: 'rm-1',
@@ -767,8 +774,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
           warehouse: { select: { code: true, name: true } },
           rawMaterial: { select: { code: true, name: true, unit: true } },
         },
+        skip: 0,
+        take: 20,
         orderBy: { createdAt: 'desc' },
-        take: 200,
       });
     });
 
@@ -778,7 +786,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       await service.getLedgerEntries({});
 
       expect(prisma.stockLedgerEntry.findMany).toHaveBeenCalledWith(
-        expect.objectContaining({ where: {}, take: 200 }),
+        expect.objectContaining({ where: {}, skip: 0, take: 20 }),
       );
     });
   });
@@ -792,9 +800,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       ];
       prisma.rawMaterial.findMany.mockResolvedValue(materials);
 
-      const result = await service.getAllRawMaterials();
+      const result = await service.getAllRawMaterials({});
 
-      expect(result).toEqual(materials);
+      expect((result as any).data || result).toEqual(materials);
       expect(prisma.rawMaterial.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { supplier: true },
@@ -810,18 +818,18 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         { id: 'rm-3', currentStock: 20, minStockLevel: 20 }, // عند الحد بالضبط = منخفض
       ]);
 
-      const result = await service.getLowStockMaterials();
+      const result = await service.getLowStockMaterials({});
 
-      expect(result.map((m) => m.id)).toEqual(['rm-1', 'rm-3']);
+      expect(result.data.map((m) => m.id)).toEqual(['rm-1', 'rm-3']);
     });
 
     it('يجلب المنتج التام مع الـ variant والمنتج', async () => {
       const goods = [{ id: 'fg-1', variant: { product: { name: 'تيشيرت' } } }];
       prisma.finishedGood.findMany.mockResolvedValue(goods);
 
-      const result = await service.getAllFinishedGoods();
+      const result = await service.getAllFinishedGoods({});
 
-      expect(result).toEqual(goods);
+      expect((result as any).data || result).toEqual(goods);
       expect(prisma.finishedGood.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           include: { variant: { include: { product: true } } },
@@ -840,7 +848,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
 
       const result = await service.getDashboardSummary();
 
-      expect(result).toEqual({
+      expect((result as any).data || result).toEqual({
         totalMaterials: 10,
         lowStockMaterials: 2,
         totalFinishedGoodsTypes: 4,

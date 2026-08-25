@@ -1,24 +1,48 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 @Injectable()
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getAllSeasons() {
-    return this.prisma.season.findMany({
-      orderBy: { createdAt: 'desc' },
-    });
+  async getAllSeasons(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.season.findMany({
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.season.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
-  async getAllProducts() {
-    return this.prisma.product.findMany({
-      include: {
-        season: true,
-        variants: true,
-      },
-      orderBy: { name: 'asc' },
-    });
+  async getAllProducts(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.product.findMany({
+        skip,
+        take: limit,
+        include: {
+          season: true,
+          variants: true,
+        },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.product.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
   }
 
   async getProductDetails(id: string) {
@@ -54,6 +78,7 @@ export class ProductsService {
     });
   }
 
+  /*
   async addBomItem(productId: string, rawMaterialId: string, quantity: number, unit: string) {
     return this.prisma.bomItem.create({
       data: {
@@ -71,4 +96,5 @@ export class ProductsService {
       where: { id }
     });
   }
+  */
 }

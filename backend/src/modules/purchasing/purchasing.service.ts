@@ -7,6 +7,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 @Injectable()
 export class PurchasingService {
@@ -14,6 +16,24 @@ export class PurchasingService {
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
   ) {}
+
+  async getPurchaseOrders(pagination: PaginationDto) {
+    const page = pagination.page || 1;
+    const limit = pagination.limit || 20;
+    const skip = (page - 1) * limit;
+
+    const [data, total] = await Promise.all([
+      this.prisma.purchaseOrder.findMany({
+        skip,
+        take: limit,
+        include: { supplier: true, items: true },
+        orderBy: { createdAt: 'desc' },
+      }),
+      this.prisma.purchaseOrder.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, limit);
+  }
 
   async createPurchaseOrder(dto: CreatePurchaseOrderDto, creatorId: string) {
     const totalAmount = dto.items.reduce(

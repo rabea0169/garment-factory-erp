@@ -41,9 +41,9 @@ describe('InventoryController — التفويض وتمرير العمليات (
   });
 
   it('يفوّض قراءات المخزون إلى الخدمة', async () => {
-    await controller.getRawMaterials();
-    await controller.getLowStockMaterials();
-    await controller.getFinishedGoods();
+    await controller.getRawMaterials({});
+    await controller.getLowStockMaterials({});
+    await controller.getFinishedGoods({});
     await controller.getSummary();
     expect(service.getAllRawMaterials).toHaveBeenCalledTimes(1);
     expect(service.getLowStockMaterials).toHaveBeenCalledTimes(1);
@@ -71,7 +71,7 @@ describe('InventoryController — التفويض وتمرير العمليات (
       type: 'RECEIVE' as const,
       from: '2026-08-01T00:00:00Z',
     };
-    await controller.getWarehouses();
+    await controller.getWarehouses({});
     await controller.getLedger(filters);
     expect(service.getWarehouses).toHaveBeenCalledTimes(1);
     expect(service.getLedgerEntries).toHaveBeenCalledWith(filters);

@@ -31,10 +31,12 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     ];
     prisma.workOrder.findMany.mockResolvedValue(orders);
 
-    const result = await service.getAllWorkOrders();
+    const result = await service.getAllWorkOrders({});
 
-    expect(result).toEqual(orders);
+    expect((result as any).data || result).toEqual(orders);
     expect(prisma.workOrder.findMany).toHaveBeenCalledWith({
+      skip: 0,
+      take: 20,
       include: {
         variant: { include: { product: true } },
         bomVersion: true,

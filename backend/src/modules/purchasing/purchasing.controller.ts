@@ -1,4 +1,13 @@
-import { Controller, Post, Body, Param, Put, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Put,
+  UseGuards,
+  Query,
+} from '@nestjs/common';
 import { PurchasingService } from './purchasing.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -6,6 +15,7 @@ import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '@prisma/client';
 import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Purchasing')
 @ApiBearerAuth()
@@ -13,6 +23,12 @@ import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
 @Controller('purchasing')
 export class PurchasingController {
   constructor(private readonly purchasingService: PurchasingService) {}
+
+  @Get('orders')
+  @ApiOperation({ summary: 'Get all purchase orders with pagination' })
+  async getPurchaseOrders(@Query() pagination: PaginationDto) {
+    return this.purchasingService.getPurchaseOrders(pagination);
+  }
 
   @Post()
   @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)

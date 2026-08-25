@@ -18,14 +18,23 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011)', ()
       findUnique: jest.fn(),
       update: jest.fn(),
     } as any;
-    prisma.productVariant = { findMany: jest.fn() } as any;
+    prisma.productVariant = {
+      count: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      findFirst: jest.fn(),
+    } as any;
     prisma.warehouse = { findFirst: jest.fn() } as any;
     prisma.finishedGood = {
       findFirst: jest.fn(),
       update: jest.fn(),
       create: jest.fn(),
     } as any;
-    prisma.stockLedgerEntry = { create: jest.fn() } as any;
+    prisma.stockLedgerEntry = {
+      count: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+    } as any;
 
     service = new SalesService(
       prisma as unknown as PrismaService,
