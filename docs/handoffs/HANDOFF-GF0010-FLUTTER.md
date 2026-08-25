@@ -3,10 +3,11 @@
 ## الحالة
 
 - **Task ID:** GF-0010
-- **Branch:** `phase2/gf-0010-quality` محليًا
-- **Commit:** `a2b234c feat(gf-0010): secure Flutter auth integration`
+- **Branch:** `phase2/gf-0010-flutter`
+- **Commits:** `a2b234c` → `afe5559` → `4b4aa52` → `907764d`
+- **Latest commit:** `907764d fix(gf-0010): align Flutter plugin APIs`
 - **Base:** آخر `phase2/domain-foundation` عند GF-0008
-- **Status:** تنفيذ العميل مكتمل محليًا، ويحتاج Flutter CI/مراجعة بشرية قبل الدمج
+- **Status:** تنفيذ العميل مكتمل، وCI أخضر؛ يحتاج مراجعة/دمج بشري
 - **لا يتضمن:** تعديلات schema أو ملفات Purchasing/GF-0009
 
 ## ما تم تنفيذه
@@ -60,6 +61,16 @@ mobile_app/lib/features/reports/presentation/screens/reports_screen.dart
 
 ## التحقق
 
+تم تنفيذ CI على GitHub للـ commit `907764d` عبر Run `32853456521`، وكانت الوظائف الثلاث ناجحة:
+
+```text
+Flutter — Analyze / Test       PASS
+Secret Scan                    PASS
+Backend — Prisma/Lint/Build/Tests PASS
+```
+
+نتائج Flutter تضمنت `flutter pub get` و`flutter analyze` و`flutter test` بنجاح.
+
 تم تنفيذ فحوصات Backend على نفس قاعدة GF-0008 دون تغيير، وكانت النتائج:
 
 ```text
@@ -72,11 +83,12 @@ e2e tests              2 suites / 36 tests PASS
 tsc --noEmit           PASS
 ```
 
-لم يمكن تشغيل `flutter analyze` أو `flutter test` محليًا لأن Flutter SDK غير مثبت في بيئة التنفيذ. يجب أن يكون GitHub Actions هو بوابة التحقق النهائية لهذا الفرع.
+في بيئة التنفيذ المحلية لم يكن Flutter SDK مثبتًا، لذلك تم اعتماد GitHub Actions للتحقق التنفيذي من Flutter، ونجحت البوابة فعليًا.
 
 ## تعليمات الدمج بعد GF-0009
 
-بما أن نموذجًا آخر ينفذ GF-0009 على مسار المشتريات، يجب دمج هذا الفرع بعد اكتمال GF-0009 أو إعادة تطبيق commit `a2b234c` فوق فرع GF-0009. لا توجد تعارضات متوقعة في schema أو Purchasing، لكن `.github/workflows/ci.yml` وREADME قد يحتاجان حلًا يدويًا إذا عدلهما النموذج الآخر.
+بما أن نموذجًا آخر ينفذ GF-0009 على مسار المشتريات، يجب دمج هذا الفرع بعد اكتمال GF-0009 أو إعادة تطبيق commits GF-0010 فوق فرع GF-0009.
+ لا توجد تعارضات متوقعة في schema أو Purchasing، لكن `.github/workflows/ci.yml` وREADME قد يحتاجان حلًا يدويًا إذا عدلهما النموذج الآخر.
 
 بعد الدمج يجب التحقق من أن `flutter_secure_storage` موجود في `pubspec.yaml` وأن Flutter CI أخضر. كما يجب اختبار 401 على جهاز/محاكي حقيقي، لأن اختبار unit المحلي غير متاح بدون Flutter SDK.
 
