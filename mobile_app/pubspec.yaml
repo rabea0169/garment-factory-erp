@@ -31,7 +31,7 @@ dependencies:
   # Local Storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
-  shared_preferences: ^2.5.5
+  flutter_secure_storage: ^11.0.0
 
   # PDF & Printing
   pdf: ^3.11.0
