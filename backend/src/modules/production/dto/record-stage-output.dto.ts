@@ -7,6 +7,7 @@ import {
   IsOptional,
   IsPositive,
   IsString,
+  IsUUID,
   Min,
 } from 'class-validator';
 
@@ -34,6 +35,16 @@ export class RecordStageOutputDto {
   @IsInt({ message: 'كمية الهدر يجب أن تكون عددًا صحيحًا' })
   @Min(0, { message: 'كمية الهدر لا يمكن أن تكون سالبة' })
   wasteQty: number;
+
+  @ApiPropertyOptional({
+    example: '123e4567-e89b-12d3-a456-426614174000',
+    description: 'مخزن المنتج التام، ويستخدم عند إكمال PACKING',
+  })
+  @IsOptional()
+  @IsUUID(undefined, {
+    message: 'معرف مخزن المنتج التام يجب أن يكون UUID صالحًا',
+  })
+  finishedGoodsWarehouseId?: string;
 
   @ApiPropertyOptional({
     example: 'هدر قص ضمن الحدود المعتمدة',

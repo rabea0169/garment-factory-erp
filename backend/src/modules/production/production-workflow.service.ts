@@ -8,11 +8,13 @@ import {
   Prisma,
   ProductionCostStatus,
   ProductionStage,
+  StockMovementType,
   ProductionStageRunStatus,
   ProductionWasteReason,
+  WarehouseType,
   WorkOrderStatus,
 } from '@prisma/client';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -30,7 +32,16 @@ export interface RecordStageOutputInput {
   acceptedQty: number;
   rejectedQty: number;
   wasteQty: number;
+  finishedGoodsWarehouseId?: string;
   notes?: string;
+}
+
+export interface StageOutputResult {
+  workOrderId: string;
+  stage: ProductionStage;
+  acceptedQty: number;
+  finishedGoodStockId?: string;
+  finishedGoodQuantity?: number;
 }
 
 export interface ConsumeMaterialInput {
@@ -233,7 +244,7 @@ export class ProductionWorkflowService {
   async recordStageOutput(
     input: RecordStageOutputInput,
     actorId?: string,
-  ): Promise<void> {
+  ): Promise<StageOutputResult> {
     assertNonNegativeQuantities({
       inputQty: input.inputQty,
       acceptedQty: input.acceptedQty,
@@ -249,7 +260,7 @@ export class ProductionWorkflowService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx) => {
       const stageRun = await tx.productionStageRun.findUnique({
         where: {
           workOrderId_stage: {
@@ -257,7 +268,15 @@ export class ProductionWorkflowService {
             stage: input.stage,
           },
         },
-        include: { workOrder: { select: { currentStage: true } } },
+        include: {
+          workOrder: {
+            select: {
+              currentStage: true,
+              productVariantId: true,
+              code: true,
+            },
+          },
+        },
       });
       if (!stageRun) throw new NotFoundException('Stage run not found');
       if (stageRun.workOrder.currentStage !== input.stage) {
@@ -265,15 +284,15 @@ export class ProductionWorkflowService {
           'Stage output must be recorded for the current production stage',
         );
       }
-      if (stageRun.status === ProductionStageRunStatus.COMPLETED) {
-        throw new ConflictException('Stage run is already completed');
-      }
       if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
         throw new BadRequestException('Stage run is cancelled');
       }
 
-      await tx.productionStageRun.update({
-        where: { id: stageRun.id },
+      const updated = await tx.productionStageRun.updateMany({
+        where: {
+          id: stageRun.id,
+          status: ProductionStageRunStatus.IN_PROGRESS,
+        },
         data: {
           inputQty: input.inputQty,
           acceptedQty: input.acceptedQty,
@@ -284,6 +303,85 @@ export class ProductionWorkflowService {
           notes: input.notes,
         },
       });
+      if (updated.count !== 1) {
+        throw new ConflictException('Stage run is already completed');
+      }
+
+      let finishedGoodStockId: string | undefined;
+      let finishedGoodQuantity: number | undefined;
+      if (input.stage === ProductionStage.PACKING && input.acceptedQty > 0) {
+        const warehouse = input.finishedGoodsWarehouseId
+          ? await tx.warehouse.findUnique({
+              where: { id: input.finishedGoodsWarehouseId },
+            })
+          : await tx.warehouse.findFirst({
+              where: {
+                type: WarehouseType.FINISHED_GOODS,
+                isActive: true,
+              },
+              orderBy: { code: 'asc' },
+            });
+        if (!warehouse || warehouse.type !== WarehouseType.FINISHED_GOODS) {
+          throw new BadRequestException(
+            'Finished-goods warehouse not found or has an invalid type',
+          );
+        }
+
+        const finishedStock = await tx.finishedGoodStock.upsert({
+          where: {
+            warehouseId_productVariantId: {
+              warehouseId: warehouse.id,
+              productVariantId: stageRun.workOrder.productVariantId,
+            },
+          },
+          update: { quantity: { increment: input.acceptedQty } },
+          create: {
+            warehouseId: warehouse.id,
+            productVariantId: stageRun.workOrder.productVariantId,
+            quantity: input.acceptedQty,
+          },
+        });
+        finishedGoodStockId = finishedStock.id;
+        finishedGoodQuantity = finishedStock.quantity;
+
+        await tx.stockLedgerEntry.create({
+          data: {
+            entryCode: `SLE-FG-${Date.now()}-${randomUUID().slice(0, 8)}`,
+            type: StockMovementType.RECEIVE,
+            warehouseId: warehouse.id,
+            productVariantId: stageRun.workOrder.productVariantId,
+            quantityDelta: input.acceptedQty,
+            balanceAfter: finishedStock.quantity,
+            reference: stageRun.workOrder.code,
+            notes: `استلام منتج تام من أمر تشغيل ${stageRun.workOrder.code}`,
+            createdById: actorId,
+          },
+        });
+
+        await tx.workOrder.update({
+          where: { id: input.workOrderId },
+          data: {
+            status: WorkOrderStatus.COMPLETED,
+            completedQty: input.acceptedQty,
+            rejectedQty: input.rejectedQty,
+            wasteQty: input.wasteQty,
+            endDate: new Date(),
+          },
+        });
+      }
+
+      if (input.stage === ProductionStage.PACKING && input.acceptedQty === 0) {
+        await tx.workOrder.update({
+          where: { id: input.workOrderId },
+          data: {
+            status: WorkOrderStatus.COMPLETED,
+            completedQty: 0,
+            rejectedQty: input.rejectedQty,
+            wasteQty: input.wasteQty,
+            endDate: new Date(),
+          },
+        });
+      }
 
       if (actorId) {
         await tx.activityLog.create({
@@ -298,10 +396,19 @@ export class ProductionWorkflowService {
               acceptedQty: input.acceptedQty,
               rejectedQty: input.rejectedQty,
               wasteQty: input.wasteQty,
+              finishedGoodStockId,
             },
           },
         });
       }
+
+      return {
+        workOrderId: input.workOrderId,
+        stage: input.stage,
+        acceptedQty: input.acceptedQty,
+        finishedGoodStockId,
+        finishedGoodQuantity,
+      } satisfies StageOutputResult;
     });
   }
 
