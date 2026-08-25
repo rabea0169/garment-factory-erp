@@ -30,12 +30,15 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  activityLogs   ActivityLog[]
-  salesOrders    SalesOrder[]
-  purchaseOrders PurchaseOrder[]
-  vouchers       Voucher[]
-  workOrders     WorkOrder[]
-  stockLedgerEntries StockLedgerEntry[]
+  activityLogs           ActivityLog[]
+  salesOrders            SalesOrder[]
+  purchaseOrders         PurchaseOrder[]
+  vouchers               Voucher[]
+  workOrders             WorkOrder[]
+  stockLedgerEntries     StockLedgerEntry[]
+  stageTransitions       WorkOrderStageTransition[]
+  productionConsumptions ProductionMaterialConsumption[]
+  productionCosts        ProductionCostSnapshot[]
 
   @@map("users")
 }
@@ -97,8 +100,9 @@ model ProductVariant {
   barcode   String? @unique
   isActive  Boolean @default(true)
 
-  product            Product            @relation(fields: [productId], references: [id])
+  product            Product             @relation(fields: [productId], references: [id])
   inventoryItems     FinishedGood[]
+  finishedGoodStocks FinishedGoodStock[]
   orderItems         SalesOrderItem[]
   stockLedgerEntries StockLedgerEntry[]
   workOrders         WorkOrder[]
@@ -108,24 +112,24 @@ model ProductVariant {
 }
 
 model BomVersion {
-  id          String    @id @default(uuid())
+  id          String   @id @default(uuid())
   productId   String
-  versionName String    // e.g. "v1.0" or "صيف 2026 - الإصدار الأساسي"
-  isActive    Boolean   @default(true)
-  createdAt   DateTime  @default(now())
+  versionName String // e.g. "v1.0" or "صيف 2026 - الإصدار الأساسي"
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
 
-  product     Product    @relation(fields: [productId], references: [id])
-  lines       BomLine[]
-  workOrders  WorkOrder[]
+  product    Product     @relation(fields: [productId], references: [id])
+  lines      BomLine[]
+  workOrders WorkOrder[]
 
   @@map("bom_versions")
 }
 
 model BomLine {
-  id            String      @id @default(uuid())
+  id            String  @id @default(uuid())
   bomVersionId  String
   rawMaterialId String
-  quantity      Decimal     @db.Decimal(10, 4)
+  quantity      Decimal @db.Decimal(10, 4)
   unit          String
 
   bomVersion  BomVersion  @relation(fields: [bomVersionId], references: [id])
@@ -153,22 +157,23 @@ model RawMaterial {
   unit          RawMaterialUnit
   // GF-0007 / ADR-0007: لا يُحدَّث هذا الرصيد إلا عبر InventoryService بحركة
   // StockLedgerEntry داخل prisma.$transaction — وقيد CHECK (>= 0) في قاعدة البيانات.
-  currentStock  Decimal         @db.Decimal(10, 4) @default(0)
+  currentStock  Decimal         @default(0) @db.Decimal(10, 4)
   // GF-0007 / ADR-0008: التكلفة الحالية = متوسط مرجح (Weighted Average) يُعاد
   // احتسابه مع كل استلام (RECEIVE) داخل نفس transaction الحركة.
   costPerUnit   Decimal         @db.Decimal(10, 2)
-  minStockLevel Decimal         @db.Decimal(10, 4) @default(0)
+  minStockLevel Decimal         @default(0) @db.Decimal(10, 4)
   supplierId    String?
   isActive      Boolean         @default(true)
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
-  supplier        Supplier?                @relation(fields: [supplierId], references: [id])
-  transactions    RawMaterialTransaction[]
-  bomLines        BomLine[]
-  purchaseItems   PurchaseOrderItem[]
-  consumptions    MaterialConsumption[]
-  ledgerEntries   StockLedgerEntry[]
+  supplier               Supplier?                       @relation(fields: [supplierId], references: [id])
+  transactions           RawMaterialTransaction[]
+  bomLines               BomLine[]
+  purchaseItems          PurchaseOrderItem[]
+  consumptions           MaterialConsumption[]
+  productionConsumptions ProductionMaterialConsumption[]
+  ledgerEntries          StockLedgerEntry[]
 
   @@index([code, isActive])
   @@map("raw_materials")
@@ -203,13 +208,32 @@ model RawMaterialTransaction {
 model FinishedGood {
   id               String @id @default(uuid())
   productVariantId String @unique
-  // GF-0007: ملاحظة — مخزون التام لم يُدمج بعد في ledger (يُدمج في GF-0008/0009
-  // مع ربط أوامر الإنتاج بالـ variant)؛ حتى ذلك الحين quantity بلا سجل حركات.
+  // Legacy aggregate retained for backward compatibility. New operational
+  // balances are represented by FinishedGoodStock per warehouse and SKU.
   quantity         Int    @default(0)
 
-  variant     ProductVariant @relation(fields: [productVariantId], references: [id])
+  variant ProductVariant @relation(fields: [productVariantId], references: [id])
 
   @@map("finished_goods")
+}
+
+// GF-0013: authoritative finished-good balance by warehouse and SKU.
+// Updates must be accompanied by StockLedgerEntry in one transaction.
+model FinishedGoodStock {
+  id               String   @id @default(uuid())
+  warehouseId      String
+  productVariantId String
+  quantity         Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  warehouse      Warehouse      @relation(fields: [warehouseId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@unique([warehouseId, productVariantId])
+  @@index([productVariantId, quantity])
+  @@index([warehouseId, quantity])
+  @@map("finished_good_stocks")
 }
 
 // ===== GF-0007: DOMAIN FOUNDATION — WAREHOUSE / STOCK LEDGER / IDEMPOTENCY =====
@@ -231,7 +255,9 @@ model Warehouse {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
-  ledgerEntries StockLedgerEntry[]
+  ledgerEntries          StockLedgerEntry[]
+  productionConsumptions ProductionMaterialConsumption[]
+  finishedGoodStocks     FinishedGoodStock[]
 
   @@index([type, isActive])
   @@map("warehouses")
@@ -253,29 +279,30 @@ enum StockMovementType {
 // prisma.$transaction، مع لقطة الرصيد بعد الحركة (balanceAfter) لتسهيل
 // المطابقة: currentStock == SUM(quantityDelta) لكل خامة.
 model StockLedgerEntry {
-  id               String           @id @default(uuid())
-  entryCode        String           @unique
+  id               String            @id @default(uuid())
+  entryCode        String            @unique
   type             StockMovementType
   warehouseId      String
   rawMaterialId    String?
   productVariantId String?
   // موقعة: موجب = دخول، سالب = خروج
-  quantityDelta    Decimal          @db.Decimal(12, 4)
+  quantityDelta    Decimal           @db.Decimal(12, 4)
   // لقطة الرصيد بعد الحركة (سلسلة تدقيق)
-  balanceAfter     Decimal          @db.Decimal(12, 4)
-  unitCost         Decimal?         @db.Decimal(10, 4)
-  totalValue       Decimal?         @db.Decimal(14, 2)
+  balanceAfter     Decimal           @db.Decimal(12, 4)
+  unitCost         Decimal?          @db.Decimal(10, 4)
+  totalValue       Decimal?          @db.Decimal(14, 2)
   reference        String?
   notes            String?
   idempotencyKeyId String?
   createdById      String?
-  createdAt        DateTime         @default(now())
+  createdAt        DateTime          @default(now())
 
-  warehouse      Warehouse       @relation(fields: [warehouseId], references: [id])
-  rawMaterial    RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
-  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id])
-  idempotencyKey IdempotencyKey? @relation(fields: [idempotencyKeyId], references: [id])
-  createdBy      User?           @relation(fields: [createdById], references: [id])
+  warehouse             Warehouse                      @relation(fields: [warehouseId], references: [id])
+  rawMaterial           RawMaterial?                   @relation(fields: [rawMaterialId], references: [id])
+  productVariant        ProductVariant?                @relation(fields: [productVariantId], references: [id])
+  idempotencyKey        IdempotencyKey?                @relation(fields: [idempotencyKeyId], references: [id])
+  createdBy             User?                          @relation(fields: [createdById], references: [id])
+  productionConsumption ProductionMaterialConsumption?
 
   // GF-0007: indexes الأداء — الأكواد (entryCode unique أعلاه)، التواريخ، الحالات
   @@index([rawMaterialId, createdAt])
@@ -299,7 +326,9 @@ model IdempotencyKey {
   createdAt   DateTime  @default(now())
   expiresAt   DateTime?
 
-  ledgerEntries StockLedgerEntry[]
+  ledgerEntries         StockLedgerEntry[]
+  stageTransition       WorkOrderStageTransition?
+  productionConsumption ProductionMaterialConsumption?
 
   @@index([scope, createdAt])
   @@index([expiresAt])
@@ -310,43 +339,76 @@ model IdempotencyKey {
 
 enum WorkOrderStatus {
   PLANNED
+  // القيم التالية legacy؛ المرحلة الحالية الجديدة محفوظة في ProductionStage.
   CUTTING
   SEWING
   FINISHING
   IRONING
   PACKAGING
+  IN_PROGRESS
   COMPLETED
   CANCELLED
 }
 
+// GF-0013: مراحل التصنيع الفعلية، منفصلة عن دورة حياة أمر التشغيل.
+enum ProductionStage {
+  CUTTING
+  SEWING
+  IRONING
+  PACKING
+}
+
+enum ProductionStageRunStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+enum ProductionCostStatus {
+  ESTIMATED
+  FINALIZED
+}
+
 model WorkOrder {
-  id               String          @id @default(uuid())
-  code             String          @unique
+  id               String           @id @default(uuid())
+  code             String           @unique
   productVariantId String
   bomVersionId     String
   quantity         Int
-  status           WorkOrderStatus @default(PLANNED)
+  status           WorkOrderStatus  @default(PLANNED)
+  // GF-0013: المرحلة الحالية مستقلة عن lifecycle status، وتبقى nullable للتوافق مع الصفوف القديمة.
+  currentStage     ProductionStage?
+  stageVersion     Int              @default(1)
   startDate        DateTime?
   endDate          DateTime?
-  completedQty     Int             @default(0)
-  rejectedQty      Int             @default(0)
-  wasteQty         Int             @default(0) // Good to have as per domain rules
+  completedQty     Int              @default(0)
+  rejectedQty      Int              @default(0)
+  wasteQty         Int              @default(0)
   createdById      String
   notes            String?
-  createdAt        DateTime        @default(now())
-  updatedAt        DateTime        @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  variant              ProductVariant        @relation(fields: [productVariantId], references: [id])
-  bomVersion           BomVersion            @relation(fields: [bomVersionId], references: [id])
-  createdBy            User                  @relation(fields: [createdById], references: [id])
-  stageUpdates         WorkOrderStage[]
-  qualityChecks        QualityCheck[]
-  materialConsumptions MaterialConsumption[]
-  workerProductions    DailyProduction[]
+  variant                ProductVariant                  @relation(fields: [productVariantId], references: [id])
+  bomVersion             BomVersion                      @relation(fields: [bomVersionId], references: [id])
+  createdBy              User                            @relation(fields: [createdById], references: [id])
+  stageUpdates           WorkOrderStage[]
+  qualityChecks          QualityCheck[]
+  materialConsumptions   MaterialConsumption[]
+  workerProductions      DailyProduction[]
+  stageRuns              ProductionStageRun[]
+  stageTransitions       WorkOrderStageTransition[]
+  productionConsumptions ProductionMaterialConsumption[]
+  costSnapshots          ProductionCostSnapshot[]
 
+  @@index([status, currentStage])
+  @@index([productVariantId, status])
   @@map("work_orders")
 }
 
+// Legacy stage log retained for backward compatibility. GF-0013 uses
+// ProductionStageRun and WorkOrderStageTransition for the authoritative flow.
 model WorkOrderStage {
   id          String          @id @default(uuid())
   workOrderId String
@@ -358,6 +420,127 @@ model WorkOrderStage {
   workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
 
   @@map("work_order_stages")
+}
+
+enum ProductionWasteReason {
+  CUTTING_LOSS
+  SEWING_DEFECT
+  IRONING_LOSS
+  PACKAGING_DAMAGE
+  MATERIAL_DEFECT
+  OTHER
+}
+
+// GF-0013: تنفيذ مرحلة فعلية ضمن أمر التشغيل. الكميات بوحدة المنتج (قطعة).
+model ProductionStageRun {
+  id          String                   @id @default(uuid())
+  workOrderId String
+  stage       ProductionStage
+  sequence    Int
+  status      ProductionStageRunStatus @default(PENDING)
+  plannedQty  Int                      @default(0)
+  inputQty    Int                      @default(0)
+  acceptedQty Int                      @default(0)
+  rejectedQty Int                      @default(0)
+  wasteQty    Int                      @default(0)
+  startedAt   DateTime?
+  completedAt DateTime?
+  notes       String?
+  createdAt   DateTime                 @default(now())
+  updatedAt   DateTime                 @updatedAt
+
+  workOrder            WorkOrder                       @relation(fields: [workOrderId], references: [id])
+  materialConsumptions ProductionMaterialConsumption[]
+  fromTransitions      WorkOrderStageTransition[]      @relation("StageTransitionFromRun")
+  toTransitions        WorkOrderStageTransition[]      @relation("StageTransitionToRun")
+
+  @@unique([workOrderId, stage])
+  @@unique([workOrderId, sequence])
+  @@index([workOrderId, status])
+  @@map("production_stage_runs")
+}
+
+// سجل append-only لكل انتقال حتى يمكن تدقيق من نقل الأمر ومتى ولماذا.
+model WorkOrderStageTransition {
+  id               String           @id @default(uuid())
+  workOrderId      String
+  fromStage        ProductionStage?
+  toStage          ProductionStage
+  fromStatus       WorkOrderStatus?
+  toStatus         WorkOrderStatus?
+  actorId          String
+  reason           String?
+  idempotencyKeyId String?          @unique
+  createdAt        DateTime         @default(now())
+
+  workOrder      WorkOrder           @relation(fields: [workOrderId], references: [id])
+  fromRun        ProductionStageRun? @relation("StageTransitionFromRun", fields: [fromRunId], references: [id])
+  fromRunId      String?
+  toRun          ProductionStageRun? @relation("StageTransitionToRun", fields: [toRunId], references: [id])
+  toRunId        String?
+  actor          User                @relation(fields: [actorId], references: [id])
+  idempotencyKey IdempotencyKey?     @relation(fields: [idempotencyKeyId], references: [id])
+
+  @@index([workOrderId, createdAt])
+  @@index([workOrderId, toStage])
+  @@map("work_order_stage_transitions")
+}
+
+// سجل استهلاك فعلي لكل خامة ومرحلة؛ الحركة المخزنية المرتبطة هي مصدر الأثر.
+model ProductionMaterialConsumption {
+  id                 String                 @id @default(uuid())
+  workOrderId        String
+  stageRunId         String
+  rawMaterialId      String
+  warehouseId        String
+  stockLedgerEntryId String?                @unique
+  idempotencyKeyId   String?                @unique
+  plannedQuantity    Decimal                @default(0) @db.Decimal(12, 4)
+  actualQuantity     Decimal                @db.Decimal(12, 4)
+  variance           Decimal                @default(0) @db.Decimal(12, 4)
+  unit               String
+  unitCost           Decimal                @db.Decimal(12, 4)
+  totalCost          Decimal                @db.Decimal(14, 2)
+  wasteReason        ProductionWasteReason?
+  notes              String?
+  createdById        String
+  createdAt          DateTime               @default(now())
+
+  workOrder        WorkOrder          @relation(fields: [workOrderId], references: [id])
+  stageRun         ProductionStageRun @relation(fields: [stageRunId], references: [id])
+  rawMaterial      RawMaterial        @relation(fields: [rawMaterialId], references: [id])
+  warehouse        Warehouse          @relation(fields: [warehouseId], references: [id])
+  stockLedgerEntry StockLedgerEntry?  @relation(fields: [stockLedgerEntryId], references: [id])
+  idempotencyKey   IdempotencyKey?    @relation(fields: [idempotencyKeyId], references: [id])
+  createdBy        User               @relation(fields: [createdById], references: [id])
+
+  @@index([workOrderId, stageRunId])
+  @@index([rawMaterialId, warehouseId, createdAt])
+  @@index([createdById, createdAt])
+  @@map("production_material_consumptions")
+}
+
+// لقطة تكلفة قابلة للتدقيق؛ labor/overhead محجوزان مستقبلًا وقيمتهما الافتراضية صفر.
+model ProductionCostSnapshot {
+  id           String               @id @default(uuid())
+  workOrderId  String
+  status       ProductionCostStatus @default(ESTIMATED)
+  materialCost Decimal              @default(0) @db.Decimal(14, 2)
+  laborCost    Decimal              @default(0) @db.Decimal(14, 2)
+  overheadCost Decimal              @default(0) @db.Decimal(14, 2)
+  wasteCost    Decimal              @default(0) @db.Decimal(14, 2)
+  totalCost    Decimal              @db.Decimal(14, 2)
+  acceptedQty  Int                  @default(0)
+  unitCost     Decimal?             @db.Decimal(14, 4)
+  capturedAt   DateTime             @default(now())
+  createdById  String?
+
+  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+  createdBy User?     @relation(fields: [createdById], references: [id])
+
+  @@unique([workOrderId, status])
+  @@index([workOrderId, capturedAt])
+  @@map("production_cost_snapshots")
 }
 
 model MaterialConsumption {
@@ -420,7 +603,7 @@ model Worker {
   phone      String?
   nationalId String?         @unique
   specialty  WorkerSpecialty
-  pieceRate  Decimal         @db.Decimal(10, 2) @default(0)
+  pieceRate  Decimal         @default(0) @db.Decimal(10, 2)
   isActive   Boolean         @default(true)
   hireDate   DateTime        @default(now())
   createdAt  DateTime        @default(now())
@@ -464,11 +647,11 @@ model DailyProduction {
 }
 
 model WorkerAdvance {
-  id        String   @id @default(uuid())
-  workerId  String
-  amount    Decimal  @db.Decimal(10, 2)
-  date      DateTime @default(now())
-  notes     String?
+  id       String   @id @default(uuid())
+  workerId String
+  amount   Decimal  @db.Decimal(10, 2)
+  date     DateTime @default(now())
+  notes    String?
 
   worker Worker @relation(fields: [workerId], references: [id])
 
@@ -476,18 +659,18 @@ model WorkerAdvance {
 }
 
 model Payroll {
-  id            String   @id @default(uuid())
+  id            String    @id @default(uuid())
   workerId      String
-  periodStart   DateTime @db.Date
-  periodEnd     DateTime @db.Date
-  grossAmount   Decimal  @db.Decimal(10, 2)
-  advanceDeduct Decimal  @db.Decimal(10, 2) @default(0)
-  absenceDeduct Decimal  @db.Decimal(10, 2) @default(0)
-  netAmount     Decimal  @db.Decimal(10, 2)
-  isPaid        Boolean  @default(false)
+  periodStart   DateTime  @db.Date
+  periodEnd     DateTime  @db.Date
+  grossAmount   Decimal   @db.Decimal(10, 2)
+  advanceDeduct Decimal   @default(0) @db.Decimal(10, 2)
+  absenceDeduct Decimal   @default(0) @db.Decimal(10, 2)
+  netAmount     Decimal   @db.Decimal(10, 2)
+  isPaid        Boolean   @default(false)
   paidAt        DateTime?
   notes         String?
-  createdAt     DateTime @default(now())
+  createdAt     DateTime  @default(now())
 
   worker Worker @relation(fields: [workerId], references: [id])
 
@@ -504,7 +687,7 @@ model Customer {
   address   String?
   email     String?
   notes     String?
-  balance   Decimal  @db.Decimal(10, 2) @default(0)
+  balance   Decimal  @default(0) @db.Decimal(10, 2)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
@@ -515,16 +698,16 @@ model Customer {
 }
 
 model Supplier {
-  id           String   @id @default(uuid())
-  code         String   @unique
-  name         String
-  phone        String?
-  address      String?
-  email        String?
-  notes        String?
-  balance      Decimal  @db.Decimal(10, 2) @default(0)
-  isActive     Boolean  @default(true)
-  createdAt    DateTime @default(now())
+  id        String   @id @default(uuid())
+  code      String   @unique
+  name      String
+  phone     String?
+  address   String?
+  email     String?
+  notes     String?
+  balance   Decimal  @default(0) @db.Decimal(10, 2)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
 
   purchaseOrders   PurchaseOrder[]
   rawMaterials     RawMaterial[]
@@ -554,8 +737,8 @@ model SalesOrder {
   paymentType PaymentType
   status      SalesOrderStatus @default(DRAFT)
   totalAmount Decimal          @db.Decimal(10, 2)
-  paidAmount  Decimal          @db.Decimal(10, 2) @default(0)
-  discount    Decimal          @db.Decimal(10, 2) @default(0)
+  paidAmount  Decimal          @default(0) @db.Decimal(10, 2)
+  discount    Decimal          @default(0) @db.Decimal(10, 2)
   dueDate     DateTime?
   notes       String?
   createdAt   DateTime         @default(now())
@@ -612,7 +795,7 @@ model PurchaseOrder {
   userId      String
   paymentType PaymentType
   totalAmount Decimal             @db.Decimal(10, 2)
-  paidAmount  Decimal             @db.Decimal(10, 2) @default(0)
+  paidAmount  Decimal             @default(0) @db.Decimal(10, 2)
   dueDate     DateTime?
   status      PurchaseOrderStatus @default(DRAFT)
   notes       String?
@@ -628,12 +811,12 @@ model PurchaseOrder {
 }
 
 model PurchaseOrderItem {
-  id              String   @id @default(uuid())
+  id              String  @id @default(uuid())
   purchaseOrderId String
   rawMaterialId   String
-  quantity        Decimal  @db.Decimal(10, 4)
-  unitCost        Decimal  @db.Decimal(10, 2)
-  totalCost       Decimal  @db.Decimal(10, 2)
+  quantity        Decimal @db.Decimal(10, 4)
+  unitCost        Decimal @db.Decimal(10, 2)
+  totalCost       Decimal @db.Decimal(10, 2)
 
   purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
   rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id])
@@ -682,7 +865,7 @@ model Shipment {
   salesOrderId      String
   shippingCompanyId String?
   status            ShipmentStatus @default(PREPARING)
-  shippingCost      Decimal        @db.Decimal(10, 2) @default(0)
+  shippingCost      Decimal        @default(0) @db.Decimal(10, 2)
   trackingNumber    String?
   shippedAt         DateTime?
   deliveredAt       DateTime?
@@ -712,7 +895,7 @@ model Account {
   type      AccountType
   parentId  String?
   isGroup   Boolean     @default(false)
-  balance   Decimal     @db.Decimal(15, 2) @default(0)
+  balance   Decimal     @default(0) @db.Decimal(15, 2)
   isActive  Boolean     @default(true)
   createdAt DateTime    @default(now())
 
@@ -777,8 +960,8 @@ model Voucher {
 model Treasury {
   id        String   @id @default(uuid())
   name      String
-  type      String   // CASH or BANK
-  balance   Decimal  @db.Decimal(15, 2) @default(0)
+  type      String // CASH or BANK
+  balance   Decimal  @default(0) @db.Decimal(15, 2)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
 
