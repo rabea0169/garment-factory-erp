@@ -4,9 +4,9 @@
 
 - **Task ID:** GF-0010
 - **Branch:** `phase2/gf-0010-flutter`
-- **Commits:** `a2b234c` → `afe5559` → `4b4aa52` → `907764d`
-- **Latest commit:** `907764d fix(gf-0010): align Flutter plugin APIs`
-- **Base:** آخر `phase2/domain-foundation` عند GF-0008
+- **Rebased commits:** `22cf5f8` → `3dc39bf` → `d93852d` → `a300e36` → `3688dcc`
+- **Latest commit:** `3688dcc docs(gf-0010): record green Flutter CI handoff`
+- **Base:** `main` بعد دمج GF-0009 عند `b93ee09`
 - **Status:** تنفيذ العميل مكتمل، وCI أخضر؛ يحتاج مراجعة/دمج بشري
 - **لا يتضمن:** تعديلات schema أو ملفات Purchasing/GF-0009
 
@@ -85,12 +85,11 @@ tsc --noEmit           PASS
 
 في بيئة التنفيذ المحلية لم يكن Flutter SDK مثبتًا، لذلك تم اعتماد GitHub Actions للتحقق التنفيذي من Flutter، ونجحت البوابة فعليًا.
 
-## تعليمات الدمج بعد GF-0009
+## تعليمات الدمج
 
-بما أن نموذجًا آخر ينفذ GF-0009 على مسار المشتريات، يجب دمج هذا الفرع بعد اكتمال GF-0009 أو إعادة تطبيق commits GF-0010 فوق فرع GF-0009.
- لا توجد تعارضات متوقعة في schema أو Purchasing، لكن `.github/workflows/ci.yml` وREADME قد يحتاجان حلًا يدويًا إذا عدلهما النموذج الآخر.
+تمت إعادة تأسيس هذا الفرع فوق `main` بعد دمج GF-0009، ولا يتضمن تغييرات schema أو Purchasing. يجب فتح Pull Request من `phase2/gf-0010-flutter` إلى `main` بعد التأكد من أن branch protection يرى CI الأخضر.
 
-بعد الدمج يجب التحقق من أن `flutter_secure_storage` موجود في `pubspec.yaml` وأن Flutter CI أخضر. كما يجب اختبار 401 على جهاز/محاكي حقيقي، لأن اختبار unit المحلي غير متاح بدون Flutter SDK.
+بعد الدمج يجب اختبار 401 وlogout على جهاز/محاكي حقيقي، لأن اختبار unit المحلي غير متاح بدون Flutter SDK في بيئة التنفيذ المحلية.
 
 ## المخاطر المتبقية
 
