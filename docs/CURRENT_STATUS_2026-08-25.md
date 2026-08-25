@@ -1,86 +1,98 @@
-# تقرير الحالة الحالي — Garment Factory ERP
+# تقرير الحالة الحالي — Garment Factory ERP / GF-0013
 
 **تاريخ التقرير:** 25 أغسطس 2026  
 **المستودع:** [rabea0169/garment-factory-erp](https://github.com/rabea0169/garment-factory-erp)  
-**مصدر الحالة:** `origin/main` بعد دمج PR #7
+**مصدر الحالة:** `origin/main` عند `7e73cf75`، مع مراجعة PR #11 عند `fbd892ba`
 
-## 1. الملخص التنفيذي
+## 1. الحكم التنفيذي
 
-أصبح الفرع الرئيسي في حالة خضراء بعد دمج GF-0009 للمشتريات، GF-0010 لتكامل Flutter الآمن، GF-0011 للمبيعات، ثم PR #7 الخاص بإصلاح انحدارات الجودة التي ظهرت بعد GF-0011. آخر commit على `main` هو `2af57ea`، ونجح CI النهائي على Run `32861199071`.
+نطاق PR #11 الخاص بالـ schema والخدمة الأولية واختبارات التكامل الحقيقية لـ GF-0013 **مكتمل ومجتاز**. أصبحت جميع بوابات CI خضراء، بما فيها migration على PostgreSQL 16 واختبارات workflow الخمسة بدون Prisma mock. ومع ذلك، **لا تُعد GF-0013 مكتملة كميزة مؤسسية ولا تُعد مدمجة في main**: PR #11 مفتوح، وطبقة HTTP/DTO/RBAC، ومسار استلام المنتج التام، وواجهة Flutter ما زالت خارج نطاق هذا الجزء وتحتاج امتدادًا مستقلًا قبل إغلاق المهمة رسميًا.
 
-النظام حاليًا **نسخة pre-release قوية من ناحية الأساس البرمجي**، لكنه ليس إصدارًا مؤسسيًا معتمدًا بعد. ما زالت هناك فجوات في pagination، مخزون المنتج التام متعدد المخازن، اختبارات PostgreSQL الحقيقية، التقارير الخلفية، تدقيق الاعتماديات، وبعض دورات العمل التشغيلية.
-
-## 2. خط الأساس المنشور
+## 2. خط الأساس المنشور وحالة PR
 
 | البند | القيمة |
 |---|---|
-| الفرع | `main` |
-| آخر commit | [`2af57ea8`](https://github.com/rabea0169/garment-factory-erp/commit/2af57ea8bc9b33ed77f6e64376cba2d969258a74) |
-| آخر دمج | [PR #7](https://github.com/rabea0169/garment-factory-erp/pull/7) |
-| حالة CI الأخيرة | [Run 32861199071](https://github.com/rabea0169/garment-factory-erp/actions/runs/32861199071) — ناجح |
-| آخر مهمة مكتملة | GF-0011 — المبيعات |
-| المهمة التالية | GF-0012 — Pagination |
+| الفرع الرئيسي | `main` |
+| آخر commit على main | [`7e73cf75`](https://github.com/rabea0169/garment-factory-erp/commit/7e73cf75a61c0e275337d2e604de44453a43342a) |
+| فرع العمل | `phase3/gf0013-schema-design` |
+| آخر commit للفرع | [`fbd892ba`](https://github.com/rabea0169/garment-factory-erp/commit/fbd892baf877e8ed9af860a6ee95c98f9be1a14b) |
+| Pull Request | [#11 — production workflow integration coverage](https://github.com/rabea0169/garment-factory-erp/pull/11) |
+| حالة PR | مفتوح، `MERGEABLE`، غير مدمج |
+| CI الأخضر | [Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157) |
+| PR توثيقي سابق | [PR #10](https://github.com/rabea0169/garment-factory-erp/pull/10) ما زال مفتوحًا؛ لا يساوي دمج GF-0013 |
 | الإصدار | `pre-release`، غير معتمد لمؤسسة بعد |
-| قاعدة البيانات | migrations: init، GF-0007، GF-0008، GF-0009، GF-0011 |
+| حالة working tree | نظيف بعد آخر push |
 
-## 3. المراحل المكتملة
+## 3. ما تغير في GF-0013
 
-| المرحلة | النطاق | الحالة |
-|---|---|---|
-| GF-0001..GF-0006 | الحوكمة، المصادقة fail-closed، DTOs، الأسرار، الاختبارات، CI | مكتملة |
-| GF-0007 | Warehouse، Stock Ledger، idempotency، منع الرصيد السالب | مكتملة |
-| GF-0008 | إصدارات BOM، ربط WorkOrder بالـ SKU، استهلاك الخامات | مكتملة |
-| GF-0009 | أوامر الشراء، الاستلام، المرتجعات، ربط المخزون | مكتملة ومُدمجة |
-| GF-0010 | Flutter secure storage، Authorization، 401، logout، إزالة mock، Flutter CI | مكتملة ومُدمجة |
-| GF-0011 | تسعير خادمي، حالات SalesOrder، تأكيد البيع، منع البيع فوق المتاح | مكتملة ومُدمجة |
-| PR #7 | إصلاحات products/inventory/mocks وFlutter analyze وانحدارات الجودة | مكتملة ومُدمجة |
+### قاعدة البيانات
 
-## 4. نتائج بوابات الجودة
+أضيفت المراحل الثابتة `CUTTING`, `SEWING`, `IRONING`, `PACKING` مع `ProductionStageRun` واحد لكل أمر ومرحلة، و`WorkOrderStageTransition` كسجل append-only، و`ProductionMaterialConsumption` للاستهلاك الفعلي، و`ProductionCostSnapshot` للتكلفة، و`FinishedGoodStock` لرصيد المنتج التام حسب المخزن وSKU. أضيفت إلى `WorkOrder` حقول `currentStage` و`stageVersion` مع الحفاظ على الحقول القديمة للتوافق.
 
-| البوابة | النتيجة على main |
+Migration GF-0013 additive ولا تحذف جداول أو أعمدة legacy. أصلحت migration قيمة `IN_PROGRESS` المفقودة من enum `WorkOrderStatus`، وقيدت conservation بحيث يُفرض عند `COMPLETED` فقط؛ هذا ضروري لأن stage run يُنشأ `IN_PROGRESS` قبل تسجيل مخرجاته. القاعدة عند الإغلاق هي `inputQty = acceptedQty + rejectedQty + wasteQty`.
+
+### Backend/domain
+
+تقدم `ProductionWorkflowService` عمليات انتقال sequential، وتسجيل مخرجات المرحلة، واستهلاك الخامة داخل transaction مشتركة مع `InventoryService.issue`، وتثبيت تكلفة مواد Weighted Average. يمنع الانتقال القفزي أو تجاوز مرحلة غير مكتملة، ويرفض output لمرحلة ليست `currentStage`، ويجعل replay بالمفتاح نفسه بلا أثر إضافي.
+
+تم إصلاح race behavior في transition: إذا مر طلبان متطابقان قبل الفحص الأول، يعيد الطلب الخاسر النتيجة الملتزمة بدل إنشاء سجل ثانٍ أو إرجاع تعارض غير معالج. كما أصبح مقام تكلفة الوحدة هو accepted output لآخر مرحلة مكتملة بدل مجموع accepted عبر كل المراحل.
+
+### الاختبارات وCI
+
+تغطي suite الحقيقية خمسة سيناريوهات: الانتقال المتسلسل ورفض القفز وreplay، concurrent transition idempotency، conservation، استهلاك الخامة مع waste cost وreplay، وrollback عند عدم كفاية الرصيد. تصل اختبارات التكامل بعد `prisma migrate deploy` إلى قاعدة PostgreSQL 16 disposable ولا تستخدم Prisma mock.
+
+## 4. ملفات التغيير الأساسية
+
+| الفئة | الملفات |
 |---|---|
-| `npm ci` | ناجحة |
-| `prisma generate` | ناجحة |
-| `prisma validate` | ناجحة |
-| `format:check` | ناجحة |
-| `typecheck` | ناجحة |
-| `lint` | ناجحة |
-| `build` | ناجحة |
-| Unit tests | ناجحة — 24 suite / 118 tests |
-| E2E tests | ناجحة — 2 suite / 36 tests |
-| Flutter `pub get` | ناجحة في CI |
-| Flutter `analyze` | ناجحة في CI |
-| Flutter `test` | ناجحة في CI |
-| Secret Scan | ناجحة |
+| Prisma/migration | `backend/prisma/schema.prisma`، `backend/prisma/migrations/20260825150000_gf_0013_production_workflow/migration.sql` |
+| خدمة المجال | `backend/src/modules/production/production-workflow.service.ts`، `backend/src/modules/production/production.module.ts` |
+| Integration | `backend/test/production-workflow.integration-spec.ts`، `backend/test/jest-integration.json`، `backend/package.json` |
+| CI والتوثيق | `.github/workflows/ci.yml`، `backend/test/INTEGRATION_TESTS.md`، `docs/adr/ADR-0013-production-data-model.md` |
+| الحالة والتسليم | `docs/PROJECT_STATE.md`، `docs/CURRENT_STATUS_2026-08-25.md`، `docs/handoffs/HANDOFF-013.md` |
 
-## 5. الحالة الوظيفية
+## 5. مصفوفة الأدلة
 
-تعمل النواة الحالية للمصادقة والصلاحيات، المنتجات وBOM، المخزون الأساسي، المشتريات، الإنتاج الأولي، الجودة الأولية، الشحن الأولي، المبيعات، وتكامل Flutter الأساسي. ومع ذلك، بعض الوحدات ما زالت في مستوى CRUD أو prototype ولا تمثل دورة تشغيل مؤسسية مكتملة.
-
-المبيعات تحسب الأسعار والإجماليات على الخادم وتمنع البيع فوق المخزون المتاح. لكن صرف المنتج التام يكتب بعض تفاصيل المخزون مباشرة داخل `SalesService` بدل المرور عبر قناة مخزون موحدة، كما أن نموذج رصيد المنتج التام لم يصبح بعد متعدد المخازن بصورة كاملة.
-
-## 6. الفجوات المعروفة والمخاطر
-
-| الأولوية | الفجوة | الأثر |
+| البوابة | النتيجة | الدليل الدقيق |
 |---|---|---|
-| عالية | اختبار E2E يعتمد على Prisma mock ولا يثبت migrations والتزامن على PostgreSQL حقيقية | خطر اختلاف السلوك في الإنتاج |
-| عالية | FinishedGood quantity ليس نموذج مخزون متعدد المخازن مستقلًا | دقة الرصيد حسب الموقع غير مكتملة |
-| عالية | لا يزال `npm audit` يحتاج قرارًا واعيًا بشأن ثغرات Prisma/deepmerge-ts | لا يجوز استخدام `audit fix --force` عشوائيًا |
-| متوسطة | `/dashboard/stats` غير منفذ في Backend | التقارير واللوحة لا تملك مصدر KPI حقيقيًا |
-| متوسطة | بعض دورات الجودة والشحن والإنتاج ما زالت جزئية | الاعتماد التشغيلي غير مكتمل |
-| متوسطة | rate limiting وHelmet وRBAC matrix tests مؤجلة | تقوية إضافية مطلوبة قبل pilot |
-| منخفضة | تحذير Node.js 20 في Actions | يحتاج تحديث actions إلى نسخ حديثة لاحقًا |
+| Prisma validate/generate | ناجحة | محليًا وداخل Run `32884044157` |
+| Format check | ناجحة | `npm run format:check` محليًا وCI |
+| Typecheck | ناجحة | `npm run typecheck` محليًا وCI |
+| Lint | ناجحة | `npm run lint` محليًا وCI |
+| Build | ناجحة | `npm run build` محليًا وCI |
+| Unit | ناجحة | `25 suites / 120 tests` |
+| E2E | ناجحة | `2 suites / 36 tests`؛ الاختبارات الحالية mock-backed |
+| Flutter | ناجحة | `flutter analyze` و`flutter test` في CI |
+| Secret Scan | ناجحة | Run `32884044157` |
+| Migration runtime | ناجحة | `prisma migrate deploy` على PostgreSQL 16 disposable |
+| Real integration | ناجحة | `1 suite / 5 tests` في Run `32884044157` |
+| Local integration | غير منفذة فعليًا | `5 skipped` لغياب Docker/PostgreSQL في sandbox؛ لا تُحسب نجاحًا محليًا |
 
-## 7. المهمة التالية: GF-0012
+## 6. المشكلات والفجوات مرتبة
 
-الهدف هو إضافة pagination موحدة لكل القوائم دون تغيير منطق المجال. يجب أن تدعم الاستجابة `items` و`page` و`pageSize` و`total` و`totalPages`، مع حدود آمنة افتراضية وحد أقصى لحجم الصفحة.
+| الأولوية | الفجوة | الأثر وشرط الإغلاق |
+|---|---|---|
+| حرجة قبل استخدام API | لا توجد Controllers/DTOs/RBAC لـ workflow | لا توجد واجهة تشغيل للمستخدمين؛ تُغلق بإضافة HTTP contract واختبارات `401/403` وvalidation واستخراج actor من JWT |
+| عالية قبل الإنتاج | FinishedGood posting غير منفذ | لا يتم استلام المنتج التام إلى `FinishedGoodStock` مع حركة ledger؛ تُغلق بخدمة posting ذرية واختبارات rollback/idempotency |
+| عالية قبل Pilot | E2E العام ما زال mock-backed | لا يثبت كل مسارات HTTP على PostgreSQL؛ suite GF-0013 تعالج workflow domain فقط |
+| عالية قبل Pilot | التكلفة الحالية مواد فقط | `laborCost` و`overheadCost` صفر حتى سياسة GF-0018؛ لا يوصف snapshot كتكلفة تصنيع شاملة |
+| متوسطة | Flutter workflow UI مؤجل | لا توجد شاشة مراحل أو حالات تشغيل من الهاتف؛ يُنفذ بعد تثبيت API |
+| متوسطة | `/dashboard/stats` غير منفذ | التقارير لا تملك KPI backend حقيقيًا |
+| منخفضة | تحذير Node.js 20 في Actions | لا يحجب الدمج، ويحتاج تحديث actions لاحقًا |
 
-ينبغي تنفيذ DTO مشترك مثل `PaginationQueryDto`، وخدمة أو helper مركزي لبناء metadata، ثم تطبيقه تدريجيًا على القوائم الكبيرة في customers وproducts وinventory وpurchases وsales وquality وshipping والتقارير القائمة.
+## 7. الإجراءات التالية بالترتيب
 
-لا يجوز تنفيذ pagination بإدخال SQL يدوي غير آمن، ولا قبول `pageSize` غير محدود، ولا كسر عقود endpoints الحالية دون توثيق migration للعقد. يجب إضافة اختبارات للصفحة الأولى، صفحة وسطية، صفحة خارج النطاق، قيمة pageSize كبيرة، وقيمة query غير صالحة.
+أولًا، لا تدمج PR #11 إلا بطلب صريح من المستخدم، رغم أن CI أخضر. عند طلب الدمج، نفذ الدمج عبر GitHub ثم تحقق من merge commit وCI على `main` وسجل SHA الجديد.
 
-## 8. بروتوكول بدء المرحلة التالية
+ثانيًا، نفذ امتداد **GF-0013 API/RBAC** في فرع مستقل فوق main بعد الدمج: DTOs ومسارات transition/output/consumption/cost، صلاحيات أدوار الإنتاج والمخزون، actor من JWT، validation، واختبارات HTTP لـ `401/403` وidempotency. يجب أن تبقى كل الكتابات خلف `ProductionWorkflowService` و`InventoryService`، وألا يُعاد تصميم schema دون ADR.
 
-قبل كتابة كود GF-0012 يجب على النموذج التالي قراءة هذا الملف و`PROJECT_STATE.md` و`MASTER_BACKLOG.md` و`HANDOFF-011.md`، والتحقق من `main` وCI الحالي. يجب إنشاء فرع مستقل، تشغيل baseline tests، ثم تنفيذ pagination على مجموعة endpoints محددة في بطاقة GF-0012، وتحديث العقد والاختبارات والوثائق في نفس Pull Request.
+ثالثًا، نفذ posting المنتج التام عند إكمال `PACKING` إلى `FinishedGoodStock` مع ledger transaction، ثم ابنِ Flutter workflow UI بحالات loading/empty/error/success. لا تبدأ GF-0014 قبل تثبيت عقد GF-0013 ومراجعة هذا المسار.
 
-لا تبدأ مرحلة الإنتاج أو الجودة المتقدمة قبل الحفاظ على main أخضر، ولا تعتبر GF-0012 مكتملة بمجرد نجاح build؛ يجب أن تمر format وtypecheck وlint وunit وE2E وCI.
+## 8. المراجع
+
+- [PR #11](https://github.com/rabea0169/garment-factory-erp/pull/11)
+- [CI Run 32884044157](https://github.com/rabea0169/garment-factory-erp/actions/runs/32884044157)
+- [PROJECT_STATE](PROJECT_STATE.md)
+- [HANDOFF-013](handoffs/HANDOFF-013.md)
+- [MASTER_BACKLOG](MASTER_BACKLOG.md)
+- [ADR-0013](adr/ADR-0013-production-data-model.md)
