@@ -230,7 +230,10 @@ export class ProductionWorkflowService {
     }
   }
 
-  async recordStageOutput(input: RecordStageOutputInput): Promise<void> {
+  async recordStageOutput(
+    input: RecordStageOutputInput,
+    actorId?: string,
+  ): Promise<void> {
     assertNonNegativeQuantities({
       inputQty: input.inputQty,
       acceptedQty: input.acceptedQty,
@@ -281,6 +284,24 @@ export class ProductionWorkflowService {
           notes: input.notes,
         },
       });
+
+      if (actorId) {
+        await tx.activityLog.create({
+          data: {
+            userId: actorId,
+            action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
+            module: 'production',
+            details: {
+              workOrderId: input.workOrderId,
+              stage: input.stage,
+              inputQty: input.inputQty,
+              acceptedQty: input.acceptedQty,
+              rejectedQty: input.rejectedQty,
+              wasteQty: input.wasteQty,
+            },
+          },
+        });
+      }
     });
   }
 
@@ -303,97 +324,111 @@ export class ProductionWorkflowService {
     const replay = await this.findConsumptionReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
-    return this.prisma.$transaction(async (tx) => {
-      const stageRun = await tx.productionStageRun.findUnique({
-        where: { id: input.stageRunId },
-      });
-      if (!stageRun || stageRun.workOrderId !== input.workOrderId) {
-        throw new NotFoundException('Stage run not found for work order');
-      }
-      if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
-        throw new BadRequestException('Stage run is cancelled');
-      }
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const stageRun = await tx.productionStageRun.findUnique({
+          where: { id: input.stageRunId },
+        });
+        if (!stageRun || stageRun.workOrderId !== input.workOrderId) {
+          throw new NotFoundException('Stage run not found for work order');
+        }
+        if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
+          throw new BadRequestException('Stage run is cancelled');
+        }
 
-      let idempotencyKeyId: string | undefined;
-      if (input.idempotencyKey) {
-        const key = await tx.idempotencyKey.create({
-          data: {
-            key: input.idempotencyKey,
-            scope: 'production.consume',
-            requestHash: hash,
+        let idempotencyKeyId: string | undefined;
+        if (input.idempotencyKey) {
+          const key = await tx.idempotencyKey.create({
+            data: {
+              key: input.idempotencyKey,
+              scope: 'production.consume',
+              requestHash: hash,
+            },
+            select: { id: true },
+          });
+          idempotencyKeyId = key.id;
+        }
+
+        const inventoryResult = await this.inventoryService.issue(
+          {
+            rawMaterialId: input.rawMaterialId,
+            warehouseId: input.warehouseId,
+            quantity: input.actualQuantity,
+            reference: input.reference ?? input.workOrderId,
+            notes:
+              input.notes ?? `Production consumption for ${stageRun.stage}`,
+            idempotencyKey: input.idempotencyKey
+              ? `production.consume.inventory:${input.idempotencyKey}`
+              : undefined,
           },
+          actorId,
+          tx,
+        );
+
+        const ledgerEntry = await tx.stockLedgerEntry.findUnique({
+          where: { entryCode: inventoryResult.entryCode },
           select: { id: true },
         });
-        idempotencyKeyId = key.id;
-      }
+        if (!ledgerEntry) {
+          throw new ConflictException('Inventory ledger entry was not found');
+        }
 
-      const inventoryResult = await this.inventoryService.issue(
-        {
-          rawMaterialId: input.rawMaterialId,
-          warehouseId: input.warehouseId,
-          quantity: input.actualQuantity,
-          reference: input.reference ?? input.workOrderId,
-          notes: input.notes ?? `Production consumption for ${stageRun.stage}`,
-          idempotencyKey: input.idempotencyKey
-            ? `production.consume.inventory:${input.idempotencyKey}`
-            : undefined,
-        },
-        actorId,
-        tx,
-      );
+        const unitCost = new Prisma.Decimal(inventoryResult.unitCost ?? 0);
+        const actualQuantity = new Prisma.Decimal(input.actualQuantity);
+        const wasteQuantity = new Prisma.Decimal(input.wasteQuantity);
+        const totalCost = actualQuantity.mul(unitCost).toDecimalPlaces(2);
+        const wasteCost = wasteQuantity.mul(unitCost).toDecimalPlaces(2);
+        const variance = actualQuantity
+          .sub(new Prisma.Decimal(input.plannedQuantity))
+          .toDecimalPlaces(4);
 
-      const ledgerEntry = await tx.stockLedgerEntry.findUnique({
-        where: { entryCode: inventoryResult.entryCode },
-        select: { id: true },
-      });
-      if (!ledgerEntry) {
-        throw new ConflictException('Inventory ledger entry was not found');
-      }
+        const consumption = await tx.productionMaterialConsumption.create({
+          data: {
+            workOrderId: input.workOrderId,
+            stageRunId: input.stageRunId,
+            rawMaterialId: input.rawMaterialId,
+            warehouseId: input.warehouseId,
+            stockLedgerEntryId: ledgerEntry.id,
+            idempotencyKeyId,
+            plannedQuantity: input.plannedQuantity,
+            actualQuantity,
+            variance,
+            wasteQuantity,
+            unit: input.unit,
+            unitCost,
+            totalCost,
+            wasteCost,
+            wasteReason: input.wasteReason as ProductionWasteReason | undefined,
+            notes: input.notes,
+            createdById: actorId,
+          },
+        });
 
-      const unitCost = new Prisma.Decimal(inventoryResult.unitCost ?? 0);
-      const actualQuantity = new Prisma.Decimal(input.actualQuantity);
-      const wasteQuantity = new Prisma.Decimal(input.wasteQuantity);
-      const totalCost = actualQuantity.mul(unitCost).toDecimalPlaces(2);
-      const wasteCost = wasteQuantity.mul(unitCost).toDecimalPlaces(2);
-      const variance = actualQuantity
-        .sub(new Prisma.Decimal(input.plannedQuantity))
-        .toDecimalPlaces(4);
-
-      const consumption = await tx.productionMaterialConsumption.create({
-        data: {
-          workOrderId: input.workOrderId,
-          stageRunId: input.stageRunId,
-          rawMaterialId: input.rawMaterialId,
-          warehouseId: input.warehouseId,
+        return {
+          replayed: false,
+          consumptionId: consumption.id,
+          workOrderId: consumption.workOrderId,
+          stageRunId: consumption.stageRunId,
           stockLedgerEntryId: ledgerEntry.id,
-          idempotencyKeyId,
-          plannedQuantity: input.plannedQuantity,
-          actualQuantity,
-          variance,
-          wasteQuantity,
-          unit: input.unit,
-          unitCost,
-          totalCost,
-          wasteCost,
-          wasteReason: input.wasteReason as ProductionWasteReason | undefined,
-          notes: input.notes,
-          createdById: actorId,
-        },
+          actualQuantity: actualQuantity.toNumber(),
+          wasteQuantity: wasteQuantity.toNumber(),
+          unitCost: unitCost.toNumber(),
+          totalCost: totalCost.toNumber(),
+          wasteCost: wasteCost.toNumber(),
+        } satisfies MaterialConsumptionResult;
       });
-
-      return {
-        replayed: false,
-        consumptionId: consumption.id,
-        workOrderId: consumption.workOrderId,
-        stageRunId: consumption.stageRunId,
-        stockLedgerEntryId: ledgerEntry.id,
-        actualQuantity: actualQuantity.toNumber(),
-        wasteQuantity: wasteQuantity.toNumber(),
-        unitCost: unitCost.toNumber(),
-        totalCost: totalCost.toNumber(),
-        wasteCost: wasteCost.toNumber(),
-      } satisfies MaterialConsumptionResult;
-    });
+    } catch (error) {
+      // Two identical requests can pass the pre-check concurrently. Once the
+      // winner commits the unique idempotency key, return its committed result.
+      if (input.idempotencyKey && isUniqueConstraintViolation(error)) {
+        const replay = await this.findConsumptionReplay(
+          input.idempotencyKey,
+          hash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
   }
 
   async finalizeCost(workOrderId: string, actorId?: string) {

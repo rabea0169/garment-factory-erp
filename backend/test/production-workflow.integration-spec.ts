@@ -311,14 +311,26 @@ integrationDescribe('GF-0013 production workflow integration', () => {
       },
       scenario.userId,
     );
-    await workflowService.recordStageOutput({
-      workOrderId: scenario.workOrderId,
-      stage: ProductionStage.CUTTING,
-      inputQty: 10,
-      acceptedQty: 8,
-      rejectedQty: 1,
-      wasteQty: 1,
-    });
+    await workflowService.recordStageOutput(
+      {
+        workOrderId: scenario.workOrderId,
+        stage: ProductionStage.CUTTING,
+        inputQty: 10,
+        acceptedQty: 8,
+        rejectedQty: 1,
+        wasteQty: 1,
+      },
+      scenario.userId,
+    );
+
+    expect(
+      await prisma.activityLog.count({
+        where: {
+          userId: scenario.userId,
+          action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
+        },
+      }),
+    ).toBe(1);
 
     const input = {
       workOrderId: scenario.workOrderId,
@@ -383,6 +395,57 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     expect(Number(cost.wasteCost)).toBe(5);
     expect(Number(cost.totalCost)).toBe(20);
     expect(Number(cost.unitCost)).toBeCloseTo(20 / 7, 4);
+  });
+
+  it('handles concurrent identical material consumption as one issue', async () => {
+    const transition = await workflowService.transitionStage(
+      {
+        workOrderId: scenario.workOrderId,
+        toStage: ProductionStage.CUTTING,
+      },
+      scenario.userId,
+    );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+    });
+
+    const input = {
+      workOrderId: scenario.workOrderId,
+      stageRunId: transition.stageRunId,
+      rawMaterialId: scenario.rawMaterialId,
+      warehouseId: scenario.rawWarehouseId,
+      plannedQuantity: 3,
+      actualQuantity: 4,
+      wasteQuantity: 1,
+      unit: 'METER',
+      idempotencyKey: `gf0013-concurrent-consume-${randomUUID()}`,
+    };
+
+    const results = await Promise.all([
+      workflowService.consumeMaterial(input, scenario.userId),
+      workflowService.consumeMaterial(input, scenario.userId),
+    ]);
+
+    expect(results.filter((result) => !result.replayed)).toHaveLength(1);
+    expect(results.filter((result) => result.replayed)).toHaveLength(1);
+    expect(
+      await prisma.productionMaterialConsumption.count({
+        where: { workOrderId: scenario.workOrderId },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.stockLedgerEntry.count({
+        where: {
+          rawMaterialId: scenario.rawMaterialId,
+          type: StockMovementType.ISSUE,
+        },
+      }),
+    ).toBe(1);
   });
 
   it('rolls back the ledger and consumption when material is insufficient', async () => {
