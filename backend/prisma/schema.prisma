@@ -86,6 +86,8 @@ model Product {
   retailPrice    Decimal  @db.Decimal(10, 2)
   wholesalePrice Decimal  @db.Decimal(10, 2)
   isActive       Boolean  @default(true)
+  // E2: soft-delete — المنتج يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  deletedAt       DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -93,6 +95,8 @@ model Product {
   variants    ProductVariant[]
   bomVersions BomVersion[]
 
+  // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
+  @@index([isActive, deletedAt])
   @@map("products")
 }
 
@@ -696,11 +700,15 @@ model Customer {
   notes     String?
   balance   Decimal  @default(0) @db.Decimal(10, 2)
   isActive  Boolean  @default(true)
+  // E2: soft-delete — العميل يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  deletedAt DateTime?
   createdAt DateTime @default(now())
 
   salesOrders SalesOrder[]
   payments    CustomerPayment[]
 
+  // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
+  @@index([isActive, deletedAt])
   @@map("customers")
 }
 
@@ -714,12 +722,16 @@ model Supplier {
   notes     String?
   balance   Decimal  @default(0) @db.Decimal(10, 2)
   isActive  Boolean  @default(true)
+  // E2: soft-delete — المورد يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  deletedAt DateTime?
   createdAt DateTime @default(now())
 
   purchaseOrders   PurchaseOrder[]
   rawMaterials     RawMaterial[]
   supplierPayments SupplierPayment[]
 
+  // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
+  @@index([isActive, deletedAt])
   @@map("suppliers")
 }
 
@@ -1011,13 +1023,17 @@ model Treasury {
   type      String // CASH or BANK
   balance   Decimal  @default(0) @db.Decimal(15, 2)
   isActive  Boolean  @default(true)
+  // E2: soft-delete — الخزينة يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  // ملاحظة: لا تسمح بـ soft-delete إذا كان balance != 0 (يُيتم سندات مرتبطة).
+  deletedAt DateTime?
   createdAt DateTime @default(now())
 
   // A3: السندات المرتبطة بهذه الخزينة (لا cascade delete — يُمنع حذف خزينة مرتبطة).
   vouchers Voucher[]
 
   // Cluster 2 — B5: فهرس على isActive لفلترة الخزائن النشطة
-  @@index([isActive])
+  // E2: composite index على (isActive, deletedAt) — يحل محل الفهرس المنفرد.
+  @@index([isActive, deletedAt])
   @@map("treasuries")
 }
 
