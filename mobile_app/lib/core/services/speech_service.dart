@@ -17,7 +17,7 @@ class SpeechService {
         onResult: (result) {
           onResult(result.recognizedWords);
         },
-        options: const SpeechListenOptions(localeId: 'ar_SA'),
+        listenOptions: SpeechListenOptions(localeId: 'ar_SA'),
       );
     }
   }
