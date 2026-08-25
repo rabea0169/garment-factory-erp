@@ -38,10 +38,10 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
       trackingNumber: 'TRK-99',
     });
 
-    expect(result.code).toMatch(/^SHP-\d+$/);
+    expect(result.code).toMatch(/^SHP-\d{8}-[0-9A-F]{8}$/);
     expect(prisma.shipment.create).toHaveBeenCalledWith({
       data: {
-        code: expect.stringMatching(/^SHP-\d+$/) as string,
+        code: expect.stringMatching(/^SHP-\d{8}-[0-9A-F]{8}$/) as string,
         salesOrderId: 'so-1',
         shippingCost: 75,
         trackingNumber: 'TRK-99',

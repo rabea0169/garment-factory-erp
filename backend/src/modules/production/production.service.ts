@@ -10,6 +10,10 @@ import { EVENTS } from '../../events/event-types';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import {
+  generateDocumentCode,
+  DocumentCodePrefix,
+} from '../../core/common/codes.util';
 
 @Injectable()
 export class ProductionService {
@@ -47,7 +51,7 @@ export class ProductionService {
   ) {
     const workOrder = await this.prisma.workOrder.create({
       data: {
-        code: `WO-${Date.now()}`,
+        code: generateDocumentCode(DocumentCodePrefix.WORK_ORDER),
         productVariantId: dto.productVariantId,
         bomVersionId: dto.bomVersionId,
         quantity: dto.quantity,
@@ -146,7 +150,9 @@ export class ProductionService {
         // إدراج حركة ledger للتام
         await tx.stockLedgerEntry.create({
           data: {
-            entryCode: `SLE-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+            entryCode: generateDocumentCode(
+              DocumentCodePrefix.STOCK_LEDGER_ENTRY,
+            ),
             type: StockMovementType.RECEIVE,
             warehouseId: fgWarehouse.id,
             productVariantId: order.productVariantId,
