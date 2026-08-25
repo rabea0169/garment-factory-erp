@@ -3,6 +3,8 @@ import { HrService } from './hr.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
+import { RecordProductionDto } from './dto/record-production.dto';
+import { CreateAdvanceDto } from './dto/create-advance.dto';
 
 @ApiTags('HR (الموارد البشرية والعمال)')
 @Controller('hr')
@@ -28,24 +30,14 @@ export class HrController {
     UserRole.GENERAL_MANAGER,
   )
   @ApiOperation({ summary: 'تسجيل إنتاج يومي بالقطعة لعامل' })
-  async recordProduction(
-    @Body()
-    body: {
-      workerId: string;
-      workOrderId?: string;
-      date: Date;
-      piecesCount: number;
-    },
-  ) {
+  async recordProduction(@Body() body: RecordProductionDto) {
     return this.hrService.recordDailyProduction(body);
   }
 
   @Post('advances')
   @Roles(UserRole.HR_MANAGER)
   @ApiOperation({ summary: 'تسجيل سلفة مالية لعامل' })
-  async recordAdvance(
-    @Body() body: { workerId: string; amount: number; notes?: string },
-  ) {
+  async recordAdvance(@Body() body: CreateAdvanceDto) {
     return this.hrService.recordAdvance(body);
   }
 }

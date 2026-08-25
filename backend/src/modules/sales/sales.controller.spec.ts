@@ -1,9 +1,10 @@
 import 'reflect-metadata';
-import { UserRole } from '@prisma/client';
+import { PaymentType, UserRole } from '@prisma/client';
 import { SalesController } from './sales.controller';
 import { SalesService } from './sales.service';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
+import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 
 describe('SalesController — هوية الجلسة والصلاحيات (GF-0003)', () => {
   let controller: SalesController;
@@ -25,9 +26,9 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-000
   });
 
   it('إنشاء أمر بيع يمرر هوية الجلسة ولا يقبل userId من الطلب', async () => {
-    const body = {
+    const body: CreateSalesOrderDto & { userId?: string } = {
       customerId: 'c-1',
-      paymentType: 'CASH',
+      paymentType: PaymentType.CASH,
       discount: 0,
       items: [],
       userId: 'HACKED-USER',

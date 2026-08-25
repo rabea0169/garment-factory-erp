@@ -3,6 +3,7 @@ import { ProductsService } from './products.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
+import { CreateProductDto } from './dto/create-product.dto';
 
 @ApiTags('Products (المنتجات)')
 @Controller('products')
@@ -32,17 +33,7 @@ export class ProductsController {
   @Post()
   @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة منتج جديد' })
-  async createProduct(
-    @Body()
-    body: {
-      code: string;
-      name: string;
-      category: string;
-      retailPrice: number;
-      wholesalePrice: number;
-      seasonId?: string;
-    },
-  ) {
+  async createProduct(@Body() body: CreateProductDto) {
     return this.productsService.createProduct(body);
   }
 }

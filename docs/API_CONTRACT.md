@@ -1,8 +1,20 @@
 # API_CONTRACT — عقد الـ API
 
-> **تحديث GF-0002:** كل المسارات محمية الآن بـ JWT عبر `JwtAuthGuard` عالمي (APP_GUARD). المسارات العامة فقط: `POST /auth/login` و `GET /`. القيود الدقيقة عبر `@Roles()` + `RolesGuard`. مصفوفة الأدوار أدناه **مفعّلة ومختبرة** (401/403) في `backend/test/auth-guard.e2e-spec.ts`.
+> **تحديث GF-0004:** كل مسارات الكتابة (POST/PATCH) تستقبل الآن DTO مع class-validator: 400 على أي حقل غير معروف (forbidNonWhitelisted)، enum غير صالح، كمية/سعر غير موجب، تاريخ غير صالح، أو UUID غير صالح (مع ParseUUIDPipe على معاملي المسار لمساري الكتابة المعرّفين). حقول الهوية (userId/createdById/creatorId) في body تُرفض بـ 400 — لا تُقبل مطلقًا.
 
 **Base URL:** `http://<host>:3005` (PORT من البيئة — ADR-0004) · **Docs:** `/api/docs` · **Auth:** `Authorization: Bearer <JWT>`
+
+## قواعد التحقق الموحدة (GF-0004)
+
+| القاعدة | أمثلة مرفوضة بـ 400 |
+|---|---|
+| حقل غير معروف في body | `userId`, `createdById`, `creatorId`, أي حقل خارج الـ DTO |
+| enum غير صالح | `paymentType: 'X'`, `type`, `stage`, `status`, `rejectionReason`, `AccountType` |
+| كمية/سعر غير موجب | `quantity: -2/0`, `unitPrice: 0`, `amount: -50`, `retailPrice: 0` |
+| عدد صحيح مطلوب | `quantity: 1.5` (في الكميات والقطع) |
+| UUID غير صالح | `customerId: 'not-a-uuid'` + معامل مسار إضافة المخزون/تحديث الحالة |
+| تاريخ غير صالح | `date: 'not-a-date'` (ISO 8601) |
+| مصفوفة بنود فارغة | `items: []` |
 
 ## المصادقة — `/auth`
 
@@ -103,6 +115,29 @@
 
 1. **لا endpoint للـ Dashboard/Reports** رغم أن Flutter يطلب `/dashboard/stats` (P1-05 — GF-0019).
 2. **لا pagination** في أي قائمة (P1-10 — GF-0012).
-3. **لا DTOs** في معظم مسارات الكتابة — `@Body() any` (P0-05 — GF-0004).
+3. ~~**لا DTOs** في معظم مسارات الكتابة~~ — ✅ **أُغلقت في GF-0004**: 13 DTO مع class-validator مفعّلة ومختبرة (19 اختبار 400).
 4. **لا معالج أخطاء موحد** — أخطاء Prisma تتسرب بتفاصيلها (P2-05).
 5. Flutter `ApiClient` لا يضيف التوكن للطلبات بعد (P1-04 — GF-0010) — الحماية جاهزة server-side.
+6. **قاعدة المجال المؤجلة**: `checked = passed + rejected` في فحص الجودة تُفرض في GF-0014 (موثقة في DOMAIN_GLOSSARY رقم 3) — GF-0004 غطى صحة المدخلات فقط.
+
+## أمثلة Payloads الصحيحة (GF-0004)
+
+```jsonc
+// POST /sales/orders
+{
+  "customerId": "uuid", "paymentType": "CASH", "discount": 0,
+  "items": [{ "productVariantId": "uuid", "quantity": 2, "unitPrice": 100 }]
+}
+// POST /accounting/vouchers  { "type": "PAYMENT", "amount": 500, "description": "صرف نثريات" }
+// POST /production/work-orders  { "productId": "uuid", "quantity": 100 }
+// PATCH /production/work-orders/:uuid/status  { "status": "SEWING" }
+// POST /inventory/raw-materials/:uuid/add-stock  { "quantity": 50, "costPerUnit": 45.5 }
+// POST /hr/production  { "workerId": "uuid", "workOrderId": "uuid?", "date": "2026-08-25T00:00:00.000Z", "piecesCount": 100 }
+// POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
+// POST /quality  { "workOrderId": "uuid", "stage": "SEWING", "checkedQty": 100, "passedQty": 95, "rejectedQty": 5 }
+// POST /products  { "code": "PRD-T01", "name": "تيشيرت", "category": "تيشيرت", "retailPrice": 250, "wholesalePrice": 180, "seasonId": "uuid?" }
+// POST /sales/customers  { "name": "عميل", "phone": "اختياري", "address": "اختياري" }
+// POST /shipping  { "salesOrderId": "uuid", "shippingCost": 75, "trackingNumber": "اختياري" }
+// POST /accounting/accounts  { "code": "1000", "name": "الصندوق", "type": "ASSET", "parentId": "uuid?", "isGroup": false }
+```
+

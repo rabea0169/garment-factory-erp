@@ -73,6 +73,7 @@ describe('Auth guard (e2e) — GF-0002', () => {
     salesOrder: { findMany: jest.fn() },
     account: { create: jest.fn() },
     voucher: { create: jest.fn() },
+    workerAdvance: { create: jest.fn() },
   };
 
   beforeAll(async () => {
@@ -225,9 +226,10 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
   // ---------- معيار القبول 5: الهوية من الجلسة لا من body ----------
 
-  it('createdById للسند يُستخرج من الجلسة — قيمة body المزورة تُتجاهل (P0-04)', async () => {
-    prismaFns.voucher.create.mockImplementation(({ data }) =>
-      Promise.resolve({ id: 'v-1', ...data }),
+  it('createdById للسند يُستخرج من الجلسة — لا يقبل من body (P0-04)', async () => {
+    prismaFns.voucher.create.mockImplementation(
+      (args: { data: { createdById: string } }) =>
+        Promise.resolve({ id: 'v-1', ...args.data }),
     );
     await request(app.getHttpServer())
       .post('/accounting/vouchers')
@@ -236,7 +238,6 @@ describe('Auth guard (e2e) — GF-0002', () => {
         type: 'PAYMENT',
         amount: 100,
         description: 'اختبار',
-        createdById: 'HACKED-USER-ID',
       })
       .expect(201);
 
@@ -245,7 +246,6 @@ describe('Auth guard (e2e) — GF-0002', () => {
       { data: { createdById: string } },
     ];
     expect(firstCall[0].data.createdById).toBe('e2e-cashier');
-    expect(firstCall[0].data.createdById).not.toBe('HACKED-USER-ID');
   });
 
   // ---------- المسارات العامة ----------
@@ -259,5 +259,206 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
   it('GET / عام — 200 بلا توكن', () => {
     return request(app.getHttpServer()).get('/').expect(200);
+  });
+
+  // ---------- GF-0004: التحقق من المدخلات (DTO validation) ----------
+  // SUPER_ADMIN يتجاوز كل الأدوار — هذه الاختبارات تعزل فشل الـ validation عن 401/403
+
+  describe('DTO validation — GF-0004 (400 tests)', () => {
+    const adminToken = () => tokenFor(users[0]);
+    const UUID = '123e4567-e89b-12d3-a456-426614174000';
+
+    const validSalesOrder = () => ({
+      customerId: UUID,
+      paymentType: 'CASH',
+      discount: 0,
+      items: [{ productVariantId: UUID, quantity: 1, unitPrice: 10 }],
+    });
+
+    // معيار القبول 2: حقل غير معروف → 400
+    it('حقل غير معروف (userId) في أمر بيع → 400 (forbidNonWhitelisted)', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ ...validSalesOrder(), userId: 'HACKED-USER' })
+        .expect(400);
+    });
+
+    it('حقل هوية مزور (createdById) في سند → 400 — لا يدخل أصلًا (P0-04 مقوى)', () => {
+      return request(app.getHttpServer())
+        .post('/accounting/vouchers')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          type: 'PAYMENT',
+          amount: 50,
+          description: 'اختبار',
+          createdById: 'HACKED-USER-ID',
+        })
+        .expect(400);
+    });
+
+    // معيار القبول 3: enum غير صالح → 400
+    it('paymentType غير صالح في أمر بيع → 400', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ ...validSalesOrder(), paymentType: 'NOT_A_PAYMENT_TYPE' })
+        .expect(400);
+    });
+
+    it('type غير صالح في سند محاسبي → 400', () => {
+      return request(app.getHttpServer())
+        .post('/accounting/vouchers')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ type: 'NOT_A_TYPE', amount: 50, description: 'اختبار' })
+        .expect(400);
+    });
+
+    it('type غير صالح في حساب محاسبي → 400', () => {
+      return request(app.getHttpServer())
+        .post('/accounting/accounts')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ code: '1300', name: 'حساب تكراري', type: 'NOT_ACCOUNT_TYPE' })
+        .expect(400);
+    });
+
+    it('status غير صالح في تحديث أمر تشغيل → 400', () => {
+      return request(app.getHttpServer())
+        .patch(`/production/work-orders/${UUID}/status`)
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ status: 'NOT_A_STATUS' })
+        .expect(400);
+    });
+
+    it('stage غير صالح في فحص جودة → 400', () => {
+      return request(app.getHttpServer())
+        .post('/quality')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          workOrderId: UUID,
+          stage: 'NOT_A_STAGE',
+          checkedQty: 10,
+          passedQty: 10,
+          rejectedQty: 0,
+        })
+        .expect(400);
+    });
+
+    // معيار القبول 4: كميات/أسعار غير موجبة → 400
+    it('كمية سالبة في بند أمر بيع → 400', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          ...validSalesOrder(),
+          items: [{ productVariantId: UUID, quantity: -2, unitPrice: 10 }],
+        })
+        .expect(400);
+    });
+
+    it('سعر وحدة صفر في بند أمر بيع → 400', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          ...validSalesOrder(),
+          items: [{ productVariantId: UUID, quantity: 1, unitPrice: 0 }],
+        })
+        .expect(400);
+    });
+
+    it('خصم سالب في أمر بيع → 400', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ ...validSalesOrder(), discount: -10 })
+        .expect(400);
+    });
+
+    it('قائمة بنود فارغة في أمر بيع → 400', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ ...validSalesOrder(), items: [] })
+        .expect(400);
+    });
+
+    it('amount سالب في سند → 400', () => {
+      return request(app.getHttpServer())
+        .post('/accounting/vouchers')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ type: 'PAYMENT', amount: -50, description: 'اختبار' })
+        .expect(400);
+    });
+
+    it('كمية صفر في إضافة مخزون → 400', () => {
+      return request(app.getHttpServer())
+        .post(`/inventory/raw-materials/${UUID}/add-stock`)
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ quantity: 0, costPerUnit: 5 })
+        .expect(400);
+    });
+
+    it('retailPrice صفر في منتج جديد → 400', () => {
+      return request(app.getHttpServer())
+        .post('/products')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          code: 'PRD-X01',
+          name: 'منتج اختبار',
+          category: 'اختبار',
+          retailPrice: 0,
+          wholesalePrice: 10,
+        })
+        .expect(400);
+    });
+
+    it('checkedQty سالب في فحص جودة → 400', () => {
+      return request(app.getHttpServer())
+        .post('/quality')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({
+          workOrderId: UUID,
+          stage: 'SEWING',
+          checkedQty: -5,
+          passedQty: 0,
+          rejectedQty: 0,
+        })
+        .expect(400);
+    });
+
+    // UUID وتواريخ
+    it('معرف غير UUID في مسار إضافة المخزون → 400 (ParseUUIDPipe)', () => {
+      return request(app.getHttpServer())
+        .post('/inventory/raw-materials/not-a-uuid/add-stock')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ quantity: 5, costPerUnit: 5 })
+        .expect(400);
+    });
+
+    it('معرف غير UUID (customerId) في أمر بيع → 400', () => {
+      return request(app.getHttpServer())
+        .post('/sales/orders')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ ...validSalesOrder(), customerId: 'not-a-uuid' })
+        .expect(400);
+    });
+
+    it('تاريخ غير صالح في تسجيل إنتاج عامل → 400', () => {
+      return request(app.getHttpServer())
+        .post('/hr/production')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ workerId: UUID, date: 'not-a-date', piecesCount: 10 })
+        .expect(400);
+    });
+
+    it('طلب صالح كامل يمر الـ validation بنجاح (لا 400 كاذبة) — تسجيل سلفة → 201', async () => {
+      prismaFns.workerAdvance.create.mockResolvedValue({ id: 'adv-1' });
+      return request(app.getHttpServer())
+        .post('/hr/advances')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ workerId: UUID, amount: 200, notes: 'سلفة اختبار' })
+        .expect(201);
+    });
   });
 });

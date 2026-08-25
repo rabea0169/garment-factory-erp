@@ -25,9 +25,10 @@
 - **الإصلاح المنفذ:** `@CurrentUser('id')` decorator يستخرج الهوية من الجلسة؛ `sales.service.createSalesOrder(body, userId)` و`accounting.service.createVoucher(body, createdById)` و`production.service.createWorkOrder(dto, creatorId)` تستقبل الهوية كمعامل من الـ controller وتتجاهل أي قيمة واردة من body.
 - **الإثبات:** اختبار سلوكي في e2e: إرسال `createdById: 'HACKED-USER-ID'` في body لإنشاء سند → المحفوظ فعليًا هو id المستخرج من التوكن.
 
-### P0-05: نقاط نهاية مالية بلا DTO أو تحقق (`@Body() any`) — ❌ مفتوحة → GF-0004
-- **المواضع:** معظم مسارات الكتابة تستقبل objects خام؛ إجماليات الفواتير تُحسب من مدخلات عميل دون إعادة تحقق كافية.
-- **الإصلاح:** DTO مع `class-validator` لكل مسار كتابة + إعادة حساب الخادم للإجماليات.
+### P0-05: نقاط نهاية مالية بلا DTO أو تحقق (`@Body() any`) — ✅ **مغلقة في GF-0004**
+- **الإصلاح المنفذ:** 13 DTO مع class-validator لكل مسار كتابة (products/inventory/production×2/quality/hr×2/sales×2/shipping/accounting×2): forbidNonWhitelisted يرفض الحقول غير المعروفة بـ 400 (بما فيها حقول الهوية المزورة — تعزيز إضافي لـ P0-04)، enums محققة، كميات/أسعار @IsPositive، تواريخ ISO محققة مع تحويل آمن، UUIDs محققة في الحقول ومعاملي مسار الكتابة (ParseUUIDPipe)، بنود أمر البيع متحققة nested مع ArrayMinSize(1).
+- **الإثبات:** 19 اختبار 400 سلوكيًا في `test/auth-guard.e2e-spec.ts` (describe "DTO validation — GF-0004") + إبقاء كل الاختبارات السابقة خضراء (89 unit + 36 e2e).
+- **ملاحظة:** قاعدة المجال `checked = passed + rejected` مؤجلة عمدًا لـ GF-0014 (قاعدة أعمال وليست تحقق مدخلات).
 
 ## P1 — عالية: يجب إغلاقها قبل أي pilot
 
@@ -70,8 +71,8 @@
 | P0-01 | حرجة | ✅ مغلقة | GF-0002 | e2e: 7×401 + 3×403 + مصفوفة أدوار |
 | P0-02 | حرجة | ✅ مغلقة | GF-0002 | fail-closed boot + main.spec.ts |
 | P0-03 | حرجة | 🟡 جزئية | GF-0002 (2/3 مواضع) | بقي docker-compose → GF-0006 |
-| P0-04 | حرجة | ✅ مغلقة | GF-0002 | e2e: تجاهل HACKED-USER-ID |
-| P0-05 | حرجة | ❌ مفتوحة | — | GF-0004 |
+| P0-04 | حرجة | ✅ مغلقة (ومقواة في GF-0004: حقن الهوية في body يُرفض 400) | GF-0002+0004 | e2e: تجاهل ثم رفض HACKED-USER-ID |
+| P0-05 | حرجة | ✅ مغلقة | GF-0004 | 19 اختبار 400 + 13 DTO |
 | P1-01 | عالية | ✅ مغلقة | GF-0002 | assertRequiredEnv + CORS_ORIGINS |
 | P1-02..12 | عالية | ❌/🟡 مفتوحة | — | انظر التفاصيل أعلاه |
 | P2-01..08 | متوسطة | ❌ مفتوحة | — | المراحل 7-9 |

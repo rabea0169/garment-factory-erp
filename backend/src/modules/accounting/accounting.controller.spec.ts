@@ -1,9 +1,10 @@
 import 'reflect-metadata';
-import { UserRole } from '@prisma/client';
+import { AccountType, UserRole, VoucherType } from '@prisma/client';
 import { AccountingController } from './accounting.controller';
 import { AccountingService } from './accounting.service';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
+import { CreateVoucherDto } from './dto/create-voucher.dto';
 
 describe('AccountingController — هوية الجلسة والصلاحيات (GF-0003)', () => {
   let controller: AccountingController;
@@ -27,8 +28,8 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
   });
 
   it('إنشاء سند يمرر هوية الجلسة (من @CurrentUser) ويتجاهل createdById من الطلب', async () => {
-    const body = {
-      type: 'PAYMENT',
+    const body: CreateVoucherDto & { createdById?: string } = {
+      type: VoucherType.PAYMENT,
       amount: 100,
       description: 'اختبار',
       createdById: 'HACKED-USER-ID',
@@ -42,7 +43,7 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
   });
 
   it('إضافة حساب تمرر البيانات كما وردت', async () => {
-    const body = { code: '1000', name: 'الصندوق', type: 'ASSET' };
+    const body = { code: '1000', name: 'الصندوق', type: AccountType.ASSET };
     await controller.createAccount(body);
     expect(service.createAccount).toHaveBeenCalledWith(body);
   });

@@ -34,7 +34,13 @@ describe('ProductsController — التفويض والتفويض للخدمة (G
   });
 
   it('ينشئ منتجًا عبر الخدمة ببيانات الطلب كما هي', async () => {
-    const body = { code: 'PRD-T02', name: 'قميص', category: 'قمصان' };
+    const body = {
+      code: 'PRD-T02',
+      name: 'قميص',
+      category: 'قمصان',
+      retailPrice: 300,
+      wholesalePrice: 220,
+    };
     await controller.createProduct(body);
     expect(service.createProduct).toHaveBeenCalledWith(body);
   });

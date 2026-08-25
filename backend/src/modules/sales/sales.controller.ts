@@ -1,9 +1,11 @@
 import { Controller, Get, Post, Body } from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
-import { PaymentType, UserRole } from '@prisma/client';
+import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
+import { CreateCustomerDto } from './dto/create-customer.dto';
+import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
 @Controller('sales')
@@ -19,9 +21,7 @@ export class SalesController {
   @Post('customers')
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'إضافة عميل جديد' })
-  async createCustomer(
-    @Body() body: { name: string; phone?: string; address?: string },
-  ) {
+  async createCustomer(@Body() body: CreateCustomerDto) {
     return this.salesService.createCustomer(body);
   }
 
@@ -36,19 +36,9 @@ export class SalesController {
   @ApiOperation({ summary: 'إنشاء أمر بيع جديد' })
   async createOrder(
     @CurrentUser('id') userId: string,
-    @Body()
-    body: {
-      customerId: string;
-      paymentType: PaymentType;
-      discount: number;
-      items: {
-        productVariantId: string;
-        quantity: number;
-        unitPrice: number;
-      }[];
-    },
+    @Body() body: CreateSalesOrderDto,
   ) {
-    // P0-04: userId من الجلسة فقط — أي userId وارد في body يُتجاهل
+    // P0-04: userId من الجلسة فقط — إرساله في body يُرفض بـ 400 (forbidNonWhitelisted)
     return this.salesService.createSalesOrder(body, userId);
   }
 }

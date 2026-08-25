@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { UserRole } from '@prisma/client';
+import { UserRole, WorkOrderStatus } from '@prisma/client';
 import { QualityController } from './quality.controller';
 import { QualityService } from './quality.service';
 import { ROLES_KEY } from '../auth/roles.guard';
@@ -20,7 +20,7 @@ describe('QualityController — التفويض والصلاحيات (GF-0003)', 
   it('يفوّض قراءة الفحوصات وتسجيلها إلى الخدمة', async () => {
     const body = {
       workOrderId: 'wo-1',
-      stage: 'SEWING',
+      stage: WorkOrderStatus.SEWING,
       checkedQty: 100,
       passedQty: 95,
       rejectedQty: 5,
