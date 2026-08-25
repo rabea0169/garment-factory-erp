@@ -1,8 +1,11 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
-import { ValidationPipe } from '@nestjs/common';
+import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
+import helmet from 'helmet';
+import { GlobalExceptionFilter } from './common/global-exception.filter';
+import { RequestContextInterceptor } from './common/request-context.interceptor';
 
 const MIN_JWT_SECRET_LENGTH = 32;
 
@@ -62,6 +65,18 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
+  const nodeEnv = configService.get<string>('NODE_ENV', 'development');
+  const isProd = nodeEnv === 'production';
+
+  // C2: Helmet — security headers. في dev نعطّل CSP كي يعمل Swagger UI.
+  app.use(helmet(isProd ? undefined : { contentSecurityPolicy: false }));
+
+  // C8: GlobalExceptionFilter — لف أي استثناء غير HttpException في
+  // استجابة موحدة بـ requestId (قابل للتتبع في الـ logs).
+  app.useGlobalFilters(new GlobalExceptionFilter());
+
+  // C8: RequestContextInterceptor — يضيف requestId لكل طلب.
+  app.useGlobalInterceptors(new RequestContextInterceptor());
 
   // تفعيل التحقق من صحة البيانات عالمياً
   app.useGlobalPipes(
@@ -85,23 +100,36 @@ async function bootstrap() {
     credentials: true,
   });
 
-  // إعداد Swagger (توثيق API)
-  const swaggerConfig = new DocumentBuilder()
-    .setTitle('Garment Factory ERP API')
-    .setDescription('نظام ERP لإدارة مصنع الملابس الجاهزة — توثيق الـ API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  // C6: Swagger gating — مُعطّل في الإنتاج افتراضياً، يُفعَّل عبر SWAGGER_ENABLED=true.
+  const swaggerEnabled =
+    configService.get<string>('SWAGGER_ENABLED', isProd ? 'false' : 'true') ===
+    'true';
+  if (swaggerEnabled) {
+    const swaggerConfig = new DocumentBuilder()
+      .setTitle('Garment Factory ERP API')
+      .setDescription('نظام ERP لإدارة مصنع الملابس الجاهزة — توثيق الـ API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
 
-  const document = SwaggerModule.createDocument(app, swaggerConfig);
-  SwaggerModule.setup('api/docs', app, document);
+    const document = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, document);
+  }
+
+  // C3: graceful shutdown — يستجيب لـ SIGTERM/SIGINT ويسمح بإغلاق
+  // الـ DB pool والـ event listeners بأمان قبل الخروج.
+  app.enableShutdownHooks();
 
   const port = configService.get<number>('PORT', 3000);
   await app.listen(port);
-  console.log(
+  const logger = new Logger('Bootstrap');
+  logger.log(
     `🚀 Garment Factory ERP Backend is running on: http://localhost:${port}`,
   );
-  console.log(`📚 API Docs available at: http://localhost:${port}/api/docs`);
+  if (swaggerEnabled) {
+    logger.log(`📚 API Docs available at: http://localhost:${port}/api/docs`);
+  }
+  logger.log(`🌍 NODE_ENV=${nodeEnv} · SWAGGER_ENABLED=${swaggerEnabled}`);
 }
 
 // يُشغَّل bootstrap فقط عند التشغيل المباشر (node dist/main) —

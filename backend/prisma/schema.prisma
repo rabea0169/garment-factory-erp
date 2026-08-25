@@ -755,6 +755,8 @@ model SalesOrder {
   payments  CustomerPayment[]
   shipments Shipment[]
 
+  // Cluster 2 — A4/B3: فهرس مركب على (status, createdAt) لاستعلامات الـ dashboard
+  @@index([status, createdAt])
   @@map("sales_orders")
 }
 
@@ -928,6 +930,9 @@ model JournalEntry {
   createdBy User?        @relation("JournalEntryCreator", fields: [createdById], references: [id])
   vouchers  Voucher[]
 
+  // Cluster 2 — B5/E4: فهارس للتقارير وحساب السنة المالية
+  @@index([date])
+  @@index([createdById, createdAt])
   @@map("journal_entries")
 }
 
@@ -973,6 +978,8 @@ model Voucher {
   journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id])
   treasury     Treasury?     @relation(fields: [treasuryId], references: [id])
 
+  // Cluster 2 — C5/C8: فهارس لتسريع استعلامات الـ treasury حسب النوع والتاريخ
+  @@index([type, date])
   @@map("vouchers")
 }
 
@@ -987,6 +994,8 @@ model Treasury {
   // A3: السندات المرتبطة بهذه الخزينة (لا cascade delete — يُمنع حذف خزينة مرتبطة).
   vouchers Voucher[]
 
+  // Cluster 2 — B5: فهرس على isActive لفلترة الخزائن النشطة
+  @@index([isActive])
   @@map("treasuries")
 }
 

@@ -28,9 +28,12 @@ export function createPrismaMock() {
     finishedGood: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
+      findUnique: jest.fn(),
       count: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      // A5: updateMany للاختبار atomic decrement (WHERE quantity >= N)
+      updateMany: jest.fn(),
     },
     product: {
       findMany: jest.fn(),
