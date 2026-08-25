@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:image_picker/image_picker.dart';
-import 'dart:io';
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/products_cubit.dart';
 import '../../../inventory/presentation/cubit/inventory_cubit.dart';
@@ -25,8 +24,8 @@ class _AddProductScreenState extends State<AddProductScreen> {
   XFile? _imageFile;
   final ImagePicker _picker = ImagePicker();
 
-  List<Map<String, dynamic>> _variants = [];
-  List<Map<String, dynamic>> _bomItems = [];
+  final List<Map<String, dynamic>> _variants = [];
+  final List<Map<String, dynamic>> _bomItems = [];
 
   @override
   void initState() {
@@ -87,7 +86,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
             mainAxisSize: MainAxisSize.min,
             children: [
               DropdownButtonFormField<String>(
-                value: selectedRm,
+                initialValue: selectedRm,
                 hint: const Text('اختر المادة الخام'),
                 items: rawMaterials.map((rm) {
                   return DropdownMenuItem<String>(

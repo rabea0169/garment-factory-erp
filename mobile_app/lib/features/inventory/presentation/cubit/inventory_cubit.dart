@@ -5,6 +5,8 @@ import 'inventory_state.dart';
 class InventoryCubit extends Cubit<InventoryState> {
   InventoryCubit() : super(InventoryInitial());
 
+  Future<void> fetchRawMaterials() => fetchInventoryData();
+
   Future<void> fetchInventoryData() async {
     emit(InventoryLoading());
     try {
