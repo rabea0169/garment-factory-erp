@@ -4,26 +4,34 @@ import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
 
-// GF-0002 / P0-03: الاتصال من البيئة فقط — لا connection string مكتوب في الكود
-const connectionString = process.env.DATABASE_URL;
-if (!connectionString) {
-  console.error(
-    'DATABASE_URL مفقود — seed يقرأ الاتصال من البيئة فقط. انسخ backend/.env.example إلى backend/.env واضبط القيمة.',
-  );
-  process.exit(1);
+/**
+ * GF-0006: قراءة متغير بيئة إلزامي مع فشل فوري (fail-closed).
+ * دالة تُرجع string بدل التضييق عبر process.exit — تضمن صحة الأنواع
+ * في كل إصدارات TypeScript (لا تعتمد على control-flow analysis للـ never).
+ */
+function requireEnv(name: string, hint: string): string {
+  const value = process.env[name];
+  if (!value) {
+    console.error(`${name} مفقود — ${hint}`);
+    process.exit(1);
+  }
+  return value;
 }
+
+// GF-0002 / P0-03: الاتصال من البيئة فقط — لا connection string مكتوب في الكود
+const connectionString = requireEnv(
+  'DATABASE_URL',
+  'انسخ backend/.env.example إلى backend/.env واضبط قيمة الاتصال.',
+);
 const pool = new Pool({ connectionString });
 const adapter = new PrismaPg(pool);
 const prisma = new PrismaClient({ adapter });
 
 // GF-0006 / P1-02: كلمة مرور admin الأولية من البيئة — لا قيمة منشورة في الكود أو README
-const seedAdminPassword = process.env.SEED_ADMIN_PASSWORD;
-if (!seedAdminPassword) {
-  console.error(
-    'SEED_ADMIN_PASSWORD مفقود — حدد كلمة مرور أولية للتطوير في backend/.env (مثال في backend/.env.example). لا قيمة افتراضية لأسباب أمنية.',
-  );
-  process.exit(1);
-}
+const seedAdminPassword = requireEnv(
+  'SEED_ADMIN_PASSWORD',
+  'حدد كلمة مرور أولية للتطوير في backend/.env (مثال في backend/.env.example). لا قيمة افتراضية لأسباب أمنية.',
+);
 
 async function main() {
   console.log('Seeding database...');
