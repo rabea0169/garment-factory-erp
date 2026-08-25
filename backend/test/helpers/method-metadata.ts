@@ -13,5 +13,6 @@ export function getMethodMetadata<T>(
 ): T | undefined {
   const descriptor = Object.getOwnPropertyDescriptor(target, methodName);
   const handler = descriptor?.value as object | undefined;
+  if (!handler) return undefined;
   return Reflect.getMetadata(metadataKey, handler) as T | undefined;
 }

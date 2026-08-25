@@ -1,5 +1,5 @@
 import 'dotenv/config';
-import { PrismaClient, UserRole, RawMaterialUnit, WorkerSpecialty } from '@prisma/client';
+import { PrismaClient, UserRole, RawMaterialUnit, WorkerSpecialty, WarehouseType, StockMovementType } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
@@ -36,6 +36,27 @@ const seedAdminPassword = requireEnv(
 async function main() {
   console.log('Seeding database...');
 
+  // 0. Create Warehouses (GF-0007) — كل حركة مخزون تلزم بتحديد مخزن
+  const whRaw = await prisma.warehouse.upsert({
+    where: { code: 'WH-RAW' },
+    update: {},
+    create: {
+      code: 'WH-RAW',
+      name: 'مخزن الخامات الرئيسي',
+      type: WarehouseType.RAW_MATERIAL,
+    },
+  });
+  const whFg = await prisma.warehouse.upsert({
+    where: { code: 'WH-FG' },
+    update: {},
+    create: {
+      code: 'WH-FG',
+      name: 'مخزن المنتج التام',
+      type: WarehouseType.FINISHED_GOODS,
+    },
+  });
+  console.log('Warehouses seeded:', whRaw.code, whFg.code);
+
   // 1. Create Admin User
   const hashedPassword = await bcrypt.hash(seedAdminPassword, 10);
   const admin = await prisma.user.upsert({
@@ -51,7 +72,8 @@ async function main() {
   });
   console.log('Admin created:', admin.email);
 
-  // 2. Create Raw Materials
+  // 2. Create Raw Materials — الرصيد الافتتاحي مبرر بحركة ledger داخل
+  //    $transaction واحدة (GF-0007): currentStock == SUM(quantityDelta) من اليوم الأول
   const rm1 = await prisma.rawMaterial.create({
     data: {
       code: 'RM-001',
@@ -73,7 +95,35 @@ async function main() {
       costPerUnit: 15.0,
     },
   });
-  console.log('Raw Materials seeded');
+  await prisma.$transaction([
+    prisma.stockLedgerEntry.create({
+      data: {
+        entryCode: 'SLE-SEED-OPENING-001',
+        type: StockMovementType.RECEIVE,
+        warehouseId: whRaw.id,
+        rawMaterialId: rm1.id,
+        quantityDelta: 150,
+        balanceAfter: 150,
+        unitCost: 45.5,
+        totalValue: 6825,
+        reference: 'رصيد افتتاحي (seed)',
+      },
+    }),
+    prisma.stockLedgerEntry.create({
+      data: {
+        entryCode: 'SLE-SEED-OPENING-002',
+        type: StockMovementType.RECEIVE,
+        warehouseId: whRaw.id,
+        rawMaterialId: rm2.id,
+        quantityDelta: 12,
+        balanceAfter: 12,
+        unitCost: 15.0,
+        totalValue: 180,
+        reference: 'رصيد افتتاحي (seed)',
+      },
+    }),
+  ]);
+  console.log('Raw Materials seeded (ledger-backed)');
 
   // 3. Create Season & Product
   const season = await prisma.season.create({
@@ -99,16 +149,24 @@ async function main() {
     data: { productId: product.id, size: 'L', color: 'أبيض' },
   });
 
-  // BOM (Bill of Materials)
-  await prisma.bomItem.create({
-    data: { productId: product.id, rawMaterialId: rm1.id, quantity: 1.2, unit: 'متر' },
+  // BOM (Bill of Materials) Versioning (GF-0008)
+  const bomVersion = await prisma.bomVersion.create({
+    data: {
+      productId: product.id,
+      versionName: 'الإصدار الأساسي 1.0',
+    },
   });
-  await prisma.bomItem.create({
-    data: { productId: product.id, rawMaterialId: rm2.id, quantity: 0.1, unit: 'بكرة' },
-  });
-  console.log('Products & BOM seeded');
 
-  // 4. Create Finished Goods Inventory
+  await prisma.bomLine.create({
+    data: { bomVersionId: bomVersion.id, rawMaterialId: rm1.id, quantity: 1.2, unit: 'متر' },
+  });
+  await prisma.bomLine.create({
+    data: { bomVersionId: bomVersion.id, rawMaterialId: rm2.id, quantity: 0.1, unit: 'بكرة' },
+  });
+  console.log('Products & BOM Versions seeded');
+
+  // 4. Create Finished Goods Inventory (Legacy)
+  // GF-0007: مخزون التام لم يُدمج بعد في ledger (يُدمج بالكامل عند دمج العمليات)
   await prisma.finishedGood.create({
     data: { productVariantId: variantM.id, quantity: 50 },
   });
@@ -116,6 +174,19 @@ async function main() {
     data: { productVariantId: variantL.id, quantity: 30 },
   });
   console.log('Finished Goods seeded');
+
+  // 4.5. Create Sample Work Order (GF-0008)
+  await prisma.workOrder.create({
+    data: {
+      code: 'WO-SEED-001',
+      productVariantId: variantM.id,
+      bomVersionId: bomVersion.id,
+      quantity: 100,
+      status: 'PLANNED',
+      createdById: admin.id,
+    },
+  });
+  console.log('Work Order seeded');
 
   // 5. Workers
   await prisma.worker.create({

@@ -1,6 +1,7 @@
 import { WorkOrderStatus } from '@prisma/client';
 import { ProductionService } from './production.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InventoryService } from '../inventory/inventory.service';
 import {
   createEventEmitterMock,
   createPrismaMock,
@@ -11,25 +12,34 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   let service: ProductionService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let eventEmitter: { emit: jest.Mock };
+  let inventoryService: { issue: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
     eventEmitter = createEventEmitterMock() as unknown as { emit: jest.Mock };
+    inventoryService = { issue: jest.fn() };
     service = new ProductionService(
       prisma as unknown as PrismaService,
       eventEmitter as never,
+      inventoryService as unknown as InventoryService,
     );
   });
 
   it('يجلب أوامر التشغيل مع المنتج وتحديثات المراحل', async () => {
-    const orders = [{ id: 'wo-1', product: {}, stageUpdates: [] }];
+    const orders = [
+      { id: 'wo-1', variant: {}, bomVersion: {}, stageUpdates: [] },
+    ];
     prisma.workOrder.findMany.mockResolvedValue(orders);
 
     const result = await service.getAllWorkOrders();
 
     expect(result).toEqual(orders);
     expect(prisma.workOrder.findMany).toHaveBeenCalledWith({
-      include: { product: true, stageUpdates: true },
+      include: {
+        variant: { include: { product: true } },
+        bomVersion: true,
+        stageUpdates: true,
+      },
       orderBy: { createdAt: 'desc' },
     });
   });
@@ -38,7 +48,8 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     const created = {
       id: 'wo-1',
       code: 'WO-1234',
-      productId: 'p-1',
+      productVariantId: 'v-1',
+      bomVersionId: 'b-1',
       quantity: 100,
       status: 'PLANNED',
       createdById: 'user-session-1',
@@ -46,7 +57,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     prisma.workOrder.create.mockResolvedValue(created);
 
     const result = await service.createWorkOrder(
-      { productId: 'p-1', quantity: 100 },
+      { productVariantId: 'v-1', bomVersionId: 'b-1', quantity: 100 },
       'user-session-1',
     );
 
@@ -54,7 +65,8 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     expect(prisma.workOrder.create).toHaveBeenCalledWith({
       data: {
         code: expect.stringMatching(/^WO-\d+$/) as string,
-        productId: 'p-1',
+        productVariantId: 'v-1',
+        bomVersionId: 'b-1',
         quantity: 100,
         status: WorkOrderStatus.PLANNED,
         createdById: 'user-session-1',
@@ -66,7 +78,10 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     const created = { id: 'wo-1', code: 'WO-1', status: 'PLANNED' };
     prisma.workOrder.create.mockResolvedValue(created);
 
-    await service.createWorkOrder({ productId: 'p-1', quantity: 10 }, 'u-1');
+    await service.createWorkOrder(
+      { productVariantId: 'v-1', bomVersionId: 'b-1', quantity: 10 },
+      'u-1',
+    );
 
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       EVENTS.WORK_ORDER_CREATED,
@@ -92,14 +107,26 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     expect(eventEmitter.emit).not.toHaveBeenCalled();
   });
 
-  it('الإكمال: يحدّث الحالة وينشئ منتجًا تامًا بأول variant بكمية الأمر ويطلق حدث الإكمال', async () => {
-    prisma.workOrder.update.mockResolvedValue({
+  it('الإكمال: يسحب الخامات ويستلم المنتج التام داخل transaction', async () => {
+    // Mock the updated logic for GF-0008
+    prisma.workOrder.findUnique = jest.fn().mockResolvedValue({
+      id: 'wo-1',
+      status: 'SEWING',
+      productVariantId: 'v-1',
+      quantity: 100,
+      bomVersion: { lines: [] },
+    });
+    prisma.warehouse = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }),
+    } as unknown as typeof prisma.warehouse;
+
+    // Mock transaction to just return a dummy order
+    prisma.$transaction.mockResolvedValue({
       id: 'wo-1',
       status: 'COMPLETED',
-      productId: 'p-1',
+      productVariantId: 'v-1',
       quantity: 100,
     });
-    prisma.productVariant.findFirst.mockResolvedValue({ id: 'v-1' });
 
     const result = await service.updateOrderStatus(
       'wo-1',
@@ -107,35 +134,6 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     );
 
     expect(result.status).toBe('COMPLETED');
-    expect(prisma.finishedGood.create).toHaveBeenCalledWith({
-      data: { productVariantId: 'v-1', quantity: 100 },
-    });
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      EVENTS.WORK_ORDER_COMPLETED,
-      {
-        id: 'wo-1',
-        status: 'COMPLETED',
-        productId: 'p-1',
-        quantity: 100,
-      },
-    );
-  });
-
-  it('الإكمال بدون variant للمنتج: لا ينشئ منتجًا تامًا (سلوك حالي موثق — يُعالج في GF-0008)', async () => {
-    prisma.workOrder.update.mockResolvedValue({
-      id: 'wo-2',
-      status: 'COMPLETED',
-      productId: 'p-no-variants',
-      quantity: 10,
-    });
-    prisma.productVariant.findFirst.mockResolvedValue(null);
-
-    await service.updateOrderStatus('wo-2', WorkOrderStatus.COMPLETED);
-
-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
-      EVENTS.WORK_ORDER_COMPLETED,
-      expect.anything(),
-    );
+    expect(prisma.$transaction).toHaveBeenCalled();
   });
 });

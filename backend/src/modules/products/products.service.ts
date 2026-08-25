@@ -27,8 +27,8 @@ export class ProductsService {
       include: {
         season: true,
         variants: true,
-        bomItems: {
-          include: { rawMaterial: true },
+        bomVersions: {
+          include: { lines: { include: { rawMaterial: true } } },
         },
       },
     });

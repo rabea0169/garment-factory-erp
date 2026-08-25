@@ -45,7 +45,8 @@ export class ProductionController {
   async updateStatus(
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: UpdateWorkOrderStatusDto,
+    @CurrentUser('id') userId: string,
   ) {
-    return this.productionService.updateOrderStatus(id, body.status);
+    return this.productionService.updateOrderStatus(id, body.status, userId);
   }
 }

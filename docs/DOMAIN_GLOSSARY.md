@@ -10,8 +10,10 @@
 | **ProductVariant / SKU** | موديل + مقاس + لون — أصغر وحدة قابلة للبيع والتخزين والتصنيع | `ProductVariant` (unique: productId+size+color) | هو الهدف الصحيح لأمر الإنتاج وأمر البيع |
 | **RawMaterial** | خامة قابلة للاستهلاك (قماش، خيط، أزرار…) بوحدة قياس | `RawMaterial` + `RawMaterialUnit` | — |
 | **BOM (Bill of Materials)** | وصفة الخامات اللازمة لتصنيع منتج | `BomItem` | **فجوة:** لا يملك version ولا تاريخ فعالية — مطلوب `BOM version` |
-| **Warehouse** | موقع التخزين (خامات/تام/مرتجعات) | **غير موجود في المخطط** | مطلوب نموذج Warehouse/Location في المرحلة 2 |
-| **Stock Ledger** | سجل غير قابل للتعديل لكل حركة كمية وتكلفة بمصدرها | `RawMaterialTransaction` جزئيًا | **فجوة:** لا يوجد ledger موحد؛ الرصيد `currentStock` يُحدَّث مباشرة |
+| **Warehouse** | موقع التخزين (خامات/تام/عام) — كل حركة مخزون تلزم بتحديده | `Warehouse` + `WarehouseType` (GF-0007) | ✅ موجود — التحويلات بين المخازن تُفعّل في GF-0009 |
+| **Stock Ledger** | سجل append-only لكل حركة كمية وتكلفة موقعة، بلقطة الرصيد بعد كل حركة — مصدر الحقيقة للتدقيق | `StockLedgerEntry` + `StockMovementType` (GF-0007) | ✅ موحد للخامات؛ حركات التام تُدمج في GF-0008/0009. `RawMaterialTransaction` أُوقف الكتابة إليه (legacy) |
+| **Idempotency Key** | مفتاح اختياري من العميل (ترويسة `Idempotency-Key`): نفس المفتاح + نفس المحتوى = نفس الاستجابة بلا أثر مزدوج — حماية من retry الهاتف | `IdempotencyKey` (GF-0007) | بصمة الطلب (SHA-256) ترفض إعادة استخدام المفتاح بمحتوى مختلف (409) |
+| **Weighted Average Cost** | تكلفة الوحدة الحالية للخامة = متوسط مرجح يعاد احتسابه مع كل استلام (ADR-0008) | `RawMaterial.costPerUnit` يُحدّث داخل transaction الاستلام | تقييل الصرف/الهدر/التسوية بالتكلفة الحالية لحظة الحركة |
 | **FinishedGood** | مخزون المنتج التام لكل variant | `FinishedGood` (quantity لكل variant واحد) | **فجوة:** غير مرتبط بمخزن، ولا سجل حركة |
 | **WorkOrder** | أمر تصنيع لكمية من منتج | `WorkOrder` (يرتبط بـ **Product لا Variant**) | **فجوة:** الربط يجب أن يكون بـ SKU/variant + BOM version |
 | **Stage** | مرحلة تشغيل داخل أمر التصنيع | `WorkOrderStage` + `WorkOrderStatus` enum (PLANNED→CUTTING→SEWING→FINISHING→IRONING→PACKAGING→COMPLETED/CANCELLED) | الانتقالات غير مقيدة بقواعد state machine |

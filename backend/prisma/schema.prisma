@@ -35,6 +35,7 @@ model User {
   purchaseOrders PurchaseOrder[]
   vouchers       Voucher[]
   workOrders     WorkOrder[]
+  stockLedgerEntries StockLedgerEntry[]
 
   @@map("users")
 }
@@ -81,10 +82,9 @@ model Product {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  season     Season?         @relation(fields: [seasonId], references: [id])
-  variants   ProductVariant[]
-  bomItems   BomItem[]
-  workOrders WorkOrder[]
+  season      Season?          @relation(fields: [seasonId], references: [id])
+  variants    ProductVariant[]
+  bomVersions BomVersion[]
 
   @@map("products")
 }
@@ -97,26 +97,42 @@ model ProductVariant {
   barcode   String? @unique
   isActive  Boolean @default(true)
 
-  product        Product          @relation(fields: [productId], references: [id])
-  inventoryItems FinishedGood[]
-  orderItems     SalesOrderItem[]
+  product            Product            @relation(fields: [productId], references: [id])
+  inventoryItems     FinishedGood[]
+  orderItems         SalesOrderItem[]
+  stockLedgerEntries StockLedgerEntry[]
+  workOrders         WorkOrder[]
 
   @@unique([productId, size, color])
   @@map("product_variants")
 }
 
-model BomItem {
-  id            String  @id @default(uuid())
-  productId     String
+model BomVersion {
+  id          String    @id @default(uuid())
+  productId   String
+  versionName String    // e.g. "v1.0" or "صيف 2026 - الإصدار الأساسي"
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  product     Product    @relation(fields: [productId], references: [id])
+  lines       BomLine[]
+  workOrders  WorkOrder[]
+
+  @@map("bom_versions")
+}
+
+model BomLine {
+  id            String      @id @default(uuid())
+  bomVersionId  String
   rawMaterialId String
-  quantity      Decimal @db.Decimal(10, 4)
+  quantity      Decimal     @db.Decimal(10, 4)
   unit          String
 
-  product     Product     @relation(fields: [productId], references: [id])
+  bomVersion  BomVersion  @relation(fields: [bomVersionId], references: [id])
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
 
-  @@unique([productId, rawMaterialId])
-  @@map("bom_items")
+  @@unique([bomVersionId, rawMaterialId])
+  @@map("bom_lines")
 }
 
 // ===== M-04: INVENTORY =====
@@ -135,20 +151,26 @@ model RawMaterial {
   code          String          @unique
   name          String
   unit          RawMaterialUnit
+  // GF-0007 / ADR-0007: لا يُحدَّث هذا الرصيد إلا عبر InventoryService بحركة
+  // StockLedgerEntry داخل prisma.$transaction — وقيد CHECK (>= 0) في قاعدة البيانات.
   currentStock  Decimal         @db.Decimal(10, 4) @default(0)
-  minStockLevel Decimal         @db.Decimal(10, 4) @default(0)
+  // GF-0007 / ADR-0008: التكلفة الحالية = متوسط مرجح (Weighted Average) يُعاد
+  // احتسابه مع كل استلام (RECEIVE) داخل نفس transaction الحركة.
   costPerUnit   Decimal         @db.Decimal(10, 2)
+  minStockLevel Decimal         @db.Decimal(10, 4) @default(0)
   supplierId    String?
   isActive      Boolean         @default(true)
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
-  supplier      Supplier?                @relation(fields: [supplierId], references: [id])
-  transactions  RawMaterialTransaction[]
-  bomItems      BomItem[]
-  purchaseItems PurchaseOrderItem[]
-  consumptions  MaterialConsumption[]
+  supplier        Supplier?                @relation(fields: [supplierId], references: [id])
+  transactions    RawMaterialTransaction[]
+  bomLines        BomLine[]
+  purchaseItems   PurchaseOrderItem[]
+  consumptions    MaterialConsumption[]
+  ledgerEntries   StockLedgerEntry[]
 
+  @@index([code, isActive])
   @@map("raw_materials")
 }
 
@@ -160,6 +182,9 @@ enum TransactionType {
   WASTE
 }
 
+// GF-0007: نموذج قديم (legacy) — أنشئه مسار add-stock السابق. أُوقف الكتابة إليه
+// بعد اعتماد StockLedgerEntry كسجل الحركات الموحد (قابل للتدقيق). يُحتفظ به
+// للقراءة والتوافق فقط؛ الحذف أو الترحيل الكامل يقرر بعد استقرار المرحلة 3.
 model RawMaterialTransaction {
   id            String          @id @default(uuid())
   rawMaterialId String
@@ -178,11 +203,107 @@ model RawMaterialTransaction {
 model FinishedGood {
   id               String @id @default(uuid())
   productVariantId String @unique
+  // GF-0007: ملاحظة — مخزون التام لم يُدمج بعد في ledger (يُدمج في GF-0008/0009
+  // مع ربط أوامر الإنتاج بالـ variant)؛ حتى ذلك الحين quantity بلا سجل حركات.
   quantity         Int    @default(0)
 
   variant     ProductVariant @relation(fields: [productVariantId], references: [id])
 
   @@map("finished_goods")
+}
+
+// ===== GF-0007: DOMAIN FOUNDATION — WAREHOUSE / STOCK LEDGER / IDEMPOTENCY =====
+
+enum WarehouseType {
+  RAW_MATERIAL
+  FINISHED_GOODS
+  GENERAL
+}
+
+// المخازن — تُنشأ في seed (WH-RAW / WH-FG) وأي حركة مخزون تلزم بتحديدها.
+model Warehouse {
+  id        String        @id @default(uuid())
+  code      String        @unique
+  name      String
+  type      WarehouseType @default(RAW_MATERIAL)
+  isActive  Boolean       @default(true)
+  notes     String?
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+
+  ledgerEntries StockLedgerEntry[]
+
+  @@index([type, isActive])
+  @@map("warehouses")
+}
+
+// أنواع حركات المخزون الموحدة في الـ ledger:
+// RECEIVE (+كمية، يعيد احتساب متوسط التكلفة المرجح) · ISSUE (−صرف للإنتاج/البيع) ·
+// ADJUSTMENT (±تسوية جرد) · WASTE (−هدر) · RETURN (+مرتجع — يُفعّل في GF-0009)
+enum StockMovementType {
+  RECEIVE
+  ISSUE
+  ADJUSTMENT
+  WASTE
+  RETURN
+}
+
+// سجل حركات المخزون الموحد — مصدر الحقيقة للتدقيق (append-only):
+// كل تغيير على RawMaterial.currentStock يصاحبه سطر واحد هنا داخل نفس
+// prisma.$transaction، مع لقطة الرصيد بعد الحركة (balanceAfter) لتسهيل
+// المطابقة: currentStock == SUM(quantityDelta) لكل خامة.
+model StockLedgerEntry {
+  id               String           @id @default(uuid())
+  entryCode        String           @unique
+  type             StockMovementType
+  warehouseId      String
+  rawMaterialId    String?
+  productVariantId String?
+  // موقعة: موجب = دخول، سالب = خروج
+  quantityDelta    Decimal          @db.Decimal(12, 4)
+  // لقطة الرصيد بعد الحركة (سلسلة تدقيق)
+  balanceAfter     Decimal          @db.Decimal(12, 4)
+  unitCost         Decimal?         @db.Decimal(10, 4)
+  totalValue       Decimal?         @db.Decimal(14, 2)
+  reference        String?
+  notes            String?
+  idempotencyKeyId String?
+  createdById      String?
+  createdAt        DateTime         @default(now())
+
+  warehouse      Warehouse       @relation(fields: [warehouseId], references: [id])
+  rawMaterial    RawMaterial?    @relation(fields: [rawMaterialId], references: [id])
+  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id])
+  idempotencyKey IdempotencyKey? @relation(fields: [idempotencyKeyId], references: [id])
+  createdBy      User?           @relation(fields: [createdById], references: [id])
+
+  // GF-0007: indexes الأداء — الأكواد (entryCode unique أعلاه)، التواريخ، الحالات
+  @@index([rawMaterialId, createdAt])
+  @@index([productVariantId, createdAt])
+  @@index([warehouseId, createdAt])
+  @@index([type, createdAt])
+  @@index([createdAt])
+  @@index([idempotencyKeyId])
+  @@map("stock_ledger_entries")
+}
+
+// مفاتيح idempotency — تمنع تكرار نفس العملية عند retry من العميل (الهاتف):
+// السجل يُنشأ ويُستكمل بالاستجابة داخل نفس transaction الحركة، فوجوده يعني
+// اكتمالها؛ وإعادة الإرسال بنفس المفتاح تعيد الاستجابة المخزنة بلا أثر جديد.
+model IdempotencyKey {
+  id          String    @id @default(uuid())
+  key         String    @unique
+  scope       String
+  requestHash String
+  response    Json?
+  createdAt   DateTime  @default(now())
+  expiresAt   DateTime?
+
+  ledgerEntries StockLedgerEntry[]
+
+  @@index([scope, createdAt])
+  @@index([expiresAt])
+  @@map("idempotency_keys")
 }
 
 // ===== M-05: PRODUCTION =====
@@ -199,21 +320,24 @@ enum WorkOrderStatus {
 }
 
 model WorkOrder {
-  id           String          @id @default(uuid())
-  code         String          @unique
-  productId    String
-  quantity     Int
-  status       WorkOrderStatus @default(PLANNED)
-  startDate    DateTime?
-  endDate      DateTime?
-  completedQty Int             @default(0)
-  rejectedQty  Int             @default(0)
-  createdById  String
-  notes        String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  id               String          @id @default(uuid())
+  code             String          @unique
+  productVariantId String
+  bomVersionId     String
+  quantity         Int
+  status           WorkOrderStatus @default(PLANNED)
+  startDate        DateTime?
+  endDate          DateTime?
+  completedQty     Int             @default(0)
+  rejectedQty      Int             @default(0)
+  wasteQty         Int             @default(0) // Good to have as per domain rules
+  createdById      String
+  notes            String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
-  product              Product               @relation(fields: [productId], references: [id])
+  variant              ProductVariant        @relation(fields: [productVariantId], references: [id])
+  bomVersion           BomVersion            @relation(fields: [bomVersionId], references: [id])
   createdBy            User                  @relation(fields: [createdById], references: [id])
   stageUpdates         WorkOrderStage[]
   qualityChecks        QualityCheck[]
