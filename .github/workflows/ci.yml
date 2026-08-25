@@ -92,22 +92,20 @@ jobs:
           echo "Secret scan passed."
 
   # ------------------------------------------------------------------
-  # Flutter job — معطل مؤقتًا بقرار موثق:
-  # الخطة المرجعية §4.4: "إذا لم يكن Flutter SDK متاحًا، أعد runner مناسبًا أو
-  # فصل job موثق، لا تجاهل فحص Flutter". هذا الفصل مؤقت ويجب تفعيله قبل
-  # المرحلة 8 (GF-0020). عند التفعيل: أزل التعليق واستخدم subosito/flutter-action.
+  # GF-0010: Flutter quality gate — the mobile client must be checked before merge.
   # ------------------------------------------------------------------
-  # flutter:
-  #   name: Flutter — Analyze / Test
-  #   runs-on: ubuntu-latest
-  #   defaults:
-  #     run:
-  #       working-directory: mobile_app
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: subosito/flutter-action@v2
-  #       with:
-  #         channel: stable
-  #     - run: flutter pub get
-  #     - run: flutter analyze
-  #     - run: flutter test
+  flutter:
+    name: Flutter — Analyze / Test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: mobile_app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
