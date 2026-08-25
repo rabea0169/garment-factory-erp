@@ -2,14 +2,28 @@ name: CI
 
 on:
   push:
-    branches: [main, 'stabilization/**', 'phase2/**']
+    branches: [main, "stabilization/**", "phase2/**"]
   pull_request:
     branches: [main]
 
 jobs:
   backend:
-    name: Backend — Prisma / Lint / Build / Unit / E2E
+    name: Backend — Prisma / Lint / Build / Unit / E2E / Integration
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: garment_erp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d garment_erp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
     defaults:
       run:
         working-directory: backend
@@ -18,7 +32,8 @@ jobs:
       # قيم اختبارية واضحة (ليست أسرارًا) — الاختبارات e2e تعمل بلا قاعدة بيانات
       # (PrismaService مستبدل بـ mock) وتستخدم هذه القيم لفحص fail-closed فقط
       JWT_SECRET: ci-test-secret-value-with-at-least-32-chars
-      DATABASE_URL: postgresql://localhost:5432/garment_erp
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garment_erp
+      GF_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garment_erp
 
     steps:
       - name: Checkout
@@ -59,6 +74,12 @@ jobs:
       # GF-0006: اختبارات e2e داخل CI — تعمل بلا قاعدة بيانات (mocked Prisma)
       - name: E2E tests
         run: npm run test:e2e -- --runInBand
+
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy
+
+      - name: Integration tests — PostgreSQL
+        run: npm run test:integration -- --runInBand
 
   secret-scan:
     name: Secret Scan
