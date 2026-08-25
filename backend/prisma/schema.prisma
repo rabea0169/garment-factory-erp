@@ -498,13 +498,16 @@ model ProductionMaterialConsumption {
   plannedQuantity    Decimal                @default(0) @db.Decimal(12, 4)
   actualQuantity     Decimal                @db.Decimal(12, 4)
   variance           Decimal                @default(0) @db.Decimal(12, 4)
+  wasteQuantity      Decimal                @default(0) @db.Decimal(12, 4)
   unit               String
   unitCost           Decimal                @db.Decimal(12, 4)
   totalCost          Decimal                @db.Decimal(14, 2)
+  wasteCost          Decimal                @default(0) @db.Decimal(14, 2)
   wasteReason        ProductionWasteReason?
-  notes              String?
-  createdById        String
-  createdAt          DateTime               @default(now())
+
+  notes       String?
+  createdById String
+  createdAt   DateTime @default(now())
 
   workOrder        WorkOrder          @relation(fields: [workOrderId], references: [id])
   stageRun         ProductionStageRun @relation(fields: [stageRunId], references: [id])
