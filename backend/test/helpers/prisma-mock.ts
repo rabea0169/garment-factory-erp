@@ -84,6 +84,13 @@ export function createPrismaMock() {
       create: jest.fn(),
       update: jest.fn(),
     },
+    // E5: currency mock — findUnique (by code), upsert (seed), findMany (listing)
+    currency: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+      count: jest.fn(),
+    },
     worker: {
       findMany: jest.fn(),
       findUnique: jest.fn(),

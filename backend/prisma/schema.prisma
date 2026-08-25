@@ -950,6 +950,10 @@ model JournalEntry {
   reversalOfId String?
   reversedById String?
   reversedAt   DateTime?
+  // E5: multi-currency — العملة التي أُنشئ بها القيد + سعر الصرف مقابل عملة النظام.
+  // NULL = system default (EGP). exchangeRate defaults to 1.0 when currencyId is NULL.
+  currencyId    String?
+  exchangeRate  Decimal?  @db.Decimal(10, 6)
 
   lines     JournalLine[]
   // E1: علاقة اختيارية للمستخدم (لا cascade delete — لا تُحذف القيود).
@@ -959,14 +963,18 @@ model JournalEntry {
   // A9: علاقة ذاتية للربط بين القيد العكسي والأصلي.
   reversalOf  JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id])
   reversals  JournalEntry[] @relation("JournalEntryReversal")
+  // E5: FK to Currency (nullable — defaults to system EGP).
+  currency   Currency?     @relation(fields: [currencyId], references: [id])
   vouchers  Voucher[]
 
   // Cluster 2 — B5/E4: فهارس للتقارير وحساب السنة المالية
   // A9: فهارس لاستعلامات العكس (المؤجلة / المنفذة).
+  // E5: فهرس على currencyId لتقارير العملات الأجنبية.
   @@index([date])
   @@index([createdById, createdAt])
   @@index([reversalOfId])
   @@index([isReversed])
+  @@index([currencyId])
   @@map("journal_entries")
 }
 
@@ -1026,15 +1034,37 @@ model Treasury {
   // E2: soft-delete — الخزينة يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   // ملاحظة: لا تسمح بـ soft-delete إذا كان balance != 0 (يُيتم سندات مرتبطة).
   deletedAt DateTime?
+  // E5: multi-currency — كل خزينة لها عملة (EGP default).
+  currencyId String?
   createdAt DateTime @default(now())
 
   // A3: السندات المرتبطة بهذه الخزينة (لا cascade delete — يُمنع حذف خزينة مرتبطة).
   vouchers Voucher[]
+  // E5: FK to Currency (nullable for backfill — future PR makes it required).
+  currency Currency? @relation(fields: [currencyId], references: [id])
 
   // Cluster 2 — B5: فهرس على isActive لفلترة الخزائن النشطة
   // E2: composite index على (isActive, deletedAt) — يحل محل الفهرس المنفرد.
   @@index([isActive, deletedAt])
+  @@index([currencyId])
   @@map("treasuries")
+}
+
+// E5: Multi-currency support — Currency model with ISO 4217 code.
+// Seeded with EGP (Egyptian Pound) as the system default + USD as reference.
+model Currency {
+  id            String   @id @default(uuid())
+  code          String   @unique // ISO 4217: EGP, USD, EUR, etc.
+  name          String
+  symbol        String?
+  decimalPlaces Int      @default(2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  treasuries     Treasury[]
+  journalEntries JournalEntry[]
+
+  @@map("currencies")
 }
 
 model CostCenter {

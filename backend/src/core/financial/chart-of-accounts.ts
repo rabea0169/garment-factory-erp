@@ -55,6 +55,22 @@ export const CHART_OF_ACCOUNTS = {
 export type ChartOfAccountKey = keyof typeof CHART_OF_ACCOUNTS;
 
 /**
+ * E5: معرفات العملات الافتراضية (Currencies).
+ *
+ * تُستخدم من الخدمات التي تنشئ قيودًا متعددة العملات. تُنشأ في prisma/seed.ts
+ * وفي الـ migration نفسه (لضمان وجودها على DB نظيف قبل تشغيل أي seed).
+ *
+ * EGP هي عملة النظام الافتراضية — كل قيد بلا currencyId يُعتبر EGP بـ rate=1.0.
+ * USD عملة مرجعية لميزات FX المستقبلية.
+ */
+export const CURRENCIES = {
+  EGP: '00000000-0000-0000-0000-000000000101',
+  USD: '00000000-0000-0000-0000-000000000102',
+} as const;
+
+export type CurrencyKey = keyof typeof CURRENCIES;
+
+/**
  * A10: معدل ضريبة القيمة المضافة المصري (14% اعتبارًا من 2015-07-01).
  *
  * المصدر: قانون الضرائب المصري رقم 67 لسنة 2016 — جدول معدلات الضريبة.
