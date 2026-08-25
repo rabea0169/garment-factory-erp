@@ -1,5 +1,12 @@
 import 'dotenv/config';
-import { PrismaClient, UserRole, RawMaterialUnit, WorkerSpecialty, WarehouseType, StockMovementType } from '@prisma/client';
+import {
+  PrismaClient,
+  UserRole,
+  RawMaterialUnit,
+  WorkerSpecialty,
+  WarehouseType,
+  StockMovementType,
+} from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
@@ -158,10 +165,20 @@ async function main() {
   });
 
   await prisma.bomLine.create({
-    data: { bomVersionId: bomVersion.id, rawMaterialId: rm1.id, quantity: 1.2, unit: 'متر' },
+    data: {
+      bomVersionId: bomVersion.id,
+      rawMaterialId: rm1.id,
+      quantity: 1.2,
+      unit: 'متر',
+    },
   });
   await prisma.bomLine.create({
-    data: { bomVersionId: bomVersion.id, rawMaterialId: rm2.id, quantity: 0.1, unit: 'بكرة' },
+    data: {
+      bomVersionId: bomVersion.id,
+      rawMaterialId: rm2.id,
+      quantity: 0.1,
+      unit: 'بكرة',
+    },
   });
   console.log('Products & BOM Versions seeded');
 
@@ -190,10 +207,20 @@ async function main() {
 
   // 5. Workers
   await prisma.worker.create({
-    data: { code: 'WK-001', name: 'أحمد محمود', specialty: WorkerSpecialty.SEWING, pieceRate: 5.5 },
+    data: {
+      code: 'WK-001',
+      name: 'أحمد محمود',
+      specialty: WorkerSpecialty.SEWING,
+      pieceRate: 5.5,
+    },
   });
   await prisma.worker.create({
-    data: { code: 'WK-002', name: 'سيد علي', specialty: WorkerSpecialty.CUTTING, pieceRate: 3.0 },
+    data: {
+      code: 'WK-002',
+      name: 'سيد علي',
+      specialty: WorkerSpecialty.CUTTING,
+      pieceRate: 3.0,
+    },
   });
   console.log('Workers seeded');
 }
