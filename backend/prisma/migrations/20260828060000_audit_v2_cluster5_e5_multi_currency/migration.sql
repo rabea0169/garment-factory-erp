@@ -2,8 +2,10 @@
 -- Seeded with EGP (system default) + USD (reference). Future PR adds FX conversion logic.
 
 -- 1. Create currencies table (idempotent — CREATE TABLE IF NOT EXISTS).
+-- Note: 'id' has NO DEFAULT — all inserts (migration + seed) provide explicit UUIDs.
+-- Prisma Client will also provide UUIDs at insert time via @default(uuid()).
 CREATE TABLE IF NOT EXISTS "currencies" (
-  "id" UUID NOT NULL DEFAULT gen_random_uuid(),
+  "id" UUID NOT NULL,
   "code" VARCHAR(3) NOT NULL,
   "name" VARCHAR(100) NOT NULL,
   "symbol" VARCHAR(10),
