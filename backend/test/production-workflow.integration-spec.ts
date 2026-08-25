@@ -1,6 +1,7 @@
 import {
   ProductionStage,
   ProductionStageRunStatus,
+  StockMovementType,
   ProductionWasteReason,
   UserRole,
   WarehouseType,
@@ -229,6 +230,32 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     ).toBe(2);
   });
 
+  it('handles concurrent identical transitions as one committed operation', async () => {
+    const input = {
+      workOrderId: scenario.workOrderId,
+      toStage: ProductionStage.CUTTING,
+      idempotencyKey: `gf0013-concurrent-transition-${randomUUID()}`,
+    };
+
+    const results = await Promise.all([
+      workflowService.transitionStage(input, scenario.userId),
+      workflowService.transitionStage(input, scenario.userId),
+    ]);
+
+    expect(results.filter((result) => !result.replayed)).toHaveLength(1);
+    expect(results.filter((result) => result.replayed)).toHaveLength(1);
+    expect(
+      await prisma.workOrderStageTransition.count({
+        where: { workOrderId: scenario.workOrderId },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.productionStageRun.count({
+        where: { workOrderId: scenario.workOrderId },
+      }),
+    ).toBe(1);
+  });
+
   it('enforces quantity conservation for a stage output', async () => {
     const transition = await workflowService.transitionStage(
       {
@@ -325,9 +352,28 @@ integrationDescribe('GF-0013 production workflow integration', () => {
 
     expect(
       await prisma.stockLedgerEntry.count({
-        where: { reference: scenario.workOrderId },
+        where: {
+          rawMaterialId: scenario.rawMaterialId,
+          type: StockMovementType.ISSUE,
+        },
       }),
-    ).toBe(2); // one RECEIVE plus one ISSUE
+    ).toBe(1); // replay must not create a second ISSUE
+
+    await workflowService.transitionStage(
+      {
+        workOrderId: scenario.workOrderId,
+        toStage: ProductionStage.SEWING,
+      },
+      scenario.userId,
+    );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.SEWING,
+      inputQty: 8,
+      acceptedQty: 7,
+      rejectedQty: 1,
+      wasteQty: 0,
+    });
 
     const cost = await workflowService.finalizeCost(
       scenario.workOrderId,
@@ -336,7 +382,7 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     expect(Number(cost.materialCost)).toBe(20);
     expect(Number(cost.wasteCost)).toBe(5);
     expect(Number(cost.totalCost)).toBe(20);
-    expect(Number(cost.unitCost)).toBeCloseTo(20 / 8, 4);
+    expect(Number(cost.unitCost)).toBeCloseTo(20 / 7, 4);
   });
 
   it('rolls back the ledger and consumption when material is insufficient', async () => {
@@ -376,7 +422,10 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     ).toBe(0);
     expect(
       await prisma.stockLedgerEntry.count({
-        where: { reference: scenario.workOrderId },
+        where: {
+          rawMaterialId: scenario.rawMaterialId,
+          type: StockMovementType.RECEIVE,
+        },
       }),
     ).toBe(1); // initial RECEIVE only
   });

@@ -82,6 +82,11 @@ function requestHash(payload: object): string {
   return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
 }
 
+function isUniqueConstraintViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  return (error as { code?: unknown }).code === 'P2002';
+}
+
 function assertNonNegativeQuantities(values: Record<string, number>): void {
   for (const [name, value] of Object.entries(values)) {
     if (!Number.isFinite(value) || value < 0) {
@@ -105,111 +110,124 @@ export class ProductionWorkflowService {
     const replay = await this.findTransitionReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
-    const result = await this.prisma.$transaction(async (tx) => {
-      const workOrder = await tx.workOrder.findUnique({
-        where: { id: input.workOrderId },
-      });
-      if (!workOrder) throw new NotFoundException('Work order not found');
-      if (
-        workOrder.status === WorkOrderStatus.COMPLETED ||
-        workOrder.status === WorkOrderStatus.CANCELLED
-      ) {
-        throw new BadRequestException('Work order is not active');
-      }
-
-      const targetIndex = STAGE_ORDER.indexOf(input.toStage);
-      const currentIndex = workOrder.currentStage
-        ? STAGE_ORDER.indexOf(workOrder.currentStage)
-        : -1;
-      if (targetIndex < 0) {
-        throw new BadRequestException('Unsupported production stage');
-      }
-      if (targetIndex !== currentIndex + 1) {
-        throw new BadRequestException(
-          `Invalid stage transition from ${workOrder.currentStage ?? 'START'} to ${input.toStage}`,
-        );
-      }
-
-      const fromRun = workOrder.currentStage
-        ? await tx.productionStageRun.findUnique({
-            where: {
-              workOrderId_stage: {
-                workOrderId: workOrder.id,
-                stage: workOrder.currentStage,
-              },
-            },
-          })
-        : null;
-      if (
-        workOrder.currentStage &&
-        (!fromRun || fromRun.status !== ProductionStageRunStatus.COMPLETED)
-      ) {
-        throw new BadRequestException(
-          'Current production stage must be completed before advancing',
-        );
-      }
-
-      const toRun = await tx.productionStageRun.create({
-        data: {
-          workOrderId: workOrder.id,
-          stage: input.toStage,
-          sequence: targetIndex + 1,
-          status: ProductionStageRunStatus.IN_PROGRESS,
-          plannedQty: workOrder.quantity,
-          inputQty: workOrder.quantity,
-        },
-      });
-
-      let idempotencyKeyId: string | undefined;
-      if (input.idempotencyKey) {
-        const key = await tx.idempotencyKey.create({
-          data: {
-            key: input.idempotencyKey,
-            scope: 'production.transition',
-            requestHash: hash,
-          },
-          select: { id: true },
+    try {
+      const result = await this.prisma.$transaction(async (tx) => {
+        const workOrder = await tx.workOrder.findUnique({
+          where: { id: input.workOrderId },
         });
-        idempotencyKeyId = key.id;
-      }
+        if (!workOrder) throw new NotFoundException('Work order not found');
+        if (
+          workOrder.status === WorkOrderStatus.COMPLETED ||
+          workOrder.status === WorkOrderStatus.CANCELLED
+        ) {
+          throw new BadRequestException('Work order is not active');
+        }
 
-      const updated = await tx.workOrder.update({
-        where: { id: workOrder.id },
-        data: {
-          currentStage: input.toStage,
-          status: WorkOrderStatus.IN_PROGRESS,
-          stageVersion: { increment: 1 },
-          startDate: workOrder.startDate ?? new Date(),
-        },
-      });
+        const targetIndex = STAGE_ORDER.indexOf(input.toStage);
+        const currentIndex = workOrder.currentStage
+          ? STAGE_ORDER.indexOf(workOrder.currentStage)
+          : -1;
+        if (targetIndex < 0) {
+          throw new BadRequestException('Unsupported production stage');
+        }
+        if (targetIndex !== currentIndex + 1) {
+          throw new BadRequestException(
+            `Invalid stage transition from ${workOrder.currentStage ?? 'START'} to ${input.toStage}`,
+          );
+        }
 
-      const transition = await tx.workOrderStageTransition.create({
-        data: {
-          workOrderId: workOrder.id,
+        const fromRun = workOrder.currentStage
+          ? await tx.productionStageRun.findUnique({
+              where: {
+                workOrderId_stage: {
+                  workOrderId: workOrder.id,
+                  stage: workOrder.currentStage,
+                },
+              },
+            })
+          : null;
+        if (
+          workOrder.currentStage &&
+          (!fromRun || fromRun.status !== ProductionStageRunStatus.COMPLETED)
+        ) {
+          throw new BadRequestException(
+            'Current production stage must be completed before advancing',
+          );
+        }
+
+        const toRun = await tx.productionStageRun.create({
+          data: {
+            workOrderId: workOrder.id,
+            stage: input.toStage,
+            sequence: targetIndex + 1,
+            status: ProductionStageRunStatus.IN_PROGRESS,
+            plannedQty: workOrder.quantity,
+            inputQty: workOrder.quantity,
+          },
+        });
+
+        let idempotencyKeyId: string | undefined;
+        if (input.idempotencyKey) {
+          const key = await tx.idempotencyKey.create({
+            data: {
+              key: input.idempotencyKey,
+              scope: 'production.transition',
+              requestHash: hash,
+            },
+            select: { id: true },
+          });
+          idempotencyKeyId = key.id;
+        }
+
+        const updated = await tx.workOrder.update({
+          where: { id: workOrder.id },
+          data: {
+            currentStage: input.toStage,
+            status: WorkOrderStatus.IN_PROGRESS,
+            stageVersion: { increment: 1 },
+            startDate: workOrder.startDate ?? new Date(),
+          },
+        });
+
+        const transition = await tx.workOrderStageTransition.create({
+          data: {
+            workOrderId: workOrder.id,
+            fromStage: workOrder.currentStage,
+            toStage: input.toStage,
+            fromStatus: workOrder.status,
+            toStatus: WorkOrderStatus.IN_PROGRESS,
+            fromRunId: fromRun?.id,
+            toRunId: toRun.id,
+            actorId,
+            reason: input.reason,
+            idempotencyKeyId,
+          },
+        });
+
+        return {
+          replayed: false,
+          transitionId: transition.id,
+          workOrderId: updated.id,
           fromStage: workOrder.currentStage,
           toStage: input.toStage,
-          fromStatus: workOrder.status,
-          toStatus: WorkOrderStatus.IN_PROGRESS,
-          fromRunId: fromRun?.id,
-          toRunId: toRun.id,
-          actorId,
-          reason: input.reason,
-          idempotencyKeyId,
-        },
+          stageRunId: toRun.id,
+          stageVersion: updated.stageVersion,
+        } satisfies StageTransitionResult;
       });
 
-      return {
-        replayed: false,
-        transitionId: transition.id,
-        workOrderId: updated.id,
-        fromStage: workOrder.currentStage,
-        toStage: input.toStage,
-        stageRunId: toRun.id,
-        stageVersion: updated.stageVersion,
-      } satisfies StageTransitionResult;
-    });
-
-    return result;
+      return result;
+    } catch (error) {
+      // Two identical requests can pass the pre-check concurrently. Once the
+      // winner commits the unique idempotency key, return its committed result.
+      if (input.idempotencyKey && isUniqueConstraintViolation(error)) {
+        const replay = await this.findTransitionReplay(
+          input.idempotencyKey,
+          hash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
   }
 
   async recordStageOutput(input: RecordStageOutputInput): Promise<void> {
@@ -236,8 +254,14 @@ export class ProductionWorkflowService {
             stage: input.stage,
           },
         },
+        include: { workOrder: { select: { currentStage: true } } },
       });
       if (!stageRun) throw new NotFoundException('Stage run not found');
+      if (stageRun.workOrder.currentStage !== input.stage) {
+        throw new BadRequestException(
+          'Stage output must be recorded for the current production stage',
+        );
+      }
       if (stageRun.status === ProductionStageRunStatus.COMPLETED) {
         throw new ConflictException('Stage run is already completed');
       }
@@ -393,10 +417,13 @@ export class ProductionWorkflowService {
       (sum, row) => sum.add(row.wasteCost),
       new Prisma.Decimal(0),
     );
-    const acceptedQty = stageRuns.reduce(
-      (sum, row) => sum + row.acceptedQty,
-      0,
-    );
+    const latestCompletedStageRun = stageRuns
+      .filter((row) => row.status === ProductionStageRunStatus.COMPLETED)
+      .sort((a, b) => b.sequence - a.sequence)[0];
+    // Each stage reports the same units at a different routing point. The
+    // denominator must therefore be the latest completed output, not the sum
+    // of accepted quantities across all stages.
+    const acceptedQty = latestCompletedStageRun?.acceptedQty ?? 0;
     const unitCost =
       acceptedQty > 0 ? materialCost.div(acceptedQty).toDecimalPlaces(4) : null;
 
@@ -443,7 +470,10 @@ export class ProductionWorkflowService {
     }
     const transition = await this.prisma.workOrderStageTransition.findUnique({
       where: { idempotencyKeyId: idempotency.id },
-      include: { toRun: true },
+      include: {
+        toRun: true,
+        workOrder: { select: { stageVersion: true } },
+      },
     });
     if (!transition || !transition.toRun) return null;
     return {
@@ -453,7 +483,7 @@ export class ProductionWorkflowService {
       fromStage: transition.fromStage,
       toStage: transition.toStage,
       stageRunId: transition.toRun.id,
-      stageVersion: transition.toRun.sequence,
+      stageVersion: transition.workOrder.stageVersion,
     };
   }
 
