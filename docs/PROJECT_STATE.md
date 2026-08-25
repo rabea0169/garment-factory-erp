@@ -5,9 +5,9 @@
 ```text
 Project: Garment Factory ERP
 Current branch: phase2/domain-foundation (متفرعة من stabilization/baseline-and-security @ 3ebf6a7)
-Current commit: 9ab9baa (GF-0007 — Domain Foundation — implementation commit)
+Current commit: 553fe9e (ci trigger fix بعد GF-0007؛ التنفيذ 9ab9baa)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
-Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006 على stabilization/baseline-and-security، CI أخضر بالكامل — Run #7)
+Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006 على stabilization/baseline-and-security، CI أخضر بالكامل — Run #8/#9) — **PR #1 مفتوح للدمج في main: https://github.com/rabea0169/garment-factory-erp/pull/1 (mergeable، الفحوص خضراء)**
 Last completed task: GF-0007 — Domain Foundation (Warehouse + Stock Ledger + Idempotency + Indexes) — أول مهمة المرحلة 2
 Active task: GF-0008 — BOM versions + ربط WorkOrder بالـ variant/SKU (بطاقتها في HANDOFF-006.md)
 Blocked tasks: لا شيء
@@ -18,7 +18,7 @@ Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web h
 Security blockers: لا P0 ولا P1 مفتوحة في البنية التحتية — المتبقي P1-03/04/05 (Flutter — GF-0010) وP1-08..12 (موثقة بجدولها)
 Open decisions: ADR-0003 (مصير الأحداث المالية — اتجاه معتمد عمليًا في GF-0007: الآثار داخل transaction + أحداث للتنبيهات غير المالية فقط، يُحسم نهائيًا في المرحلة 7)
 Last handoff: docs/handoffs/HANDOFF-006.md
-Next exact action: دفع فرع phase2/domain-foundation إلى GitHub ثم تنفيذ GF-0008 وفق بطاقتها في HANDOFF-006.md
+Next exact action: تنفيذ GF-0008 وفق بطاقتها في HANDOFF-006.md (الفرع مدفوع إلى GitHub وCI أخضر بالكامل — Run #10 على phase2/domain-foundation؛ ودمج PR #1 في main بقرار من المالك)
 ```
 
 ---

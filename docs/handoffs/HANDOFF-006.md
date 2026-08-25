@@ -43,11 +43,12 @@
 | tsc --noEmit نظيف بلا كاش | ✅ لملفات GF-0007 | خطأان TS **تاريخيان** في ملفات لم تُلمس (quality spec + method-metadata) موجودان على HEAD قبل التغيير — درس GF-0006 مطبق بالتحقق النظيف |
 | Unit tests | ✅ **116/116** (كانت 89 — +27 صافي في inventory) | |
 | E2E tests | ✅ **36/36** (بلا DB) | مسارات add-stock القديمة متوافقة: 400/401/403 كما هي |
-| CI على GitHub | ⏳ **لم يُشغل بعد** — الفرع الجديد لم يُدفع (لا صلاحيات دفع في بيئة التنفيذ؛ توصية التوكن السابق إبطاله) | أمر الدفع أدناه؛ نفس بوابات CI السابقة ستغطي كل شيء |
+| CI على GitHub | ✅ **Run #10 أخضر بالكامل** (Backend + Secret Scan) على phase2/domain-foundation @553fe9e | الفرع دُفع بنجاح؛ أُضيف 'phase2/**' لمحفزات push في ci.yml (التزام 553fe9e) بعد اكتشاف أن الفرع لم يكن مغطى |
 | docker/migrate فعلي | ⏳ غير متاح في بيئة القياس (لا docker) — migration مولدة بـ `prisma migrate diff` من schema-to-schema (دقيقة بالبناء) والتحقق YAML/بنية | أول `migrate deploy` على جهاز المطور يثبت التطبيق الفعلي |
 
 ## Known Issues
-- **الفرع لم يُدفع لـ GitHub**: بيئة التنفيذ بلا صلاحيات دفع (التوكن السابق أُلغي توصيةً أمنية). أمر الدفع: `cd backend/.. && git push -u origin phase2/domain-foundation` (أو عبر PAT جديد لمرة واحدة).
+- ~~**الفرع لم يُدفع لـ GitHub**~~ ✅ **دُفع بنجاح** (9ab9baa → c091184 → 553fe9e عبر PAT لمرة واحدة) — CI Run #10 أخضر بالكامل.
+- **PR المرحلة 1 مفتوح**: https://github.com/rabea0169/garment-factory-erp/pull/1 (stabilization → main، mergeable، Run #9 أخضر) — بانتظار قرار الدمج من المالك.
 - **docker غير متاح في بيئة القياس** — تطبيق الـ migration الفعلي يحدث أول مرة على جهاز المطور (متوقع سليم: SQL مولد من Prisma نفسه + قيدان CHECK قياسيان).
 - **MASTER_BACKLOG لم يُحدَّث** (علامة ✅ لصف GF-0007) — الملف خارج Allowed Files لهذه البطاقة؛ أول إجراء في المهمة التالية.
 - **API_CONTRACT.md لم يُحدَّث بالم المسارات الجديدة** — خارج Allowed Files؛ يُحدَّث مع GF-0008 أو أول مهمة تلمس العقد.
