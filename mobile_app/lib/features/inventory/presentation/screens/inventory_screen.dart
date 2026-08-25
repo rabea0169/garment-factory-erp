@@ -253,7 +253,7 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
                 children: [
                   DropdownButtonFormField<String>(
                     decoration: const InputDecoration(labelText: 'اختر المادة'),
-                    value: selectedId,
+                    initialValue: selectedId,
                     items: materials.map<DropdownMenuItem<String>>((m) {
                       return DropdownMenuItem<String>(
                         value: m['id'],

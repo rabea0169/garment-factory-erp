@@ -3,7 +3,7 @@ import 'package:go_router/go_router.dart';
 import 'package:fl_chart/fl_chart.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
-import '../../auth/presentation/cubit/auth_cubit.dart';
+import '../../../auth/presentation/cubit/auth_cubit.dart';
 
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});

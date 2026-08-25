@@ -1,18 +1,36 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
-  static final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
+  static final FlutterLocalNotificationsPlugin _notificationsPlugin =
+      FlutterLocalNotificationsPlugin();
+  static bool _initialized = false;
 
   static Future<void> init() async {
-    const AndroidInitializationSettings initializationSettingsAndroid = AndroidInitializationSettings('@mipmap/ic_launcher');
-    const InitializationSettings initializationSettings = InitializationSettings(android: initializationSettingsAndroid);
-    
-    // Some versions use initializationSettings directly, some use named parameters, 
-    // let's assume standard plugin interface which hasn't changed drastically. 
-    // If it fails, we will remove it.
+    if (_initialized) return;
+
+    const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
+    const settings = InitializationSettings(android: androidSettings);
+    final initialized = await _notificationsPlugin.initialize(settings);
+    _initialized = initialized ?? false;
   }
 
-  static Future<void> showNotification({required String title, required String body}) async {
-    // mock for now to bypass compile errors
+  static Future<void> showNotification({
+    required String title,
+    required String body,
+  }) async {
+    await init();
+    if (!_initialized) return;
+
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'general',
+        'General notifications',
+        channelDescription: 'تنبيهات نظام إدارة المصنع',
+        importance: Importance.defaultImportance,
+        priority: Priority.defaultPriority,
+      ),
+    );
+    final notificationId = DateTime.now().millisecondsSinceEpoch.remainder(1 << 31);
+    await _notificationsPlugin.show(notificationId, title, body, details);
   }
 }

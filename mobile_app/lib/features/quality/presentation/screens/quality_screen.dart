@@ -78,8 +78,7 @@ class QualityScreen extends StatelessWidget {
   }
 
   void _showAddQualityCheckDialog(BuildContext context) {
-    // UI input fields for adding new check (Work Order ID, Passed Qty, Rejected Qty, etc.)
-    final cubit = context.read<QualityCubit>();
+    // نموذج الإدخال التفصيلي للجودة مقرر في GF-0014.
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -91,11 +90,7 @@ class QualityScreen extends StatelessWidget {
             child: const Text('إلغاء'),
           ),
           ElevatedButton(
-            onPressed: () {
-              // Example hardcoded submit
-              // cubit.submitQualityCheck(...)
-              Navigator.pop(ctx);
-            },
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('حفظ'),
           ),
         ],

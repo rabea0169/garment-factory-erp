@@ -1,5 +1,3 @@
-import 'package:flutter_bloc/flutter_bloc.dart';
-
 abstract class HrState {}
 
 class HrInitial extends HrState {}
