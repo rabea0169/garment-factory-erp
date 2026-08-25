@@ -1,6 +1,7 @@
 import { WorkOrderStatus } from '@prisma/client';
 import { ProductionService } from './production.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InventoryService } from '../inventory/inventory.service';
 import {
   createEventEmitterMock,
   createPrismaMock,
@@ -11,7 +12,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   let service: ProductionService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let eventEmitter: { emit: jest.Mock };
-  let inventoryService: any;
+  let inventoryService: { issue: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
@@ -20,12 +21,14 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     service = new ProductionService(
       prisma as unknown as PrismaService,
       eventEmitter as never,
-      inventoryService,
+      inventoryService as unknown as InventoryService,
     );
   });
 
   it('يجلب أوامر التشغيل مع المنتج وتحديثات المراحل', async () => {
-    const orders = [{ id: 'wo-1', variant: {}, bomVersion: {}, stageUpdates: [] }];
+    const orders = [
+      { id: 'wo-1', variant: {}, bomVersion: {}, stageUpdates: [] },
+    ];
     prisma.workOrder.findMany.mockResolvedValue(orders);
 
     const result = await service.getAllWorkOrders();
@@ -75,7 +78,10 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     const created = { id: 'wo-1', code: 'WO-1', status: 'PLANNED' };
     prisma.workOrder.create.mockResolvedValue(created);
 
-    await service.createWorkOrder({ productVariantId: 'v-1', bomVersionId: 'b-1', quantity: 10 }, 'u-1');
+    await service.createWorkOrder(
+      { productVariantId: 'v-1', bomVersionId: 'b-1', quantity: 10 },
+      'u-1',
+    );
 
     expect(eventEmitter.emit).toHaveBeenCalledWith(
       EVENTS.WORK_ORDER_CREATED,
@@ -108,10 +114,12 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       status: 'SEWING',
       productVariantId: 'v-1',
       quantity: 100,
-      bomVersion: { lines: [] }
+      bomVersion: { lines: [] },
     });
-    prisma.warehouse = { findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }) } as any;
-    
+    prisma.warehouse = {
+      findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }),
+    } as unknown as typeof prisma.warehouse;
+
     // Mock transaction to just return a dummy order
     prisma.$transaction.mockResolvedValue({
       id: 'wo-1',
@@ -120,7 +128,10 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       quantity: 100,
     });
 
-    const result = await service.updateOrderStatus('wo-1', WorkOrderStatus.COMPLETED);
+    const result = await service.updateOrderStatus(
+      'wo-1',
+      WorkOrderStatus.COMPLETED,
+    );
 
     expect(result.status).toBe('COMPLETED');
     expect(prisma.$transaction).toHaveBeenCalled();

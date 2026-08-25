@@ -1,5 +1,6 @@
 import { QualityService } from './quality.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { WorkOrderStatus, RejectionReason } from '@prisma/client';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('QualityService — فحوصات الجودة (GF-0003)', () => {
@@ -23,7 +24,14 @@ describe('QualityService — فحوصات الجودة (GF-0003)', () => {
     expect(prisma.qualityCheck.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { checkedAt: 'desc' },
-        include: { workOrder: { include: { variant: { include: { product: true } }, bomVersion: true } } },
+        include: {
+          workOrder: {
+            include: {
+              variant: { include: { product: true } },
+              bomVersion: true,
+            },
+          },
+        },
       }),
     );
   });
@@ -31,11 +39,11 @@ describe('QualityService — فحوصات الجودة (GF-0003)', () => {
   it('يسجل فحصًا بكمياته وأسباب الرفض كما وردت', async () => {
     const data = {
       workOrderId: 'wo-1',
-      stage: 'SEWING',
+      stage: WorkOrderStatus.SEWING,
       checkedQty: 100,
       passedQty: 92,
       rejectedQty: 8,
-      rejectionReason: 'SEWING_DEFECT',
+      rejectionReason: RejectionReason.SEWING_DEFECT,
       notes: 'عيوب خياطة في الأكمام',
     };
     prisma.qualityCheck.create.mockResolvedValue({ id: 'qc-2', ...data });

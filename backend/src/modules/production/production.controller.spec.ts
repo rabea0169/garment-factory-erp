@@ -4,6 +4,7 @@ import { ProductionController } from './production.controller';
 import { ProductionService } from './production.service';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
+import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 
 describe('ProductionController — هوية الجلسة والصلاحيات (GF-0003)', () => {
   let controller: ProductionController;
@@ -25,11 +26,18 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
   });
 
   it('إنشاء أمر تشغيل يمرر هوية الجلسة (من @CurrentUser) كمعامل مستقل', async () => {
-    const body = { productId: 'p-1', quantity: 100 };
+    const body = {
+      productVariantId: 'v-1',
+      bomVersionId: 'b-1',
+      quantity: 100,
+    };
     // محاولة حقن creatorId داخل body — الخدمة تتجاهله لأنها تستخدم
     // معامل الهوية المستقل القادم من الجلسة (مثبت سلوكيًا في e2e:
     // HACKED-ID لا يُحفظ في قاعدة البيانات)
-    const maliciousBody = { ...body, creatorId: 'HACKED-ID' } as typeof body;
+    const maliciousBody = {
+      ...body,
+      creatorId: 'HACKED-ID',
+    } as unknown as CreateWorkOrderDto;
 
     await controller.createWorkOrder('user-from-session', maliciousBody);
 
@@ -40,8 +48,16 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
   });
 
   it('تحديث حالة يمرر (id, status) كما وردا', async () => {
-    await controller.updateStatus('wo-1', { status: WorkOrderStatus.SEWING }, 'test-user-id');
-    expect(service.updateOrderStatus).toHaveBeenCalledWith('wo-1', 'SEWING', 'test-user-id');
+    await controller.updateStatus(
+      'wo-1',
+      { status: WorkOrderStatus.SEWING },
+      'test-user-id',
+    );
+    expect(service.updateOrderStatus).toHaveBeenCalledWith(
+      'wo-1',
+      'SEWING',
+      'test-user-id',
+    );
   });
 
   it('إنشاء أمر تشغيل مقيّد بـ PRODUCTION_MANAGER وGENERAL_MANAGER', () => {

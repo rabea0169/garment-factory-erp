@@ -9,7 +9,14 @@ export class QualityService {
   async getQualityChecks() {
     return this.prisma.qualityCheck.findMany({
       orderBy: { checkedAt: 'desc' },
-      include: { workOrder: { include: { variant: { include: { product: true } }, bomVersion: true } } },
+      include: {
+        workOrder: {
+          include: {
+            variant: { include: { product: true } },
+            bomVersion: true,
+          },
+        },
+      },
     });
   }
 

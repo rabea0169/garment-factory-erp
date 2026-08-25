@@ -447,117 +447,117 @@ export class InventoryService {
         idempotencyKeyId = idem.id;
       }
 
-        // UPDATE ذري واحد = نقطة التسلسل: القيمة الراجعة هي الرصيد بعد التطبيق،
-        // وأي عملية متزامنة على نفس الخامة تنتظر قفل الصف ثم ترى أثر هذه.
-        let material: {
-          currentStock: Prisma.Decimal | number;
-          costPerUnit: Prisma.Decimal | number;
-          minStockLevel: Prisma.Decimal | number;
-        };
-        try {
-          material = await tx.rawMaterial.update({
-            where: { id: input.rawMaterialId },
-            data: { currentStock: { increment: input.delta } },
-            select: {
-              currentStock: true,
-              costPerUnit: true,
-              minStockLevel: true,
-            },
-          });
-        } catch (err) {
-          if (isRecordNotFound(err)) {
-            throw new NotFoundException('المادة الخام غير موجودة');
-          }
-          throw err;
-        }
-
-        const newBalance = Number(material.currentStock);
-        const currentCost = Number(material.costPerUnit);
-        const minStockLevel = Number(material.minStockLevel);
-
-        // ADR-0007: الرصيد السالب ممنوع — الاستثناء يُرجع الـ transaction كلها.
-        if (newBalance < 0) {
-          throw new BadRequestException(
-            `العملية تُظهر رصيد الخامة إلى ${newBalance} — الرصيد السالب ممنوع (ADR-0007). ` +
-              'تحقق من الكمية أو سجّل تسوية جرد أولًا.',
-          );
-        }
-
-        // التكلفة المطبقة وتقييم الحركة.
-        let appliedUnitCost: number;
-        let totalValue: number;
-        let costPerUnitAfter: number | null = null;
-        if (input.type === StockMovementType.RECEIVE) {
-          const unitCost = input.unitCost as number;
-          const oldQuantity = newBalance - input.unsignedQuantity;
-          // ADR-0008 — متوسط مرجح: تكلفة الوحدة الجديدة = (كمية×تكلفة قديمة + كمية×تكلفة الشحنة) / الرصيد الجديد.
-          const newCost =
-            oldQuantity <= 0
-              ? unitCost
-              : round2(
-                  (oldQuantity * currentCost +
-                    input.unsignedQuantity * unitCost) /
-                    newBalance,
-                );
-          costPerUnitAfter = newCost;
-          await tx.rawMaterial.update({
-            where: { id: input.rawMaterialId },
-            data: { costPerUnit: newCost },
-          });
-          appliedUnitCost = unitCost;
-          totalValue = round2(input.unsignedQuantity * unitCost);
-        } else {
-          appliedUnitCost = currentCost;
-          totalValue = round2(input.unsignedQuantity * currentCost);
-        }
-
-        const entry = await tx.stockLedgerEntry.create({
-          data: {
-            entryCode: generateEntryCode(),
-            type: input.type,
-            warehouseId: input.warehouseId,
-            rawMaterialId: input.rawMaterialId,
-            quantityDelta: input.delta,
-            balanceAfter: newBalance,
-            unitCost: appliedUnitCost,
-            totalValue,
-            reference: input.reference,
-            notes: input.notes,
-            idempotencyKeyId,
-            createdById: input.userId,
+      // UPDATE ذري واحد = نقطة التسلسل: القيمة الراجعة هي الرصيد بعد التطبيق،
+      // وأي عملية متزامنة على نفس الخامة تنتظر قفل الصف ثم ترى أثر هذه.
+      let material: {
+        currentStock: Prisma.Decimal | number;
+        costPerUnit: Prisma.Decimal | number;
+        minStockLevel: Prisma.Decimal | number;
+      };
+      try {
+        material = await tx.rawMaterial.update({
+          where: { id: input.rawMaterialId },
+          data: { currentStock: { increment: input.delta } },
+          select: {
+            currentStock: true,
+            costPerUnit: true,
+            minStockLevel: true,
           },
-          select: { entryCode: true, createdAt: true },
         });
+      } catch (err) {
+        if (isRecordNotFound(err)) {
+          throw new NotFoundException('المادة الخام غير موجودة');
+        }
+        throw err;
+      }
 
-        const response: Omit<StockMovementResult, 'replayed'> = {
-          entryCode: entry.entryCode,
+      const newBalance = Number(material.currentStock);
+      const currentCost = Number(material.costPerUnit);
+      const minStockLevel = Number(material.minStockLevel);
+
+      // ADR-0007: الرصيد السالب ممنوع — الاستثناء يُرجع الـ transaction كلها.
+      if (newBalance < 0) {
+        throw new BadRequestException(
+          `العملية تُظهر رصيد الخامة إلى ${newBalance} — الرصيد السالب ممنوع (ADR-0007). ` +
+            'تحقق من الكمية أو سجّل تسوية جرد أولًا.',
+        );
+      }
+
+      // التكلفة المطبقة وتقييم الحركة.
+      let appliedUnitCost: number;
+      let totalValue: number;
+      let costPerUnitAfter: number | null = null;
+      if (input.type === StockMovementType.RECEIVE) {
+        const unitCost = input.unitCost as number;
+        const oldQuantity = newBalance - input.unsignedQuantity;
+        // ADR-0008 — متوسط مرجح: تكلفة الوحدة الجديدة = (كمية×تكلفة قديمة + كمية×تكلفة الشحنة) / الرصيد الجديد.
+        const newCost =
+          oldQuantity <= 0
+            ? unitCost
+            : round2(
+                (oldQuantity * currentCost +
+                  input.unsignedQuantity * unitCost) /
+                  newBalance,
+              );
+        costPerUnitAfter = newCost;
+        await tx.rawMaterial.update({
+          where: { id: input.rawMaterialId },
+          data: { costPerUnit: newCost },
+        });
+        appliedUnitCost = unitCost;
+        totalValue = round2(input.unsignedQuantity * unitCost);
+      } else {
+        appliedUnitCost = currentCost;
+        totalValue = round2(input.unsignedQuantity * currentCost);
+      }
+
+      const entry = await tx.stockLedgerEntry.create({
+        data: {
+          entryCode: generateEntryCode(),
           type: input.type,
-          rawMaterialId: input.rawMaterialId,
           warehouseId: input.warehouseId,
+          rawMaterialId: input.rawMaterialId,
           quantityDelta: input.delta,
           balanceAfter: newBalance,
           unitCost: appliedUnitCost,
           totalValue,
-          costPerUnitAfter,
-          createdAt: entry.createdAt.toISOString(),
-        };
+          reference: input.reference,
+          notes: input.notes,
+          idempotencyKeyId,
+          createdById: input.userId,
+        },
+        select: { entryCode: true, createdAt: true },
+      });
 
-        if (input.idempotencyKey) {
-          await tx.idempotencyKey.update({
-            where: { key: input.idempotencyKey },
-            data: { response: response },
-          });
-        }
+      const response: Omit<StockMovementResult, 'replayed'> = {
+        entryCode: entry.entryCode,
+        type: input.type,
+        rawMaterialId: input.rawMaterialId,
+        warehouseId: input.warehouseId,
+        quantityDelta: input.delta,
+        balanceAfter: newBalance,
+        unitCost: appliedUnitCost,
+        totalValue,
+        costPerUnitAfter,
+        createdAt: entry.createdAt.toISOString(),
+      };
 
-        eventContext = {
-          materialId: input.rawMaterialId,
-          warehouseId: input.warehouseId,
-          quantity: input.unsignedQuantity,
-          newBalance,
-          minStockLevel,
-        };
+      if (input.idempotencyKey) {
+        await tx.idempotencyKey.update({
+          where: { key: input.idempotencyKey },
+          data: { response: response },
+        });
+      }
 
-        return { ...response, replayed: false };
+      eventContext = {
+        materialId: input.rawMaterialId,
+        warehouseId: input.warehouseId,
+        quantity: input.unsignedQuantity,
+        newBalance,
+        minStockLevel,
+      };
+
+      return { ...response, replayed: false };
     };
 
     try {

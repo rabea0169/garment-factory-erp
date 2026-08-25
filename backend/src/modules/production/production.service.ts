@@ -1,4 +1,8 @@
-import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { WorkOrderStatus, StockMovementType, Prisma } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -43,7 +47,11 @@ export class ProductionService {
     return workOrder;
   }
 
-  async updateOrderStatus(id: string, status: WorkOrderStatus, userId?: string) {
+  async updateOrderStatus(
+    id: string,
+    status: WorkOrderStatus,
+    userId?: string,
+  ) {
     if (status !== WorkOrderStatus.COMPLETED) {
       // تحديث الحالة العادية فقط بدون صرف استثنائي
       const order = await this.prisma.workOrder.update({
@@ -77,67 +85,69 @@ export class ProductionService {
       throw new BadRequestException('Default warehouses not found');
     }
 
-    const updatedOrder = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 1. تحديث الحالة
-      const updated = await tx.workOrder.update({
-        where: { id },
-        data: { status: WorkOrderStatus.COMPLETED },
-      });
-
-      // 2. صرف الخامات وفقاً لـ BOM Version (GF-0008)
-      for (const line of order.bomVersion.lines) {
-        const totalQty = Number(line.quantity) * order.quantity;
-        await this.inventoryService.issue(
-          {
-            rawMaterialId: line.rawMaterialId,
-            warehouseId: rawWarehouse.id,
-            quantity: totalQty,
-            reference: updated.code,
-            notes: `صرف خامات لأمر تشغيل ${updated.code}`,
-          },
-          userId,
-          tx,
-        );
-      }
-
-      // 3. استلام التام في المخزن
-      const fgRecord = await tx.finishedGood.findFirst({
-        where: { productVariantId: order.productVariantId },
-      });
-
-      const newBalance = (fgRecord?.quantity || 0) + order.quantity;
-
-      if (fgRecord) {
-        await tx.finishedGood.update({
-          where: { id: fgRecord.id },
-          data: { quantity: newBalance },
+    const updatedOrder = await this.prisma.$transaction(
+      async (tx: Prisma.TransactionClient) => {
+        // 1. تحديث الحالة
+        const updated = await tx.workOrder.update({
+          where: { id },
+          data: { status: WorkOrderStatus.COMPLETED },
         });
-      } else {
-        await tx.finishedGood.create({
+
+        // 2. صرف الخامات وفقاً لـ BOM Version (GF-0008)
+        for (const line of order.bomVersion.lines) {
+          const totalQty = Number(line.quantity) * order.quantity;
+          await this.inventoryService.issue(
+            {
+              rawMaterialId: line.rawMaterialId,
+              warehouseId: rawWarehouse.id,
+              quantity: totalQty,
+              reference: updated.code,
+              notes: `صرف خامات لأمر تشغيل ${updated.code}`,
+            },
+            userId,
+            tx,
+          );
+        }
+
+        // 3. استلام التام في المخزن
+        const fgRecord = await tx.finishedGood.findFirst({
+          where: { productVariantId: order.productVariantId },
+        });
+
+        const newBalance = (fgRecord?.quantity || 0) + order.quantity;
+
+        if (fgRecord) {
+          await tx.finishedGood.update({
+            where: { id: fgRecord.id },
+            data: { quantity: newBalance },
+          });
+        } else {
+          await tx.finishedGood.create({
+            data: {
+              productVariantId: order.productVariantId,
+              quantity: newBalance,
+            },
+          });
+        }
+
+        // إدراج حركة ledger للتام
+        await tx.stockLedgerEntry.create({
           data: {
+            entryCode: `SLE-${Date.now()}-${Math.random().toString(36).substring(7)}`,
+            type: StockMovementType.RECEIVE,
+            warehouseId: fgWarehouse.id,
             productVariantId: order.productVariantId,
-            quantity: newBalance,
+            quantityDelta: order.quantity,
+            balanceAfter: newBalance,
+            reference: updated.code,
+            notes: `استلام تام من أمر تشغيل ${updated.code}`,
+            createdById: userId,
           },
         });
-      }
 
-      // إدراج حركة ledger للتام
-      await tx.stockLedgerEntry.create({
-        data: {
-          entryCode: `SLE-${Date.now()}-${Math.random().toString(36).substring(7)}`,
-          type: StockMovementType.RECEIVE,
-          warehouseId: fgWarehouse.id,
-          productVariantId: order.productVariantId,
-          quantityDelta: order.quantity,
-          balanceAfter: newBalance,
-          reference: updated.code,
-          notes: `استلام تام من أمر تشغيل ${updated.code}`,
-          createdById: userId,
-        },
-      });
-
-      return updated;
-    });
+        return updated;
+      },
+    );
 
     this.eventEmitter.emit(EVENTS.WORK_ORDER_COMPLETED, updatedOrder);
     return updatedOrder;
