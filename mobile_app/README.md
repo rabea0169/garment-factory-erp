@@ -1,17 +1,44 @@
-# garment_factory_erp
+# Garment Factory ERP — Flutter Mobile App
 
-A new Flutter project.
+تطبيق Flutter الميداني لنظام Garment Factory ERP. يعتمد التطبيق على JWT صادر من Backend، ويخزن التوكن في **Keychain/Keystore** عبر `flutter_secure_storage`، ولا يستخدم `SharedPreferences` لتخزين بيانات الجلسة.
 
-## Getting Started
+## التشغيل المحلي
 
-This project is a starting point for a Flutter application.
+بعد تثبيت Flutter SDK، شغّل الأوامر التالية من مجلد `mobile_app`:
 
-A few resources to get you started if this is your first Flutter project:
+```bash
+flutter pub get
+flutter analyze
+flutter test
+flutter run
+```
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+عنوان الخادم الافتراضي هو `http://10.0.2.2:3005` على Android Emulator، و`http://localhost:3005` على iOS/Web. يمكن تغيير العنوان دون تعديل الكود:
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+```bash
+flutter run --dart-define=API_BASE_URL=http://192.168.1.10:3005
+```
+
+في build الإنتاج يجب تمرير عنوان HTTPS حقيقي، مثل:
+
+```bash
+flutter build apk --release \
+  --dart-define=API_BASE_URL=https://erp.example.com
+```
+
+## المصادقة وانتهاء الجلسة
+
+يضيف `ApiClient` التوكن تلقائيًا إلى كل طلب محمي. عند استلام HTTP 401، يمسح التطبيق الجلسة المشفرة ويعيد المستخدم إلى شاشة تسجيل الدخول. كما يمنع الراوتر فتح الشاشات المحمية دون توكن محفوظ.
+
+بيانات التقارير لا تستخدم fallback وهميًا. إذا كان endpoint `/dashboard/stats` غير متوفر أو أعاد payload غير مكتمل، يعرض التطبيق رسالة خطأ وزر إعادة محاولة بدل عرض أرقام قد تبدو حقيقية.
+
+## بوابة الجودة
+
+يجب أن تمر الأوامر التالية قبل الدمج:
+
+```bash
+flutter analyze
+flutter test
+```
+
+وتُشغّل GitHub Actions job باسم `Flutter — Analyze / Test` هذه الفحوصات تلقائيًا على Pull Requests والتغييرات في الفروع.

@@ -38,8 +38,32 @@ class ReportsScreen extends StatelessWidget {
                   ],
                 ),
               );
+            } else if (state is ReportsError) {
+              return Center(
+                child: Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.cloud_off, size: 48, color: AppColors.error),
+                      const SizedBox(height: 12),
+                      Text(
+                        state.message,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(fontFamily: 'Cairo'),
+                      ),
+                      const SizedBox(height: 16),
+                      OutlinedButton.icon(
+                        onPressed: () => context.read<ReportsCubit>().fetchDashboardStats(),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('إعادة المحاولة'),
+                      ),
+                    ],
+                  ),
+                ),
+              );
             }
-            return const SizedBox();
+            return const SizedBox.shrink();
           },
         ),
       ),
