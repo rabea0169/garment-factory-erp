@@ -149,17 +149,24 @@ async function main() {
     data: { productId: product.id, size: 'L', color: 'أبيض' },
   });
 
-  // BOM (Bill of Materials)
-  await prisma.bomItem.create({
-    data: { productId: product.id, rawMaterialId: rm1.id, quantity: 1.2, unit: 'متر' },
+  // BOM (Bill of Materials) Versioning (GF-0008)
+  const bomVersion = await prisma.bomVersion.create({
+    data: {
+      productId: product.id,
+      versionName: 'الإصدار الأساسي 1.0',
+    },
   });
-  await prisma.bomItem.create({
-    data: { productId: product.id, rawMaterialId: rm2.id, quantity: 0.1, unit: 'بكرة' },
-  });
-  console.log('Products & BOM seeded');
 
-  // 4. Create Finished Goods Inventory
-  // GF-0007: مخزون التام لم يُدمج بعد في ledger (يُدمج في GF-0008/0009)
+  await prisma.bomLine.create({
+    data: { bomVersionId: bomVersion.id, rawMaterialId: rm1.id, quantity: 1.2, unit: 'متر' },
+  });
+  await prisma.bomLine.create({
+    data: { bomVersionId: bomVersion.id, rawMaterialId: rm2.id, quantity: 0.1, unit: 'بكرة' },
+  });
+  console.log('Products & BOM Versions seeded');
+
+  // 4. Create Finished Goods Inventory (Legacy)
+  // GF-0007: مخزون التام لم يُدمج بعد في ledger (يُدمج بالكامل عند دمج العمليات)
   await prisma.finishedGood.create({
     data: { productVariantId: variantM.id, quantity: 50 },
   });
@@ -167,6 +174,19 @@ async function main() {
     data: { productVariantId: variantL.id, quantity: 30 },
   });
   console.log('Finished Goods seeded');
+
+  // 4.5. Create Sample Work Order (GF-0008)
+  await prisma.workOrder.create({
+    data: {
+      code: 'WO-SEED-001',
+      productVariantId: variantM.id,
+      bomVersionId: bomVersion.id,
+      quantity: 100,
+      status: 'PLANNED',
+      createdById: admin.id,
+    },
+  });
+  console.log('Work Order seeded');
 
   // 5. Workers
   await prisma.worker.create({

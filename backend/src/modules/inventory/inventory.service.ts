@@ -227,38 +227,46 @@ export class InventoryService {
   async receive(
     input: ReceiveStockInput,
     userId?: string,
+    tx?: TxClient,
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
-    return this.executeMovement({
-      type: StockMovementType.RECEIVE,
-      rawMaterialId: input.rawMaterialId,
-      warehouseId: input.warehouseId,
-      delta: input.quantity,
-      unsignedQuantity: input.quantity,
-      unitCost: input.unitCost,
-      reference: input.reference,
-      notes: input.notes,
-      idempotencyKey: input.idempotencyKey,
-      userId,
-    });
+    return this.executeMovement(
+      {
+        type: StockMovementType.RECEIVE,
+        rawMaterialId: input.rawMaterialId,
+        warehouseId: input.warehouseId,
+        delta: input.quantity,
+        unsignedQuantity: input.quantity,
+        unitCost: input.unitCost,
+        reference: input.reference,
+        notes: input.notes,
+        idempotencyKey: input.idempotencyKey,
+        userId,
+      },
+      tx,
+    );
   }
 
   async issue(
     input: IssueStockInput,
     userId?: string,
+    tx?: TxClient,
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
-    return this.executeMovement({
-      type: StockMovementType.ISSUE,
-      rawMaterialId: input.rawMaterialId,
-      warehouseId: input.warehouseId,
-      delta: -input.quantity,
-      unsignedQuantity: input.quantity,
-      reference: input.reference,
-      notes: input.notes,
-      idempotencyKey: input.idempotencyKey,
-      userId,
-    });
+    return this.executeMovement(
+      {
+        type: StockMovementType.ISSUE,
+        rawMaterialId: input.rawMaterialId,
+        warehouseId: input.warehouseId,
+        delta: -input.quantity,
+        unsignedQuantity: input.quantity,
+        reference: input.reference,
+        notes: input.notes,
+        idempotencyKey: input.idempotencyKey,
+        userId,
+      },
+      tx,
+    );
   }
 
   async adjust(
@@ -390,6 +398,7 @@ export class InventoryService {
 
   private async executeMovement(
     input: MovementExecutionInput,
+    externalTx?: TxClient,
   ): Promise<StockMovementResult> {
     const scope = IDEMPOTENCY_SCOPES[input.type];
     const requestPayload: Record<string, unknown> = {
@@ -424,20 +433,19 @@ export class InventoryService {
         }
       | undefined;
 
-    try {
-      const result = await this.prisma.$transaction(async (tx: TxClient) => {
-        let idempotencyKeyId: string | undefined;
-        if (input.idempotencyKey) {
-          const idem = await tx.idempotencyKey.create({
-            data: {
-              key: input.idempotencyKey,
-              scope,
-              requestHash,
-            },
-            select: { id: true },
-          });
-          idempotencyKeyId = idem.id;
-        }
+    const executeLogic = async (tx: TxClient) => {
+      let idempotencyKeyId: string | undefined;
+      if (input.idempotencyKey) {
+        const idem = await tx.idempotencyKey.create({
+          data: {
+            key: input.idempotencyKey,
+            scope,
+            requestHash,
+          },
+          select: { id: true },
+        });
+        idempotencyKeyId = idem.id;
+      }
 
         // UPDATE ذري واحد = نقطة التسلسل: القيمة الراجعة هي الرصيد بعد التطبيق،
         // وأي عملية متزامنة على نفس الخامة تنتظر قفل الصف ثم ترى أثر هذه.
@@ -550,7 +558,12 @@ export class InventoryService {
         };
 
         return { ...response, replayed: false };
-      });
+    };
+
+    try {
+      const result = externalTx
+        ? await executeLogic(externalTx)
+        : await this.prisma.$transaction(executeLogic);
 
       // (3) إشعارات بعد نجاح الـ transaction فقط (غير مالية — ADR-0003-ج).
       if (eventContext) {

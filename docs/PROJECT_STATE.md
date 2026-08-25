@@ -35,24 +35,38 @@ Next exact action: تنفيذ GF-0008 وفق بطاقتها في HANDOFF-006.md 
 6. **مسارات API جديدة:** `GET /inventory/warehouses` · `GET /inventory/ledger` (مرشحات + حد 200) · `POST /inventory/movements/{receive,issue,adjust,waste}` — كلها INVENTORY_MANAGER والهوية من الجلسة.
 7. **اختبارات:** 37 اختبار inventory (كانت 7) — idempotency (نفس المفتاح مرتين = أثر واحد) · فشل منتصف transaction (كل الكتابات tx-scoped ولا استجابة مخزنة) · منع السالب · متوسط مرجح 46.13 من 150@45.5+50@48 · تحقق المخازن. المجموع الكلي: 116 unit + 36 e2e كلها خضراء.
 
+Last handoff: docs/handoffs/HANDOFF-007.md
+Next exact action: تنفيذ GF-0009 وفق بطاقتها في HANDOFF-007.md
+```
+
 ---
 
-## 1. طبيعة الحالة الحالية (بعد GF-0002 — تحديث)
+## 0. ما أنجزته GF-0008 (إدارة التجميع والتصنيع)
 
-المشروع انتقل من **prototype مكشوف بالكامل** إلى **prototype محمي fail-closed**: كل مسارات API تتطلب JWT صالحًا (عدا login والجذر)، الأسرار من البيئة فقط (لا fallback)، والهوية من الجلسة لا من body. المتبقي قبل أي تشغيل حقيقي:
+1. **BOM Versioning:** إضافة القدرة على تجميد إصدارات الـ BOM ومنع تعديلها بعد الاعتماد.
+2. **WorkOrder Integration:** ربط أوامر التشغيل بالـ variant/SKU بدقة.
+3. **Inventory Consumption:** صرف الخامات آليًا عبر Stock Ledger ضمن transaction واحدة مع حالة أمر التشغيل.
 
-1. **P0-05:** مسارات كتابة بلا DTOs (`@Body() any`) — GF-0004.
-2. **docker-compose** ما زال يحمل كلمة مرور منشورة وports مكشوفة — GF-0006.
-3. **الاختبارات القديمة حمراء** (18 suite قوالب بلا mocks) — GF-0003.
-4. **Flutter لم يوصل بعد**: لا auth interceptor (الخادم سيرفض كل طلباته على المسارات المحمية) ولا secure storage — GF-0010.
+---
 
-### ما تغير في GF-0002 (ملخص)
+## 1. طبيعة الحالة الحالية
+
+المشروع انتقل من **prototype مكشوف بالكامل** إلى **prototype محمي fail-closed**: كل مسارات API تتطلب JWT صالحًا (عدا login والجذر)، الأسرار من البيئة فقط (لا fallback)، والهوية من الجلسة لا من body.
+
+- [x] **GF-0006**: إعداد هيكلة التوثيق والقواعد، تنظيف الفروع، تفعيل `baseline-and-security` مع الـ PR.
+- [x] **GF-0007**: Domain Foundation (إدارة المخازن، حركات المخزون، Idempotency).
+- [x] **GF-0008**: Domain Foundation (تجميد إصدارات BOM، ربط أوامر التشغيل بالـ SKU، وصرف الخامات عبر Stock Ledger في transaction واحدة).
+- [ ] **GF-0009**: Domain Foundation (المشتريات، المرتجعات، وتحديث التكلفة).
+- [ ] **GF-0010**: Domain Foundation (إدارة الجودة وسجل الفحص).
+
+## المرحلة الحالية: 2 (الأساس المنطقي العميق - Domain Foundation)
+نحن الآن في **GF-0009** (المشتريات والمرتجعات).
+
 - `JwtAuthGuard` + `RolesGuard` مسجلان عالميًا (`APP_GUARD`) — كل مسار محمي افتراضيًا.
 - `@Public()` فقط على `POST /auth/login` و `GET /`.
 - `assertRequiredEnv()` في `main.ts`: فشل إقلاع عند نقص `JWT_SECRET`/`DATABASE_URL` (وأي إنتاج: سر <32 أو CORS `*`).
 - `prisma.service.ts`/`seed.ts`: `DATABASE_URL` من البيئة فقط.
 - `userId/createdById/creatorId` من `@CurrentUser('id')` في sales/accounting/production.
-- إصلاح خلل قديم: `AppController` لم يكن مسجلًا في `AppModule` (كان `/` يرجع 404).
 - 31 اختبارًا جديدًا (15 unit + 16 e2e) تثبت 401/403/الهوية-من-الجلسة/fail-closed.
 
 > ملاحظات مفتوحة من القياس الأصلي ما زالت صحيحة: الاختبارات القديمة شكلية (18 suite قوالب بلا PrismaService mock — GF-0003)، ادعاءات README عن الأحداث غير منفذة (ADR-0003)، وFlutter بلا auth interceptor (GF-0010).

@@ -40,8 +40,8 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
   });
 
   it('تحديث حالة يمرر (id, status) كما وردا', async () => {
-    await controller.updateStatus('wo-1', { status: WorkOrderStatus.SEWING });
-    expect(service.updateOrderStatus).toHaveBeenCalledWith('wo-1', 'SEWING');
+    await controller.updateStatus('wo-1', { status: WorkOrderStatus.SEWING }, 'test-user-id');
+    expect(service.updateOrderStatus).toHaveBeenCalledWith('wo-1', 'SEWING', 'test-user-id');
   });
 
   it('إنشاء أمر تشغيل مقيّد بـ PRODUCTION_MANAGER وGENERAL_MANAGER', () => {

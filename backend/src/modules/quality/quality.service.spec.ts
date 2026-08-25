@@ -23,7 +23,7 @@ describe('QualityService — فحوصات الجودة (GF-0003)', () => {
     expect(prisma.qualityCheck.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         orderBy: { checkedAt: 'desc' },
-        include: { workOrder: { include: { product: true } } },
+        include: { workOrder: { include: { variant: { include: { product: true } }, bomVersion: true } } },
       }),
     );
   });

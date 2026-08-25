@@ -3,11 +3,18 @@ import { IsInt, IsPositive, IsUUID } from 'class-validator';
 
 export class CreateWorkOrderDto {
   @ApiProperty({
-    example: 'uuid-of-product',
-    description: 'معرف المنتج المراد تصنيعه',
+    example: 'uuid-of-variant',
+    description: 'معرف النسخة (SKU) المراد تصنيعها',
   })
-  @IsUUID(undefined, { message: 'معرف المنتج يجب أن يكون UUID صالحًا' })
-  productId: string;
+  @IsUUID(undefined, { message: 'معرف النسخة يجب أن يكون UUID صالحًا' })
+  productVariantId: string;
+
+  @ApiProperty({
+    example: 'uuid-of-bom-version',
+    description: 'معرف إصدار الوصفة (BOM Version)',
+  })
+  @IsUUID(undefined, { message: 'معرف الإصدار يجب أن يكون UUID صالحًا' })
+  bomVersionId: string;
 
   @ApiProperty({
     example: 100,

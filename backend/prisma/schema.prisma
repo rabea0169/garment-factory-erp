@@ -82,10 +82,9 @@ model Product {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  season     Season?         @relation(fields: [seasonId], references: [id])
-  variants   ProductVariant[]
-  bomItems   BomItem[]
-  workOrders WorkOrder[]
+  season      Season?          @relation(fields: [seasonId], references: [id])
+  variants    ProductVariant[]
+  bomVersions BomVersion[]
 
   @@map("products")
 }
@@ -98,27 +97,42 @@ model ProductVariant {
   barcode   String? @unique
   isActive  Boolean @default(true)
 
-  product        Product          @relation(fields: [productId], references: [id])
-  inventoryItems FinishedGood[]
-  orderItems     SalesOrderItem[]
+  product            Product            @relation(fields: [productId], references: [id])
+  inventoryItems     FinishedGood[]
+  orderItems         SalesOrderItem[]
   stockLedgerEntries StockLedgerEntry[]
+  workOrders         WorkOrder[]
 
   @@unique([productId, size, color])
   @@map("product_variants")
 }
 
-model BomItem {
-  id            String  @id @default(uuid())
-  productId     String
+model BomVersion {
+  id          String    @id @default(uuid())
+  productId   String
+  versionName String    // e.g. "v1.0" or "صيف 2026 - الإصدار الأساسي"
+  isActive    Boolean   @default(true)
+  createdAt   DateTime  @default(now())
+
+  product     Product    @relation(fields: [productId], references: [id])
+  lines       BomLine[]
+  workOrders  WorkOrder[]
+
+  @@map("bom_versions")
+}
+
+model BomLine {
+  id            String      @id @default(uuid())
+  bomVersionId  String
   rawMaterialId String
-  quantity      Decimal @db.Decimal(10, 4)
+  quantity      Decimal     @db.Decimal(10, 4)
   unit          String
 
-  product     Product     @relation(fields: [productId], references: [id])
+  bomVersion  BomVersion  @relation(fields: [bomVersionId], references: [id])
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
 
-  @@unique([productId, rawMaterialId])
-  @@map("bom_items")
+  @@unique([bomVersionId, rawMaterialId])
+  @@map("bom_lines")
 }
 
 // ===== M-04: INVENTORY =====
@@ -151,7 +165,7 @@ model RawMaterial {
 
   supplier        Supplier?                @relation(fields: [supplierId], references: [id])
   transactions    RawMaterialTransaction[]
-  bomItems        BomItem[]
+  bomLines        BomLine[]
   purchaseItems   PurchaseOrderItem[]
   consumptions    MaterialConsumption[]
   ledgerEntries   StockLedgerEntry[]
@@ -306,21 +320,24 @@ enum WorkOrderStatus {
 }
 
 model WorkOrder {
-  id           String          @id @default(uuid())
-  code         String          @unique
-  productId    String
-  quantity     Int
-  status       WorkOrderStatus @default(PLANNED)
-  startDate    DateTime?
-  endDate      DateTime?
-  completedQty Int             @default(0)
-  rejectedQty  Int             @default(0)
-  createdById  String
-  notes        String?
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  id               String          @id @default(uuid())
+  code             String          @unique
+  productVariantId String
+  bomVersionId     String
+  quantity         Int
+  status           WorkOrderStatus @default(PLANNED)
+  startDate        DateTime?
+  endDate          DateTime?
+  completedQty     Int             @default(0)
+  rejectedQty      Int             @default(0)
+  wasteQty         Int             @default(0) // Good to have as per domain rules
+  createdById      String
+  notes            String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
-  product              Product               @relation(fields: [productId], references: [id])
+  variant              ProductVariant        @relation(fields: [productVariantId], references: [id])
+  bomVersion           BomVersion            @relation(fields: [bomVersionId], references: [id])
   createdBy            User                  @relation(fields: [createdById], references: [id])
   stageUpdates         WorkOrderStage[]
   qualityChecks        QualityCheck[]
