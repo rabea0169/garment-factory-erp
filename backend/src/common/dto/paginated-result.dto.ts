@@ -7,11 +7,17 @@ export class PaginationMeta {
   @ApiProperty({ description: 'رقم الصفحة الحالية' })
   page: number;
 
-  @ApiProperty({ description: 'رقم آخر صفحة' })
-  lastPage: number;
-
   @ApiProperty({ description: 'عدد العناصر في الصفحة' })
-  limit: number;
+  pageSize: number;
+
+  @ApiProperty({ description: 'عدد الصفحات الكلي' })
+  totalPages: number;
+
+  @ApiProperty({ description: 'هل توجد صفحة تالية' })
+  hasNextPage: boolean;
+
+  @ApiProperty({ description: 'هل توجد صفحة سابقة' })
+  hasPreviousPage: boolean;
 }
 
 export class PaginatedResult<T> {
@@ -21,13 +27,17 @@ export class PaginatedResult<T> {
   @ApiProperty({ type: PaginationMeta, description: 'معلومات الصفحات' })
   meta: PaginationMeta;
 
-  constructor(data: T[], total: number, page: number, limit: number) {
+  constructor(data: T[], total: number, page: number, pageSize: number) {
+    const totalPages = Math.ceil(total / pageSize);
+
     this.data = data;
     this.meta = {
       total,
       page,
-      lastPage: Math.ceil(total / limit) || 1,
-      limit,
+      pageSize,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1 && totalPages > 0,
     };
   }
 }

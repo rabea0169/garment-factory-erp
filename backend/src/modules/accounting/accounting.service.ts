@@ -1,15 +1,25 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccountType, VoucherType } from '@prisma/client';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 @Injectable()
 export class AccountingService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async getChartOfAccounts() {
-    return this.prisma.account.findMany({
-      orderBy: { code: 'asc' },
-    });
+  async getChartOfAccounts(pagination: PaginationDto = new PaginationDto()) {
+    const page = pagination.page ?? 1;
+    const pageSize = pagination.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const options = { orderBy: { code: 'asc' } as const, skip, take: pageSize };
+
+    const [data, total] = await Promise.all([
+      this.prisma.account.findMany(options),
+      this.prisma.account.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, pageSize);
   }
 
   async createAccount(data: {
@@ -30,11 +40,23 @@ export class AccountingService {
     });
   }
 
-  async getVouchers() {
-    return this.prisma.voucher.findMany({
+  async getVouchers(pagination: PaginationDto = new PaginationDto()) {
+    const page = pagination.page ?? 1;
+    const pageSize = pagination.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const options = {
       include: { createdBy: { select: { name: true } } },
-      orderBy: { date: 'desc' },
-    });
+      orderBy: { date: 'desc' } as const,
+      skip,
+      take: pageSize,
+    };
+
+    const [data, total] = await Promise.all([
+      this.prisma.voucher.findMany(options),
+      this.prisma.voucher.count(),
+    ]);
+
+    return new PaginatedResult(data, total, page, pageSize);
   }
 
   async createVoucher(

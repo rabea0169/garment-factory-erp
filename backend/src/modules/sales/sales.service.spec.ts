@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-call, @typescript-eslint/no-unsafe-return, @typescript-eslint/require-await */
 import { PaymentType, SalesOrderStatus } from '@prisma/client';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -12,30 +11,6 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011)', ()
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    prisma.salesOrder = {
-      create: jest.fn(),
-      findMany: jest.fn(),
-      findUnique: jest.fn(),
-      update: jest.fn(),
-    } as any;
-    prisma.productVariant = {
-      count: jest.fn(),
-      findMany: jest.fn(),
-      create: jest.fn(),
-      findFirst: jest.fn(),
-    } as any;
-    prisma.warehouse = { findFirst: jest.fn() } as any;
-    prisma.finishedGood = {
-      findFirst: jest.fn(),
-      update: jest.fn(),
-      create: jest.fn(),
-    } as any;
-    prisma.stockLedgerEntry = {
-      count: jest.fn(),
-      findMany: jest.fn(),
-      create: jest.fn(),
-    } as any;
-
     service = new SalesService(
       prisma as unknown as PrismaService,
       {} as unknown as InventoryService,
@@ -58,13 +33,16 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011)', ()
 
       await service.createSalesOrder(dto, 'user-1');
 
-      expect(prisma.salesOrder.create).toHaveBeenCalledWith(
+      const createCalls = prisma.salesOrder.create.mock.calls as unknown[];
+      expect(createCalls).toHaveLength(1);
+      const createArgs = (createCalls[0] as unknown[])[0] as {
+        data: Record<string, unknown>;
+      };
+      expect(createArgs.data).toEqual(
         expect.objectContaining({
-          data: expect.objectContaining({
-            totalAmount: 190, // (100 * 2) - 10
-            status: SalesOrderStatus.DRAFT,
-            userId: 'user-1',
-          }),
+          totalAmount: 190, // (100 * 2) - 10
+          status: SalesOrderStatus.DRAFT,
+          userId: 'user-1',
         }),
       );
     });
@@ -84,7 +62,9 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011)', ()
         quantity: 10,
       });
 
-      prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => Promise<unknown>) => cb(prisma),
+      );
       prisma.salesOrder.update.mockResolvedValue({ code: 'SO-100' });
 
       await service.confirmOrder('so-1', 'user-1');
@@ -112,7 +92,9 @@ describe('SalesService — العملاء وأوامر البيع (GF-0011)', ()
         id: 'fg-1',
         quantity: 5,
       }); // Less than 10
-      prisma.$transaction.mockImplementation(async (cb: any) => cb(prisma));
+      prisma.$transaction.mockImplementation(
+        (cb: (tx: typeof prisma) => Promise<unknown>) => cb(prisma),
+      );
 
       await expect(service.confirmOrder('so-1', 'user-1')).rejects.toThrow(
         BadRequestException,

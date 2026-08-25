@@ -279,7 +279,7 @@ export class InventoryService {
     return this.executeMovement(
       {
         type: StockMovementType.RECEIVE,
-        rawMaterialId: input.rawMaterialId as string,
+        rawMaterialId: this.requireRawMaterialId(input.rawMaterialId),
         warehouseId: input.warehouseId,
         delta: input.quantity,
         unsignedQuantity: input.quantity,
@@ -302,7 +302,7 @@ export class InventoryService {
     return this.executeMovement(
       {
         type: StockMovementType.ISSUE,
-        rawMaterialId: input.rawMaterialId as string,
+        rawMaterialId: this.requireRawMaterialId(input.rawMaterialId),
         warehouseId: input.warehouseId,
         delta: -input.quantity,
         unsignedQuantity: input.quantity,
@@ -322,7 +322,7 @@ export class InventoryService {
     await this.assertMaterialWarehouse(input.warehouseId);
     return this.executeMovement({
       type: StockMovementType.ADJUSTMENT,
-      rawMaterialId: input.rawMaterialId as string,
+      rawMaterialId: this.requireRawMaterialId(input.rawMaterialId),
       warehouseId: input.warehouseId,
       delta: input.quantityDelta,
       unsignedQuantity: Math.abs(input.quantityDelta),
@@ -340,7 +340,7 @@ export class InventoryService {
     await this.assertMaterialWarehouse(input.warehouseId);
     return this.executeMovement({
       type: StockMovementType.WASTE,
-      rawMaterialId: input.rawMaterialId as string,
+      rawMaterialId: input.rawMaterialId,
       warehouseId: input.warehouseId,
       delta: -input.quantity,
       unsignedQuantity: input.quantity,
@@ -455,6 +455,13 @@ export class InventoryService {
     return warehouse;
   }
 
+  private requireRawMaterialId(rawMaterialId?: string): string {
+    if (!rawMaterialId) {
+      throw new BadRequestException('rawMaterialId مطلوب لهذه الحركة');
+    }
+    return rawMaterialId;
+  }
+
   private async executeMovement(
     input: MovementExecutionInput,
     externalTx?: TxClient,
@@ -462,7 +469,7 @@ export class InventoryService {
     const scope = IDEMPOTENCY_SCOPES[input.type];
     const requestPayload: Record<string, unknown> = {
       operation: scope,
-      rawMaterialId: input.rawMaterialId as string,
+      rawMaterialId: input.rawMaterialId,
       warehouseId: input.warehouseId,
       quantityDelta: input.delta,
       ...(input.unitCost !== undefined ? { unitCost: input.unitCost } : {}),
@@ -575,7 +582,7 @@ export class InventoryService {
           entryCode: generateEntryCode(),
           type: input.type,
           warehouseId: input.warehouseId,
-          rawMaterialId: input.rawMaterialId as string,
+          rawMaterialId: input.rawMaterialId,
           quantityDelta: input.delta,
           balanceAfter: newBalance,
           unitCost: appliedUnitCost,
@@ -591,7 +598,7 @@ export class InventoryService {
       const response: Omit<StockMovementResult, 'replayed'> = {
         entryCode: entry.entryCode,
         type: input.type,
-        rawMaterialId: input.rawMaterialId as string,
+        rawMaterialId: input.rawMaterialId,
         warehouseId: input.warehouseId,
         quantityDelta: input.delta,
         balanceAfter: newBalance,

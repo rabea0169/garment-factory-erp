@@ -18,10 +18,11 @@ describe('AccountingService — الحسابات والسندات (GF-0003)', ()
       { id: 'a-2', code: '1100', name: 'البنك' },
     ];
     prisma.account.findMany.mockResolvedValue(accounts);
+    prisma.account.count.mockResolvedValue(accounts.length);
 
     const result = await service.getChartOfAccounts();
 
-    expect(result).toEqual(accounts);
+    expect(result.data).toEqual(accounts);
     expect(prisma.account.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: { code: 'asc' } }),
     );
@@ -50,10 +51,11 @@ describe('AccountingService — الحسابات والسندات (GF-0003)', ()
   it('يجلب السندات مع اسم منشئها فقط (لا كلمة مرور ولا بيانات حساسة)', async () => {
     const vouchers = [{ id: 'v-1', createdBy: { name: 'المحاسب' } }];
     prisma.voucher.findMany.mockResolvedValue(vouchers);
+    prisma.voucher.count.mockResolvedValue(vouchers.length);
 
     const result = await service.getVouchers();
 
-    expect(result).toEqual(vouchers);
+    expect(result.data).toEqual(vouchers);
     expect(prisma.voucher.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         include: { createdBy: { select: { name: true } } },

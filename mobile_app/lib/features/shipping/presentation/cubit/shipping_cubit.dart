@@ -9,7 +9,7 @@ class ShippingCubit extends Cubit<ShippingState> {
     emit(ShippingLoading());
     try {
       final response = await ApiClient.instance.dio.get('/shipping');
-      emit(ShippingLoaded(response.data));
+      emit(ShippingLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(ShippingError('فشل في تحميل بيانات الشحن'));
     }

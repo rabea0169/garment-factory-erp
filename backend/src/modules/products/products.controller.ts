@@ -15,14 +15,16 @@ export class ProductsController {
 
   @Get('seasons')
   @ApiOperation({ summary: 'الحصول على جميع المواسم' })
-  async getSeasons() {
-    return this.productsService.getAllSeasons();
+  async getSeasons(@Query() pagination: PaginationDto = new PaginationDto()) {
+    return this.productsService.getAllSeasons(pagination);
   }
 
   @Get()
   @ApiOperation({ summary: 'جلب كل المنتجات' })
   @ApiResponse({ status: 200, description: 'قائمة المنتجات (Paginated)' })
-  async getAllProducts(@Query() pagination: PaginationDto) {
+  async getAllProducts(
+    @Query() pagination: PaginationDto = new PaginationDto(),
+  ) {
     return this.productsService.getAllProducts(pagination);
   }
 

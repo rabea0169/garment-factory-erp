@@ -33,7 +33,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
 
     const result = await service.getAllWorkOrders({});
 
-    expect((result as any).data || result).toEqual(orders);
+    expect(result.data).toEqual(orders);
     expect(prisma.workOrder.findMany).toHaveBeenCalledWith({
       skip: 0,
       take: 20,

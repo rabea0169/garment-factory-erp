@@ -70,7 +70,7 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
   const prismaFns = {
     user: { findUnique: jest.fn() },
-    salesOrder: { findMany: jest.fn() },
+    salesOrder: { findMany: jest.fn(), count: jest.fn() },
     account: { create: jest.fn() },
     voucher: { create: jest.fn() },
     workerAdvance: { create: jest.fn() },
@@ -167,7 +167,24 @@ describe('Auth guard (e2e) — GF-0002', () => {
       .set('Authorization', `Bearer ${viewerToken()}`)
       .expect(200)
       .expect((res) => {
-        if (!Array.isArray(res.body)) throw new Error('يتوقع مصفوفة');
+        const body: unknown = res.body;
+        if (
+          !body ||
+          typeof body !== 'object' ||
+          !('data' in body) ||
+          !Array.isArray(body.data)
+        ) {
+          throw new Error('يتوقع استجابة data/meta موحدة');
+        }
+        if (
+          !('meta' in body) ||
+          !body.meta ||
+          typeof body.meta !== 'object' ||
+          !('page' in body.meta) ||
+          body.meta.page !== 1
+        ) {
+          throw new Error('بيانات Pagination غير صحيحة');
+        }
       });
   });
 

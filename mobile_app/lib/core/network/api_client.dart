@@ -94,6 +94,17 @@ class ApiClient {
     }
   }
 
+  /// Extract the canonical `data` array from a paginated API response.
+  /// A raw list remains accepted temporarily for backward compatibility with
+  /// endpoints that have not yet migrated.
+  static List<dynamic> extractPaginatedData(dynamic payload) {
+    if (payload is Map<String, dynamic> && payload['data'] is List<dynamic>) {
+      return payload['data'] as List<dynamic>;
+    }
+    if (payload is List<dynamic>) return payload;
+    throw const FormatException('استجابة قائمة غير متوافقة مع عقد Pagination');
+  }
+
   String messageFor(Object error) {
     if (error is DioException) {
       final status = error.response?.statusCode;

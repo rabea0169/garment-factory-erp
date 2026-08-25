@@ -10,7 +10,7 @@ class ProductsCubit extends Cubit<ProductsState> {
     try {
       final dio = ApiClient.instance.dio;
       final response = await dio.get('/products');
-      emit(ProductsLoaded(response.data));
+      emit(ProductsLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(ProductsError('حدث خطأ أثناء تحميل المنتجات: $e'));
     }

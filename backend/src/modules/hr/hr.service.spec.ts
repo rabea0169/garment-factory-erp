@@ -15,10 +15,11 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
   it('يجلب العمال مرتبين بالأحدث', async () => {
     const workers = [{ id: 'w-1', name: 'أحمد محمود' }];
     prisma.worker.findMany.mockResolvedValue(workers);
+    prisma.worker.count.mockResolvedValue(workers.length);
 
     const result = await service.getAllWorkers();
 
-    expect(result).toEqual(workers);
+    expect(result.data).toEqual(workers);
     expect(prisma.worker.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: { createdAt: 'desc' } }),
     );

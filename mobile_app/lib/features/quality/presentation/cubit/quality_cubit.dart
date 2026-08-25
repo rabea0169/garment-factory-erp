@@ -9,7 +9,7 @@ class QualityCubit extends Cubit<QualityState> {
     emit(QualityLoading());
     try {
       final response = await ApiClient.instance.dio.get('/quality');
-      emit(QualityLoaded(response.data));
+      emit(QualityLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(QualityError('فشل في تحميل بيانات الجودة'));
     }

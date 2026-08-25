@@ -22,7 +22,7 @@ class SalesCubit extends Cubit<SalesState> {
     try {
       final dio = ApiClient.instance.dio;
       final response = await dio.get('/sales/orders');
-      emit(SalesLoaded(response.data));
+      emit(SalesLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(SalesError('حدث خطأ أثناء تحميل المبيعات: $e'));
     }
