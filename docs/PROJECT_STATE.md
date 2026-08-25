@@ -5,7 +5,7 @@
 ```text
 Project: Garment Factory ERP
 Current branch: phase2/domain-foundation (متفرعة من stabilization/baseline-and-security @ 3ebf6a7)
-Current commit: 0ffb4be (GF-0007 — Domain Foundation)
+Current commit: 9ab9baa (GF-0007 — Domain Foundation — implementation commit)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
 Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006 على stabilization/baseline-and-security، CI أخضر بالكامل — Run #7)
 Last completed task: GF-0007 — Domain Foundation (Warehouse + Stock Ledger + Idempotency + Indexes) — أول مهمة المرحلة 2

@@ -2,7 +2,7 @@
 
 ## Status
 - Branch: `phase2/domain-foundation` (متفرعة من `stabilization/baseline-and-security` @ 3ebf6a7)
-- Commit: 0ffb4be (GF-0007 — Domain Foundation)
+- Commit: 9ab9baa (GF-0007 — Domain Foundation — implementation commit)
 - Phase: 2 — Domain Foundation (مهمة أولى مكتملة)
 - Task ID: GF-0007
 - Date: 2026-08-25
