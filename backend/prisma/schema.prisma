@@ -34,6 +34,8 @@ model User {
   salesOrders            SalesOrder[]
   purchaseOrders         PurchaseOrder[]
   vouchers               Voucher[]
+  // E1: القيود المالية التي أنشأها هذا المستخدم.
+  journalEntries         JournalEntry[] @relation("JournalEntryCreator")
   workOrders             WorkOrder[]
   stockLedgerEntries     StockLedgerEntry[]
   stageTransitions       WorkOrderStageTransition[]
@@ -917,9 +919,14 @@ model JournalEntry {
   reference   String?
   date        DateTime @default(now())
   isAuto      Boolean  @default(false)
+  // E1: audit trail — من أنشأ القيد (nullable للقيود الالية).
+  createdById String?
   createdAt   DateTime @default(now())
 
-  lines JournalLine[]
+  lines     JournalLine[]
+  // E1: علاقة اختيارية للمستخدم (لا cascade delete — لا تُحذف القيود).
+  createdBy User?        @relation("JournalEntryCreator", fields: [createdById], references: [id])
+  vouchers  Voucher[]
 
   @@map("journal_entries")
 }
@@ -955,7 +962,16 @@ model Voucher {
   createdById String
   createdAt   DateTime    @default(now())
 
-  createdBy User @relation(fields: [createdById], references: [id])
+  // A3: ربط السند بقيد مالي حقيقي (لا قيد لا سند — لا أثر مالي خفي).
+  journalEntryId   String?
+  treasuryId       String?
+  // Polymorphic counterparty — لا FK (يمكن أن يكون customer/supplier/worker).
+  counterpartyType String?
+  counterpartyId   String?
+
+  createdBy    User?          @relation(fields: [createdById], references: [id])
+  journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id])
+  treasury     Treasury?     @relation(fields: [treasuryId], references: [id])
 
   @@map("vouchers")
 }
@@ -967,6 +983,9 @@ model Treasury {
   balance   Decimal  @default(0) @db.Decimal(15, 2)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
+
+  // A3: السندات المرتبطة بهذه الخزينة (لا cascade delete — يُمنع حذف خزينة مرتبطة).
+  vouchers Voucher[]
 
   @@map("treasuries")
 }

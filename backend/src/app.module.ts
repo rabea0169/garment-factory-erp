@@ -17,6 +17,7 @@ import { RolesGuard } from './modules/auth/roles.guard';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { PurchasingModule } from './modules/purchasing/purchasing.module';
+import { FinancialModule } from './core/financial/financial.module';
 
 @Module({
   imports: [
@@ -33,6 +34,8 @@ import { PurchasingModule } from './modules/purchasing/purchasing.module';
     }),
     // Prisma (قاعدة البيانات)
     PrismaModule,
+    // A1/A2/A3: محرك القيد المزدوج الموحد — يستهلكه AccountingService وSalesService.
+    FinancialModule,
     InventoryModule,
     ProductionModule,
     AuthModule,

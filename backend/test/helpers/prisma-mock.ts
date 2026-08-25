@@ -11,7 +11,6 @@ export function createPrismaMock() {
     $disconnect: jest.fn(),
     $transaction: jest.fn(),
     user: { findUnique: jest.fn() },
-    customer: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
     salesOrder: {
       findMany: jest.fn(),
       create: jest.fn(),
@@ -81,8 +80,46 @@ export function createPrismaMock() {
     },
     dailyProduction: { create: jest.fn() },
     workerAdvance: { create: jest.fn() },
-    account: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
-    voucher: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
+    account: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+      update: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    voucher: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    treasury: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+    journalEntry: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+    },
+    journalLine: { create: jest.fn() },
+    customer: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
+    supplier: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
     shipment: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
   };
 }

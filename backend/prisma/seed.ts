@@ -6,10 +6,12 @@ import {
   WorkerSpecialty,
   WarehouseType,
   StockMovementType,
+  AccountType,
 } from '@prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 
 /**
  * GF-0006: قراءة متغير بيئة إلزامي مع فشل فوري (fail-closed).
@@ -223,6 +225,30 @@ async function main() {
     },
   });
   console.log('Workers seeded');
+
+  // 6. Chart of Accounts (A1/A2/A3 — audit v2 foundation).
+  // معرفات ثابتة (UUIDs من src/core/financial/chart-of-accounts.ts) يستوردها
+  // FinancialPostingService دون بحث — تُنشأ هنا كـ upsert لضمان وجودها على
+  // كل قاعدة بيانات جديدة بعد prisma migrate deploy + db seed.
+  const chartAccounts = [
+    { id: CHART_OF_ACCOUNTS.CASH,                code: '1100-01', name: 'النقدية بالصندوق',                type: AccountType.ASSET },
+    { id: CHART_OF_ACCOUNTS.BANK,                code: '1100-02', name: 'النقدية بالبنك',                  type: AccountType.ASSET },
+    { id: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE, code: '1200',    name: 'العملاء (ذمم مدينة)',           type: AccountType.ASSET },
+    { id: CHART_OF_ACCOUNTS.INVENTORY,           code: '1300',    name: 'المخزون',                        type: AccountType.ASSET },
+    { id: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,    code: '2200',    name: 'الموردون (ذمم دائنة)',          type: AccountType.LIABILITY },
+    { id: CHART_OF_ACCOUNTS.VAT_PAYABLE,         code: '2300',    name: 'ضريبة القيمة المضافة المستحقة', type: AccountType.LIABILITY },
+    { id: CHART_OF_ACCOUNTS.OWNERS_EQUITY,       code: '3000',    name: 'حقوق الملكية',                   type: AccountType.EQUITY },
+    { id: CHART_OF_ACCOUNTS.SALES_REVENUE,       code: '4100',    name: 'إيرادات المبيعات',              type: AccountType.REVENUE },
+    { id: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,     code: '5000',    name: 'مصروف عام',                      type: AccountType.EXPENSE },
+  ];
+  for (const acc of chartAccounts) {
+    await prisma.account.upsert({
+      where: { id: acc.id },
+      update: {},
+      create: { id: acc.id, code: acc.code, name: acc.name, type: acc.type, isActive: true },
+    });
+  }
+  console.log(`Chart of Accounts seeded (${chartAccounts.length} accounts)`);
 }
 
 main()
