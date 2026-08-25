@@ -10,6 +10,9 @@ export function createPrismaMock() {
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $transaction: jest.fn(),
+    // B2: $queryRaw mock — default returns empty array. Override per-test with
+    // prisma.$queryRaw = jest.fn().mockResolvedValue([...])
+    $queryRaw: jest.fn().mockResolvedValue([]),
     user: { findUnique: jest.fn() },
     salesOrder: {
       findMany: jest.fn(),
@@ -130,9 +133,14 @@ export function createPrismaMock() {
 export type PrismaMock = ReturnType<typeof createPrismaMock>;
 
 /**
- * mock لـ EventEmitter2 — يلتقط emit دون تفعيل أي listeners فعليين،
+ * mock لـ EventEmitter2 — يلتقط emit + emitAsync دون تفعيل أي listeners فعليين،
  * ما يسمح بالتحقق من إطلاق الأحداث (EVENTS.*) في اختبارات الخدمات.
+ *
+ * B7: emitAsync تُرجع Promise (fire-and-forget) — نُعيدها كـ resolved Promise
+ * كي لا يظهر unhandled rejection عند استخدام `void` operator في الكود.
  */
 export function createEventEmitterMock(): EventEmitter2 {
-  return { emit: jest.fn() } as unknown as EventEmitter2;
+  const emit = jest.fn();
+  const emitAsync = jest.fn().mockResolvedValue(undefined);
+  return { emit, emitAsync } as unknown as EventEmitter2;
 }

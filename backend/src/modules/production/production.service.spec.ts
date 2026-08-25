@@ -11,12 +11,14 @@ import { EVENTS } from '../../events/event-types';
 describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   let service: ProductionService;
   let prisma: ReturnType<typeof createPrismaMock>;
-  let eventEmitter: { emit: jest.Mock };
+  let eventEmitter: { emitAsync: jest.Mock };
   let inventoryService: { issue: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    eventEmitter = createEventEmitterMock() as unknown as { emit: jest.Mock };
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
     inventoryService = { issue: jest.fn() };
     service = new ProductionService(
       prisma as unknown as PrismaService,
@@ -85,7 +87,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       'u-1',
     );
 
-    expect(eventEmitter.emit).toHaveBeenCalledWith(
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
       EVENTS.WORK_ORDER_CREATED,
       created,
     );
@@ -106,7 +108,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       data: { status: 'SEWING' },
     });
     expect(prisma.finishedGood.create).not.toHaveBeenCalled();
-    expect(eventEmitter.emit).not.toHaveBeenCalled();
+    expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
   });
 
   it('الإكمال: يسحب الخامات ويستلم المنتج التام داخل transaction', async () => {

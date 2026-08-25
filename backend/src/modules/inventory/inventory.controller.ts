@@ -72,6 +72,15 @@ export class InventoryController {
     return this.inventoryService.getWarehouses(pagination);
   }
 
+  // A6: رصيد المادة الخام لكل مستودع — aggregate من StockLedgerEntry.
+  @Get('raw-materials/:id/balance-by-warehouse')
+  @ApiOperation({
+    summary: 'رصيد المادة الخام موزعاً على المستودعات (A6)',
+  })
+  async getMaterialBalanceByWarehouse(@Param('id', ParseUUIDPipe) id: string) {
+    return this.inventoryService.getMaterialBalanceByWarehouse(id);
+  }
+
   @Get('ledger')
   @ApiOperation({
     summary: 'سجل حركات المخزون بمرشحات خامة/مخزن/نوع/فترة',
