@@ -31,6 +31,11 @@ export function createPrismaMock() {
       findUnique: jest.fn(),
     },
     warehouse: { findFirst: jest.fn(), findMany: jest.fn() },
+    purchaseOrder: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
     qualityCheck: { findMany: jest.fn(), create: jest.fn() },
     worker: { findMany: jest.fn(), findUnique: jest.fn(), create: jest.fn() },
     dailyProduction: { create: jest.fn() },

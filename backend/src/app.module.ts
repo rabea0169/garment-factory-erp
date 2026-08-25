@@ -16,6 +16,7 @@ import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/roles.guard';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
+import { PurchasingModule } from './modules/purchasing/purchasing.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { AppService } from './app.service';
     AccountingModule,
     QualityModule,
     ShippingModule,
+    PurchasingModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200

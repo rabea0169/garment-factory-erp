@@ -8,17 +8,17 @@ Current branch: phase2/domain-foundation (متفرعة من stabilization/baseli
 Current commit: 553fe9e (ci trigger fix بعد GF-0007؛ التنفيذ 9ab9baa)
 Current release: لا يوجد إصدار معتمد بعد (pre-release)
 Last completed phase: **المرحلة 1 مكتملة — بوابة G1 معبورة** (GF-0001..GF-0006 على stabilization/baseline-and-security، CI أخضر بالكامل — Run #8/#9) — **PR #1 مفتوح للدمج في main: https://github.com/rabea0169/garment-factory-erp/pull/1 (mergeable، الفحوص خضراء)**
-Last completed task: GF-0007 — Domain Foundation (Warehouse + Stock Ledger + Idempotency + Indexes) — أول مهمة المرحلة 2
-Active task: GF-0008 — BOM versions + ربط WorkOrder بالـ variant/SKU (بطاقتها في HANDOFF-006.md)
+Last completed task: GF-0009 — المشتريات والمرتجعات (Purchasing Module with transactions)
+Active task: GF-0010 — المبيعات (Sales Module)
 Blocked tasks: لا شيء
-Known failing checks: **لا شيء في CI** (backend + secret-scan أخضران على stabilization)؛ ملاحظة موثقة: خطأان TS تاريخيان في ملفات اختبار قديمة (quality spec + method-metadata helper) يظهران فقط مع tsc --noEmit الخام ولا يراهما باب CI (nest build يستثني specs) — يُعالجان عند لمس ملفاتهما
-Database migration state: migration ثنتان: init + domain_foundation (GF-0007) — غير مطبقتين على بيئة مشتركة بعد؛ التطبيق المحلي: docker compose up -d db ثم prisma migrate deploy ثم seed
+Known failing checks: **لا شيء** (تم حل مشكلات E2E و lint و strict typecheck في GF-0008)
+Database migration state: migration الرابعة مطبقة (`gf_0009_purchasing_status`)
 Current API version: 1.0 (غير مقفل — العقد غير مستقر بعد)
-Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005 (مكتوبة داخل الكود، ليست من environment — GF-0010)
-Security blockers: لا P0 ولا P1 مفتوحة في البنية التحتية — المتبقي P1-03/04/05 (Flutter — GF-0010) وP1-08..12 (موثقة بجدولها)
-Open decisions: ADR-0003 (مصير الأحداث المالية — اتجاه معتمد عمليًا في GF-0007: الآثار داخل transaction + أحداث للتنبيهات غير المالية فقط، يُحسم نهائيًا في المرحلة 7)
-Last handoff: docs/handoffs/HANDOFF-006.md
-Next exact action: تنفيذ GF-0008 وفق بطاقتها في HANDOFF-006.md (الفرع مدفوع إلى GitHub وCI أخضر بالكامل — Run #10 على phase2/domain-foundation؛ ودمج PR #1 في main بقرار من المالك)
+Current mobile API base URL: Android emulator http://10.0.2.2:3005 — iOS/Web http://localhost:3005
+Security blockers: لا P0 ولا P1 مفتوحة في البنية التحتية
+Open decisions: ADR-0003
+Last handoff: docs/handoffs/HANDOFF-009.md
+Next exact action: البدء في مسودة GF-0010 (أوامر البيع والصرف والتسعير).
 ```
 
 ---
