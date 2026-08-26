@@ -36,6 +36,8 @@ model User {
   vouchers               Voucher[]
   // E1: القيود المالية التي أنشأها هذا المستخدم.
   journalEntries         JournalEntry[] @relation("JournalEntryCreator")
+  // A9: القيود المالية التي عكسها هذا المستخدم (audit trail).
+  reversedJournalEntries JournalEntry[] @relation("JournalEntryReverser")
   workOrders             WorkOrder[]
   stockLedgerEntries     StockLedgerEntry[]
   stageTransitions       WorkOrderStageTransition[]
@@ -84,6 +86,8 @@ model Product {
   retailPrice    Decimal  @db.Decimal(10, 2)
   wholesalePrice Decimal  @db.Decimal(10, 2)
   isActive       Boolean  @default(true)
+  // E2: soft-delete — المنتج يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  deletedAt       DateTime?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -91,6 +95,8 @@ model Product {
   variants    ProductVariant[]
   bomVersions BomVersion[]
 
+  // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
+  @@index([isActive, deletedAt])
   @@map("products")
 }
 
@@ -694,11 +700,15 @@ model Customer {
   notes     String?
   balance   Decimal  @default(0) @db.Decimal(10, 2)
   isActive  Boolean  @default(true)
+  // E2: soft-delete — العميل يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  deletedAt DateTime?
   createdAt DateTime @default(now())
 
   salesOrders SalesOrder[]
   payments    CustomerPayment[]
 
+  // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
+  @@index([isActive, deletedAt])
   @@map("customers")
 }
 
@@ -712,12 +722,16 @@ model Supplier {
   notes     String?
   balance   Decimal  @default(0) @db.Decimal(10, 2)
   isActive  Boolean  @default(true)
+  // E2: soft-delete — المورد يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  deletedAt DateTime?
   createdAt DateTime @default(now())
 
   purchaseOrders   PurchaseOrder[]
   rawMaterials     RawMaterial[]
   supplierPayments SupplierPayment[]
 
+  // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
+  @@index([isActive, deletedAt])
   @@map("suppliers")
 }
 
@@ -741,6 +755,12 @@ model SalesOrder {
   userId      String
   paymentType PaymentType
   status      SalesOrderStatus @default(DRAFT)
+  // A10: VAT 14% Egyptian — subtotal (sum of line items before discount/vat),
+  // vatRate (decimal fraction 0.14 = 14%), vatAmount (computed tax), totalAmount
+  // (subtotal - discount + vatAmount). Old `totalAmount` field now includes VAT.
+  subtotal   Decimal          @default(0) @db.Decimal(12, 2)
+  vatRate    Decimal          @default(0) @db.Decimal(5, 4)
+  vatAmount  Decimal          @default(0) @db.Decimal(10, 2)
   totalAmount Decimal          @db.Decimal(10, 2)
   paidAmount  Decimal          @default(0) @db.Decimal(10, 2)
   discount    Decimal          @default(0) @db.Decimal(10, 2)
@@ -924,15 +944,37 @@ model JournalEntry {
   // E1: audit trail — من أنشأ القيد (nullable للقيود الالية).
   createdById String?
   createdAt   DateTime @default(now())
+  // A9: reversal tracking — القيد الأصلي يُعلَّم كمعكوس، والقيد العكسي يربط بـ reversalOfId.
+  // لا cascade delete — العلاقة استشارية لحفظ سجل المراجعة.
+  isReversed   Boolean   @default(false)
+  reversalOfId String?
+  reversedById String?
+  reversedAt   DateTime?
+  // E5: multi-currency — العملة التي أُنشئ بها القيد + سعر الصرف مقابل عملة النظام.
+  // NULL = system default (EGP). exchangeRate defaults to 1.0 when currencyId is NULL.
+  currencyId    String?
+  exchangeRate  Decimal?  @db.Decimal(10, 6)
 
   lines     JournalLine[]
   // E1: علاقة اختيارية للمستخدم (لا cascade delete — لا تُحذف القيود).
   createdBy User?        @relation("JournalEntryCreator", fields: [createdById], references: [id])
+  // A9: من عكس القيد (audit trail).
+  reversedBy User?        @relation("JournalEntryReverser", fields: [reversedById], references: [id])
+  // A9: علاقة ذاتية للربط بين القيد العكسي والأصلي.
+  reversalOf  JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id])
+  reversals  JournalEntry[] @relation("JournalEntryReversal")
+  // E5: FK to Currency (nullable — defaults to system EGP).
+  currency   Currency?     @relation(fields: [currencyId], references: [id])
   vouchers  Voucher[]
 
   // Cluster 2 — B5/E4: فهارس للتقارير وحساب السنة المالية
+  // A9: فهارس لاستعلامات العكس (المؤجلة / المنفذة).
+  // E5: فهرس على currencyId لتقارير العملات الأجنبية.
   @@index([date])
   @@index([createdById, createdAt])
+  @@index([reversalOfId])
+  @@index([isReversed])
+  @@index([currencyId])
   @@map("journal_entries")
 }
 
@@ -989,14 +1031,40 @@ model Treasury {
   type      String // CASH or BANK
   balance   Decimal  @default(0) @db.Decimal(15, 2)
   isActive  Boolean  @default(true)
+  // E2: soft-delete — الخزينة يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
+  // ملاحظة: لا تسمح بـ soft-delete إذا كان balance != 0 (يُيتم سندات مرتبطة).
+  deletedAt DateTime?
+  // E5: multi-currency — كل خزينة لها عملة (EGP default).
+  currencyId String?
   createdAt DateTime @default(now())
 
   // A3: السندات المرتبطة بهذه الخزينة (لا cascade delete — يُمنع حذف خزينة مرتبطة).
   vouchers Voucher[]
+  // E5: FK to Currency (nullable for backfill — future PR makes it required).
+  currency Currency? @relation(fields: [currencyId], references: [id])
 
   // Cluster 2 — B5: فهرس على isActive لفلترة الخزائن النشطة
-  @@index([isActive])
+  // E2: composite index على (isActive, deletedAt) — يحل محل الفهرس المنفرد.
+  @@index([isActive, deletedAt])
+  @@index([currencyId])
   @@map("treasuries")
+}
+
+// E5: Multi-currency support — Currency model with ISO 4217 code.
+// Seeded with EGP (Egyptian Pound) as the system default + USD as reference.
+model Currency {
+  id            String   @id @default(uuid())
+  code          String   @unique // ISO 4217: EGP, USD, EUR, etc.
+  name          String
+  symbol        String?
+  decimalPlaces Int      @default(2)
+  isActive      Boolean  @default(true)
+  createdAt     DateTime @default(now())
+
+  treasuries     Treasury[]
+  journalEntries JournalEntry[]
+
+  @@map("currencies")
 }
 
 model CostCenter {

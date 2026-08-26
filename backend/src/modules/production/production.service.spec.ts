@@ -51,7 +51,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   it('إنشاء أمر تشغيل: حالة PLANNED و code فريد ومنشئه من الجلسة (creatorId)', async () => {
     const created = {
       id: 'wo-1',
-      code: 'WO-1234',
+      code: 'WO-20260101-ABCD1234',
       productVariantId: 'v-1',
       bomVersionId: 'b-1',
       quantity: 100,
@@ -68,7 +68,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     expect(result.status).toBe('PLANNED');
     expect(prisma.workOrder.create).toHaveBeenCalledWith({
       data: {
-        code: expect.stringMatching(/^WO-\d+$/) as string,
+        code: expect.stringMatching(/^WO-\d{8}-[0-9A-F]{8}$/) as string,
         productVariantId: 'v-1',
         bomVersionId: 'b-1',
         quantity: 100,
@@ -79,7 +79,11 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   });
 
   it('إنشاء أمر تشغيل يطلق حدث WORK_ORDER_CREATED بالأمر المنشأ', async () => {
-    const created = { id: 'wo-1', code: 'WO-1', status: 'PLANNED' };
+    const created = {
+      id: 'wo-1',
+      code: 'WO-20260101-ABCD1234',
+      status: 'PLANNED',
+    };
     prisma.workOrder.create.mockResolvedValue(created);
 
     await service.createWorkOrder(

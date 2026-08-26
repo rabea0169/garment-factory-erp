@@ -11,7 +11,10 @@ import {
 import { PrismaPg } from '@prisma/adapter-pg';
 import { Pool } from 'pg';
 import * as bcrypt from 'bcrypt';
-import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
+import {
+  CHART_OF_ACCOUNTS,
+  CURRENCIES,
+} from '../src/core/financial/chart-of-accounts';
 
 /**
  * GF-0006: قراءة متغير بيئة إلزامي مع فشل فوري (fail-closed).
@@ -300,6 +303,39 @@ async function main() {
     });
   }
   console.log(`Chart of Accounts seeded (${chartAccounts.length} accounts)`);
+
+  // E5: Multi-currency seed — EGP (system default) + USD (reference).
+  // The migration 20260828060000 also inserts these rows, but seed.ts
+  // upserts to ensure they exist even on a database where migrations
+  // were applied out of order or where rows were manually deleted.
+  const currencies = [
+    {
+      id: CURRENCIES.EGP,
+      code: 'EGP',
+      name: 'Egyptian Pound',
+      symbol: 'E£',
+      decimalPlaces: 2,
+    },
+    {
+      id: CURRENCIES.USD,
+      code: 'USD',
+      name: 'US Dollar',
+      symbol: '$',
+      decimalPlaces: 2,
+    },
+  ];
+  for (const cur of currencies) {
+    await prisma.currency.upsert({
+      where: { code: cur.code },
+      update: {
+        name: cur.name,
+        symbol: cur.symbol,
+        decimalPlaces: cur.decimalPlaces,
+      },
+      create: cur,
+    });
+  }
+  console.log(`Currencies seeded (${currencies.length} currencies)`);
 }
 
 main()

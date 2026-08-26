@@ -53,3 +53,56 @@ export const CHART_OF_ACCOUNTS = {
 } as const;
 
 export type ChartOfAccountKey = keyof typeof CHART_OF_ACCOUNTS;
+
+/**
+ * E5: معرفات العملات الافتراضية (Currencies).
+ *
+ * تُستخدم من الخدمات التي تنشئ قيودًا متعددة العملات. تُنشأ في prisma/seed.ts
+ * وفي الـ migration نفسه (لضمان وجودها على DB نظيف قبل تشغيل أي seed).
+ *
+ * EGP هي عملة النظام الافتراضية — كل قيد بلا currencyId يُعتبر EGP بـ rate=1.0.
+ * USD عملة مرجعية لميزات FX المستقبلية.
+ */
+export const CURRENCIES = {
+  EGP: '00000000-0000-0000-0000-000000000101',
+  USD: '00000000-0000-0000-0000-000000000102',
+} as const;
+
+export type CurrencyKey = keyof typeof CURRENCIES;
+
+/**
+ * A10: معدل ضريبة القيمة المضافة المصري (14% اعتبارًا من 2015-07-01).
+ *
+ * المصدر: قانون الضرائب المصري رقم 67 لسنة 2016 — جدول معدلات الضريبة.
+ * النسبة تُطبَّق على المبلغ الخاضع للضريبة (subtotal − discount).
+ *
+ * لا تجعلها قابلة للضبط عبر env في هذه المرحلة — معدل الـ VAT يتطلب قرارًا
+ * تنظيميًا + مراجعة محاسبية، وليس متغيرًا تشغيليًا. إذا تغير المعدل مستقبلًا،
+ * يُعدَّل هذا الثابت + يُهاجر إلى نمط تاريخي (effective-from/to).
+ */
+export const EGYPT_VAT_RATE = 0.14;
+
+/**
+ * حساب الـ VAT على أمر بيع.
+ *
+ * @param subtotal  مجموع بنود الأمر قبل الخصم (sum of unitPrice × quantity).
+ * @param discount  الخصم الإجمالي على الأمر.
+ * @returns `{ taxableBase, vatAmount, totalAmount }`:
+ *   - taxableBase: المبلغ الخاضع للضريبة (subtotal − discount، لا يقل عن 0).
+ *   - vatAmount: taxableBase × EGYPT_VAT_RATE.
+ *   - totalAmount: taxableBase + vatAmount.
+ */
+export function computeVat(
+  subtotal: number,
+  discount: number,
+): {
+  taxableBase: number;
+  vatAmount: number;
+  totalAmount: number;
+} {
+  // الـ discount لا يمكن أن يجعل taxableBase سالبًا — نُحدّده عند 0.
+  const taxableBase = Math.max(0, subtotal - discount);
+  const vatAmount = Math.round(taxableBase * EGYPT_VAT_RATE * 100) / 100;
+  const totalAmount = Math.round((taxableBase + vatAmount) * 100) / 100;
+  return { taxableBase, vatAmount, totalAmount };
+}

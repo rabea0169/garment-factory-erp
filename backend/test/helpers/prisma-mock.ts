@@ -78,6 +78,19 @@ export function createPrismaMock() {
       findMany: jest.fn(),
       count: jest.fn(),
     },
+    // A8: idempotencyKey mock — findUnique (for replay), create (for new key), update (for storing response)
+    idempotencyKey: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    // E5: currency mock — findUnique (by code), upsert (seed), findMany (listing)
+    currency: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      upsert: jest.fn(),
+      count: jest.fn(),
+    },
     worker: {
       findMany: jest.fn(),
       findUnique: jest.fn(),

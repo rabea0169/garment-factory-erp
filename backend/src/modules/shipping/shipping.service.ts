@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import {
+  generateDocumentCode,
+  DocumentCodePrefix,
+} from '../../core/common/codes.util';
 
 @Injectable()
 export class ShippingService {
@@ -35,7 +39,7 @@ export class ShippingService {
   }) {
     return this.prisma.shipment.create({
       data: {
-        code: `SHP-${Date.now()}`,
+        code: generateDocumentCode(DocumentCodePrefix.SHIPMENT),
         ...data,
       },
     });

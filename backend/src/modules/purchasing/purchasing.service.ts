@@ -9,6 +9,10 @@ import { PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import {
+  generateDocumentCode,
+  DocumentCodePrefix,
+} from '../../core/common/codes.util';
 
 @Injectable()
 export class PurchasingService {
@@ -43,7 +47,7 @@ export class PurchasingService {
 
     return this.prisma.purchaseOrder.create({
       data: {
-        code: `PO-${Date.now()}`,
+        code: generateDocumentCode(DocumentCodePrefix.PURCHASE_ORDER),
         supplierId: dto.supplierId,
         paymentType: dto.paymentType,
         totalAmount,

@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  Headers,
+} from '@nestjs/common';
 import { SalesService } from './sales.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -38,9 +46,15 @@ export class SalesController {
   async createOrder(
     @CurrentUser('id') userId: string,
     @Body() body: CreateSalesOrderDto,
-  ) {
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
     // P0-04: userId من الجلسة فقط — إرساله في body يُرفض بـ 400 (forbidNonWhitelisted)
-    return this.salesService.createSalesOrder(body, userId);
+    // A8: Idempotency-Key اختياري — نفس المفتاح + نفس المحتوى = نفس الاستجابة بلا أثر جديد.
+    return await this.salesService.createSalesOrder(
+      body,
+      userId,
+      idempotencyKey,
+    );
   }
 
   @Post('orders/:id/confirm')
@@ -49,7 +63,9 @@ export class SalesController {
   async confirmOrder(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
-  ) {
-    return this.salesService.confirmOrder(id, userId);
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    // A8: Idempotency-Key على التأكيد — يمنع صرفًا مزدوجًا عند إعادة المحاولة.
+    return await this.salesService.confirmOrder(id, userId, idempotencyKey);
   }
 }

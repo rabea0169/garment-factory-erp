@@ -194,4 +194,26 @@ export class AccountingService {
       },
     });
   }
+
+  /**
+   * A9: عكس قيد مالي موجود. ينشئ قيدًا عكسيًا مرتبطًا بالأصلي (غير تدميري).
+   *
+   * الـ endpoint يُعطّل الكتابة على القيد الأصلي (isReversed=true) ويُنشئ قيدًا
+   * جديدًا بنفس البنود لكن بمدين/دائن مقلوبين. القيد الجديد يربط بالأصلي عبر
+   * reversalOfId لحفظ سلسلة المراجعة.
+   *
+   * ملاحظة: لا يعكس تلقائيًا أثر الـ treasury/customer/supplier. لتعقبه،
+   * استدعِ reverseVoucher بدلًا من ذلك (ميزة مستقبلية).
+   */
+  async reverseJournalEntry(
+    originalEntryId: string,
+    userId: string,
+    description?: string,
+  ) {
+    return this.financial.reverseJournalEntry(
+      originalEntryId,
+      userId,
+      description,
+    );
+  }
 }
