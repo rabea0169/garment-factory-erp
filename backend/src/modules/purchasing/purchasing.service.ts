@@ -135,10 +135,11 @@ export class PurchasingService {
       throw new BadRequestException('Cannot receive a cancelled order');
     }
 
-    const existing = await this.prisma.purchaseReceiptItem.findMany({
-      where: { purchaseOrderItemId: { in: itemIds } },
-      select: { purchaseOrderItemId: true, quantity: true },
-    });
+    const existing =
+      (await this.prisma.purchaseReceiptItem.findMany({
+        where: { purchaseOrderItemId: { in: itemIds } },
+        select: { purchaseOrderItemId: true, quantity: true },
+      })) || [];
     const receivedByItem = new Map<string, number>();
     for (const item of existing) {
       receivedByItem.set(
@@ -286,10 +287,20 @@ export class PurchasingService {
 
     if (!order) throw new NotFoundException('Purchase order not found');
 
-    // Fetch existing receipts to calculate remaining quantities
-    const existingItems = await this.prisma.purchaseReceiptItem.findMany({
-      where: { purchaseOrderItemId: { in: order.items.map((i) => i.id) } },
-    });
+    // 1. Safe rejection for final states before unnecessary queries
+    if (order.status === PurchaseOrderStatus.RECEIVED) {
+      throw new BadRequestException('Order is already fully received');
+    }
+    if (order.status === PurchaseOrderStatus.CANCELLED) {
+      throw new BadRequestException('Cannot receive a cancelled order');
+    }
+
+    // 2. Fetch existing receipts to calculate remaining quantities
+    // Use fallback to empty array to handle potential mock issues in tests
+    const existingItems =
+      (await this.prisma.purchaseReceiptItem.findMany({
+        where: { purchaseOrderItemId: { in: order.items.map((i) => i.id) } },
+      })) || [];
 
     const receivedMap = new Map<string, number>();
     existingItems.forEach((ei) => {
@@ -348,6 +359,14 @@ export class PurchasingService {
     });
 
     if (!order) throw new NotFoundException('Purchase order not found');
+
+    // Safe rejection for invalid states before unnecessary queries
+    if (order.status === PurchaseOrderStatus.CANCELLED) {
+      throw new BadRequestException('Cannot return from a cancelled order');
+    }
+    if (order.status === PurchaseOrderStatus.DRAFT) {
+      throw new BadRequestException('Cannot return from a draft order');
+    }
 
     const item = order.items.find((i) => i.id === dto.purchaseOrderItemId);
     if (!item) throw new NotFoundException('Item not found in order');
