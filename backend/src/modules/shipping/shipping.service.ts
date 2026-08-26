@@ -15,6 +15,13 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
+  computeRequestHash,
+  createIdempotencyKey,
+  isIdempotencyUniqueViolation,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
+import {
   generateDocumentCode,
   DocumentCodePrefix,
 } from '../../core/common/codes.util';
@@ -45,13 +52,34 @@ export class ShippingService {
     return new PaginatedResult(data, total, page, pageSize);
   }
 
-  async createShipment(data: {
-    salesOrderId: string;
-    shippingCompanyId?: string;
-    shippingCost?: number;
-    trackingNumber?: string;
-    notes?: string;
-  }) {
+  async createShipment(
+    data: {
+      salesOrderId: string;
+      shippingCompanyId?: string;
+      shippingCost?: number;
+      trackingNumber?: string;
+      notes?: string;
+    },
+    actorId: string,
+    idempotencyKey?: string,
+  ) {
+    const requestHash = computeRequestHash({
+      operation: 'shipping.shipment.create',
+      actorId,
+      salesOrderId: data.salesOrderId,
+      shippingCompanyId: data.shippingCompanyId ?? null,
+      shippingCost: data.shippingCost ?? null,
+      trackingNumber: data.trackingNumber ?? null,
+      notes: data.notes ?? null,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      'shipping.shipment.create',
+      requestHash,
+    );
+    if (replay) return replay;
+
     const order = await this.prisma.salesOrder.findUnique({
       where: { id: data.salesOrderId },
       select: { id: true, status: true },
@@ -63,12 +91,40 @@ export class ShippingService {
       );
     }
 
-    return this.prisma.shipment.create({
-      data: {
-        code: generateDocumentCode(DocumentCodePrefix.SHIPMENT),
-        ...data,
-      },
-    });
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const idempotencyKeyId = await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          'shipping.shipment.create',
+          requestHash,
+        );
+        const created = await tx.shipment.create({
+          data: {
+            code: generateDocumentCode(DocumentCodePrefix.SHIPMENT),
+            ...data,
+            idempotencyKeyId,
+          },
+        });
+        const response = {
+          ...created,
+          shippingCost: Number(created.shippingCost),
+        };
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+        return created;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          'shipping.shipment.create',
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 
   async updateShipmentStatus(
