@@ -15,6 +15,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { ConfirmSalesOrderDto } from './dto/confirm-sales-order.dto';
+import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
@@ -73,6 +74,23 @@ export class SalesController {
       userId,
       idempotencyKey,
       body?.treasuryId,
+    );
+  }
+
+  @Post('orders/:id/payments')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تحصيل دفعة من عميل على أمر بيع' })
+  async recordCustomerPayment(
+    @Param('id') id: string,
+    @Body() body: CreateCustomerPaymentDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return this.salesService.recordCustomerPayment(
+      id,
+      body,
+      actorId,
+      idempotencyKey,
     );
   }
 }

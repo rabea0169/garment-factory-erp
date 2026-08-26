@@ -4,12 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import {
-  PaymentType,
-  Prisma,
-  SalesOrderStatus,
-  WarehouseType,
-} from '@prisma/client';
+import { PaymentType, Prisma, SalesOrderStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -34,6 +29,7 @@ import {
 
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CREATE = 'sales-order-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM = 'sales-order-confirm';
+const IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT = 'sales-customer-payment';
 
 @Injectable()
 export class SalesService {
@@ -259,18 +255,6 @@ export class SalesService {
             'لا يمكن تأكيد إلا أمر بيع بحالة DRAFT',
           );
         }
-        const fgWarehouse = await tx.warehouse.findFirst({
-          where: {
-            code: 'WH-FG',
-            type: WarehouseType.FINISHED_GOODS,
-            isActive: true,
-          },
-        });
-        if (!fgWarehouse)
-          throw new BadRequestException(
-            'مخزن المنتج التام الافتراضي غير موجود',
-          );
-
         const transition = await tx.salesOrder.updateMany({
           where: { id: orderId, status: SalesOrderStatus.DRAFT },
           data: {
@@ -282,23 +266,9 @@ export class SalesService {
         if (transition.count !== 1)
           throw new ConflictException('تم تغيير أمر البيع بالتزامن');
 
-        let totalCogs = 0;
-        for (const item of order.items) {
-          const movement = await this.inventoryService.issueFinishedGood(
-            {
-              productVariantId: item.productVariantId,
-              warehouseId: fgWarehouse.id,
-              quantity: item.quantity,
-              reference: order.code,
-              notes: `صرف فاتورة مبيعات ${order.code}`,
-              idempotencyKey: `sales.confirm:${order.id}:${item.id}`,
-            },
-            userId,
-            tx,
-          );
-          totalCogs += movement.totalValue ?? 0;
-        }
-
+        // Finished goods are issued and COGS is posted when the shipment
+        // transitions to SHIPPED. Confirmation only records the sale/receivable
+        // and, for cash orders, the treasury receipt.
         const debitAccount =
           order.paymentType === PaymentType.CASH
             ? CHART_OF_ACCOUNTS.CASH
@@ -324,14 +294,6 @@ export class SalesService {
             creditAccountId: CHART_OF_ACCOUNTS.VAT_PAYABLE,
             amount: Number(order.vatAmount),
             description: `ضريبة قيمة مضافة ${order.code}`,
-          });
-        }
-        if (totalCogs > 0) {
-          lines.push({
-            debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
-            creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
-            amount: round2(totalCogs),
-            description: `تكلفة بضاعة مباعة ${order.code}`,
           });
         }
         const treasuryUpdates =
@@ -390,6 +352,147 @@ export class SalesService {
           this.prisma,
           idempotencyKey,
           IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
+  }
+
+  async recordCustomerPayment(
+    orderId: string,
+    input: { amount: number; treasuryId: string; notes?: string },
+    actorId: string,
+    idempotencyKey?: string,
+  ) {
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new BadRequestException('مبلغ التحصيل يجب أن يكون موجبًا وصالحًا');
+    }
+
+    const requestHash = computeRequestHash({
+      operation: IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT,
+      orderId,
+      amount: input.amount,
+      treasuryId: input.treasuryId,
+      notes: input.notes ?? null,
+      actorId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT,
+          requestHash,
+        );
+
+        const order = await tx.salesOrder.findUnique({
+          where: { id: orderId },
+          include: { customer: true },
+        });
+        if (!order) throw new NotFoundException('أمر البيع غير موجود');
+        if (
+          order.status !== SalesOrderStatus.CONFIRMED &&
+          order.status !== SalesOrderStatus.SHIPPED
+        ) {
+          throw new ConflictException(
+            'لا يمكن تحصيل أمر بيع غير مؤكد أو مشحون',
+          );
+        }
+
+        const total = Number(order.totalAmount);
+        const paid = Number(order.paidAmount);
+        const outstanding = round2(total - paid);
+        if (!Number.isFinite(outstanding) || outstanding <= 0) {
+          throw new ConflictException('أمر البيع مسدد بالكامل');
+        }
+        if (input.amount > outstanding + 0.005) {
+          throw new BadRequestException(
+            `مبلغ التحصيل يتجاوز الرصيد المستحق (${outstanding})`,
+          );
+        }
+
+        const treasury = await tx.treasury.findUnique({
+          where: { id: input.treasuryId },
+          select: { id: true, isActive: true },
+        });
+        if (!treasury || !treasury.isActive) {
+          throw new NotFoundException('الخزينة غير موجودة أو غير نشطة');
+        }
+
+        const updatedOrder = await tx.salesOrder.updateMany({
+          where: { id: orderId, paidAmount: order.paidAmount },
+          data: { paidAmount: { increment: input.amount } },
+        });
+        if (updatedOrder.count !== 1) {
+          throw new ConflictException('تغير رصيد أمر البيع بالتزامن');
+        }
+
+        const payment = await tx.customerPayment.create({
+          data: {
+            customerId: order.customerId,
+            salesOrderId: order.id,
+            amount: input.amount,
+            notes: input.notes,
+          },
+        });
+
+        await this.financial.postJournalEntryInTx(
+          tx,
+          {
+            description: `تحصيل أمر البيع ${order.code}`,
+            reference: `CUSTOMER_PAYMENT:${payment.id}`,
+            postingKey: `customer-payment:${payment.id}`,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.CASH,
+                creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+                amount: input.amount,
+                description:
+                  input.notes ?? `تحصيل من العميل ${order.customer.name}`,
+              },
+            ],
+            treasuryUpdates: [
+              { treasuryId: input.treasuryId, delta: input.amount },
+            ],
+            customerUpdates: [
+              { customerId: order.customerId, delta: -input.amount },
+            ],
+            metadata: {
+              source: 'sales.customer-payment',
+              orderId: order.id,
+              customerId: order.customerId,
+              treasuryId: input.treasuryId,
+              paymentId: payment.id,
+            },
+          },
+          actorId,
+        );
+
+        const response = {
+          ...payment,
+          amount: Number(payment.amount),
+          outstandingAfter: round2(outstanding - input.amount),
+        };
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+        return response;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT,
           requestHash,
         );
         if (replayed) return replayed;

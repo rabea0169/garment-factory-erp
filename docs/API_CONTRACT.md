@@ -125,9 +125,12 @@
 | POST | `/sales/customers` | عميل جديد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
-| POST | `/sales/orders/:id/confirm` | تأكيد البيع وصرف المنتج التام | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/confirm` | تأكيد البيع وتسجيل الإيراد/الذمم؛ لا يصرف المنتج التام | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/payments` | تحصيل دفعة من العميل وربطها بالخزينة والذمم | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. عند تأكيد أمر `CASH` يجب إرسال body بالشكل `{ "treasuryId": "uuid" }`. يتحقق الخادم من الخزينة النشطة، ويحسب قيمة التحصيل من `SalesOrder.totalAmount` فقط، ثم يمرر `treasuryUpdates` إلى محرك الترحيل داخل نفس transaction مع صرف المخزون وتسجيل القيد. لا يُسمح بـ`treasuryId` في البيع الآجل. يستخدم تأكيد البيع رأس `Idempotency-Key` اختياريًا، ويشمل hash قيمة الخزينة لمنع replay بخزينة مختلفة.
+يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. عند تأكيد أمر `CASH` يجب إرسال body بالشكل `{ "treasuryId": "uuid" }`. يتحقق الخادم من الخزينة النشطة ويحسب قيمة القبض من `SalesOrder.totalAmount` فقط، ثم يمرر `treasuryUpdates` إلى محرك الترحيل داخل نفس transaction مع تسجيل الإيراد. لا يصرف تأكيد البيع المنتج التام ولا يرحل COGS؛ يتولى ذلك مسار الشحن فقط. لا يُسمح بـ`treasuryId` في البيع الآجل. يستخدم تأكيد البيع رأس `Idempotency-Key` اختياريًا، ويشمل hash قيمة الخزينة لمنع replay بخزينة مختلفة.
+
+يستقبل `POST /sales/orders/:id/payments` body بالشكل `{ "amount": 40, "treasuryId": "uuid", "notes": "اختياري" }` مع رأس `Idempotency-Key` اختياري. يسمح الخادم بالتحصيل لأمر `CONFIRMED` أو `SHIPPED` غير المسدد، ويرفض المبلغ الذي يتجاوز الرصيد المستحق. داخل transaction واحدة ينشئ `CustomerPayment`، يزيد `SalesOrder.paidAmount`، يرفع الخزينة، يخفض رصيد العميل، ويرحل `CASH → ACCOUNTS_RECEIVABLE`. التكرار بالمفتاح نفسه يعيد الاستجابة دون دفعة أو قيد ثانٍ.
 
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
 
@@ -139,7 +142,7 @@
 | POST | `/shipping` | إنشاء شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | PATCH | `/shipping/:id/status` | انتقال حالة شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام عبر InventoryService داخل نفس transaction، وفشل أي عنصر يعيد العملية كاملة.
+تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام ويرحل `COGS → INVENTORY` عبر InventoryService وFinancialPostingService داخل نفس transaction، ثم يحول أمر البيع إلى `SHIPPED`. لا يحدث الصرف عند التأكيد، وفشل أي عنصر أو الترحيل المالي يعيد انتقال الشحنة وأمر البيع والـledger والقيد كاملة. يدعم تغيير الحالة رأس `Idempotency-Key` اختياريًا.
 
 يدعم `POST /shipping` رأس `Idempotency-Key` اختياريًا. نفس المفتاح مع نفس body وactor يعيد الشحنة دون إنشاء جديد، وإعادة استخدامه بمحتوى مختلف تُرفض بـ409. actor مأخوذ من JWT ولا يُقبل من body.
 
@@ -231,6 +234,9 @@
   "customerId": "uuid", "paymentType": "CASH", "discount": 0,
   "items": [{ "productVariantId": "uuid", "quantity": 2 }]
 }
+// POST /sales/orders/:id/confirm — CASH: Body { "treasuryId": "uuid" }
+// POST /sales/orders/:id/payments
+// Body: { "amount": 40, "treasuryId": "uuid", "notes": "تحصيل جزئي" }
 // POST /accounting/vouchers  { "type": "PAYMENT", "amount": 500, "description": "صرف نثريات" }
 // POST /production/work-orders  { "productVariantId": "uuid", "bomVersionId": "uuid", "quantity": 100 }
 // PATCH /production/work-orders/:uuid/status  { "status": "SEWING" }

@@ -4,6 +4,7 @@ import { SalesService } from './sales.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import * as crypto from 'node:crypto';
 
@@ -94,7 +95,7 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
-  it('confirms through FinishedGoodStock, posts revenue/VAT/COGS in one transaction', async () => {
+  it('confirms revenue/VAT and defers stock issue and COGS until shipping', async () => {
     const { prisma, issueFinishedGood, postJournalEntryInTx, service } =
       makeService();
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
@@ -130,15 +131,7 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
 
     await service.confirmOrder('so-1', 'u-1', 'confirm-key', 'treasury-1');
 
-    expect(issueFinishedGood).toHaveBeenCalledWith(
-      expect.objectContaining({
-        productVariantId: 'v-1',
-        warehouseId: 'wh-fg',
-        quantity: 2,
-      }),
-      'u-1',
-      prisma,
-    );
+    expect(issueFinishedGood).not.toHaveBeenCalled();
     expect(postJournalEntryInTx).toHaveBeenCalledWith(
       prisma,
       expect.objectContaining({
@@ -154,6 +147,11 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       'u-1',
     );
     expect(prisma.finishedGood.updateMany).not.toHaveBeenCalled();
+    const postingCalls = postJournalEntryInTx.mock.calls as unknown as Array<
+      [unknown, { lines: unknown[] }]
+    >;
+    const postingInput = postingCalls[0][1];
+    expect(postingInput.lines).toHaveLength(2);
     type IdempotencyUpdateCall = [
       {
         where: { key: string };
@@ -270,7 +268,7 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
   });
 
   it('handles rollback: transaction failure reverts all changes (simulated)', async () => {
-    const { prisma, issueFinishedGood, service } = makeService();
+    const { prisma, postJournalEntryInTx, service } = makeService();
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     prisma.salesOrder.findUnique.mockResolvedValue({
       id: 'so-1',
@@ -286,10 +284,104 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
         await callback(prisma);
       },
     );
-    issueFinishedGood.mockRejectedValue(new Error('Stock issue failed'));
+    postJournalEntryInTx.mockRejectedValue(new Error('Journal post failed'));
 
     await expect(service.confirmOrder('so-1', 'u-1')).rejects.toThrow(
-      'Stock issue failed',
+      'Journal post failed',
     );
+  });
+});
+
+describe('SalesService — customer collection reconciliation', () => {
+  it('records a customer payment with Cash/Receivables and operational deltas', async () => {
+    const { prisma, postJournalEntryInTx, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-payment-1' });
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-credit-1',
+      code: 'SO-CREDIT-1',
+      status: SalesOrderStatus.SHIPPED,
+      paymentType: PaymentType.CREDIT,
+      totalAmount: 500,
+      paidAmount: 100,
+      customerId: 'customer-1',
+      customer: { id: 'customer-1', name: 'عميل تجريبي' },
+    });
+    prisma.treasury.findUnique.mockResolvedValue({
+      id: 'treasury-1',
+      isActive: true,
+    });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    prisma.customerPayment.create.mockResolvedValue({
+      id: 'payment-1',
+      customerId: 'customer-1',
+      salesOrderId: 'so-credit-1',
+      amount: 250,
+      notes: 'دفعة أولى',
+    });
+    postJournalEntryInTx.mockResolvedValue({ entryId: 'journal-payment-1' });
+
+    const result = await service.recordCustomerPayment(
+      'so-credit-1',
+      { amount: 250, treasuryId: 'treasury-1', notes: 'دفعة أولى' },
+      'cashier-1',
+      'payment-key-1',
+    );
+
+    expect(result).toMatchObject({
+      id: 'payment-1',
+      amount: 250,
+      outstandingAfter: 150,
+    });
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: 'so-credit-1', paidAmount: 100 },
+      data: { paidAmount: { increment: 250 } },
+    });
+    expect(postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        reference: 'CUSTOMER_PAYMENT:payment-1',
+        lines: [
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.CASH,
+            creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+            amount: 250,
+          }),
+        ],
+        treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 250 }],
+        customerUpdates: [{ customerId: 'customer-1', delta: -250 }],
+      }),
+      'cashier-1',
+    );
+  });
+
+  it('rejects a collection greater than the outstanding balance', async () => {
+    const { prisma, postJournalEntryInTx, service } = makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-credit-2',
+      status: SalesOrderStatus.CONFIRMED,
+      paymentType: PaymentType.CREDIT,
+      totalAmount: 500,
+      paidAmount: 450,
+      customerId: 'customer-1',
+      customer: { id: 'customer-1', name: 'عميل تجريبي' },
+    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    await expect(
+      service.recordCustomerPayment(
+        'so-credit-2',
+        { amount: 51, treasuryId: 'treasury-1' },
+        'cashier-1',
+      ),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
   });
 });
