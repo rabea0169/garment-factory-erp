@@ -44,6 +44,7 @@ export class ProductsController {
   }
 
   @Post(':id/variants')
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة مقاس/لون جديد للمنتج' })
   async createVariant(
     @Param('id') id: string,
@@ -53,6 +54,7 @@ export class ProductsController {
   }
 
   @Post(':id/bom')
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
   async addBomItem(@Param('id') id: string, @Body() body: CreateBomLineDto) {
     return this.productsService.addBomItem(
@@ -63,7 +65,9 @@ export class ProductsController {
     );
   }
 
-  @Post('bom/:bomId/delete') // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
+  @Post('bom/:bomId/delete')
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
+  // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
   @ApiOperation({ summary: 'حذف مادة من شجرة التصنيع' })
   async deleteBomItem(@Param('bomId') bomId: string) {
     return this.productsService.deleteBomItem(bomId);
