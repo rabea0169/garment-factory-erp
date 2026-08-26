@@ -5,7 +5,7 @@
 - **Task ID:** GF-REMAINING-006
 - **Base:** `origin/main@1bc1fc4` after merge of PR #55.
 - **Scope:** منع تجاوز integration tests بصمت، وإضافة تغطية RBAC للمسارات الجديدة في Dashboard واستلام المشتريات.
-- **Status:** implementation complete on branch; local gates pass; PostgreSQL CI required before merge.
+- **Status:** implementation complete on branch; local gates pass; PostgreSQL CI and RBAC gates passed on PR #56.
 
 ## 2. Changes
 
@@ -25,8 +25,8 @@
 | Build | PASS | `npm run build` |
 | E2E | PASS | 3 suites / 63 tests |
 | Required integration without DB | EXPECTED FAIL | explicit `GF_REQUIRE_INTEGRATION` guard message; proves no silent skip |
-| PostgreSQL integration | PENDING CI | mandatory on PR workflow |
-| Secret scan | PENDING CI | mandatory on PR workflow |
+| PostgreSQL integration | PASS | CI run `32950325106`; required command executed against PostgreSQL 16 |
+| Secret scan | PASS | CI run `32950325106`; no hardcoded secret detected |
 
 ## 4. Acceptance criteria
 
