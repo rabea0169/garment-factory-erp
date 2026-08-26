@@ -45,11 +45,13 @@ model User {
   productionConsumptions ProductionMaterialConsumption[]
   productionCosts        ProductionCostSnapshot[]
   qualityChecksCreated   QualityCheck[]                  @relation("QualityCheckCreator")
+  salesReturns           SalesReturn[]
 
-  payrollsCreated        Payroll[]                       @relation("PayrollCreator")
-  payrollsApproved       Payroll[]                       @relation("PayrollApprover")
-  fiscalPeriodsCreated   FiscalPeriod[]                 @relation("FiscalPeriodCreator")
-  shipmentsDelivered    Shipment[]                     @relation("ShipmentDeliverer")
+  payrollsCreated      Payroll[]      @relation("PayrollCreator")
+  payrollsApproved     Payroll[]      @relation("PayrollApprover")
+  fiscalPeriodsCreated FiscalPeriod[] @relation("FiscalPeriodCreator")
+  shipmentsDelivered   Shipment[]     @relation("ShipmentDeliverer")
+
   @@map("users")
 }
 
@@ -120,6 +122,7 @@ model ProductVariant {
   orderItems         SalesOrderItem[]
   stockLedgerEntries StockLedgerEntry[]
   workOrders         WorkOrder[]
+  salesReturnItems   SalesReturnItem[]
 
   @@unique([productId, size, color])
   @@map("product_variants")
@@ -347,8 +350,10 @@ model IdempotencyKey {
   qualityCheck          QualityCheck?
   purchaseReceipt       PurchaseReceipt?
   shipment              Shipment?
+  salesReturn           SalesReturn?
 
-  payroll               Payroll?
+  payroll Payroll?
+
   @@index([scope, createdAt])
   @@index([expiresAt])
   @@map("idempotency_keys")
@@ -642,6 +647,7 @@ enum PayrollStatus {
   DRAFT
   APPROVED
 }
+
 enum WorkerSpecialty {
   CUTTING
   SEWING
@@ -715,27 +721,28 @@ model WorkerAdvance {
 }
 
 model Payroll {
-  id              String        @id @default(uuid())
-  workerId        String
-  periodStart     DateTime      @db.Date
-  periodEnd       DateTime      @db.Date
-  grossAmount     Decimal       @db.Decimal(10, 2)
-  advanceDeduct   Decimal       @default(0) @db.Decimal(10, 2)
-  absenceDeduct   Decimal       @default(0) @db.Decimal(10, 2)
-  netAmount       Decimal       @db.Decimal(10, 2)
-  status          PayrollStatus @default(DRAFT)
-  isPaid          Boolean       @default(false)
-  paidAt          DateTime?
-  notes           String?
-  createdById     String?
-  approvedById    String?
-  approvedAt      DateTime?
+  id               String          @id @default(uuid())
+  workerId         String
+  periodStart      DateTime        @db.Date
+  periodEnd        DateTime        @db.Date
+  grossAmount      Decimal         @db.Decimal(10, 2)
+  advanceDeduct    Decimal         @default(0) @db.Decimal(10, 2)
+  absenceDeduct    Decimal         @default(0) @db.Decimal(10, 2)
+  netAmount        Decimal         @db.Decimal(10, 2)
+  status           PayrollStatus   @default(DRAFT)
+  isPaid           Boolean         @default(false)
+  paidAt           DateTime?
+  notes            String?
+  createdById      String?
+  approvedById     String?
+  approvedAt       DateTime?
   idempotencyKeyId String?
-  createdAt       DateTime      @default(now())
-  worker          Worker        @relation(fields: [workerId], references: [id])
-  createdBy       User?         @relation("PayrollCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  approvedBy      User?         @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
-  idempotencyKey  IdempotencyKey? @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  createdAt        DateTime        @default(now())
+  worker           Worker          @relation(fields: [workerId], references: [id])
+  createdBy        User?           @relation("PayrollCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy       User?           @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  idempotencyKey   IdempotencyKey? @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+
   @@unique([workerId, periodStart, periodEnd])
   @@unique([idempotencyKeyId])
   @@index([status, periodStart, periodEnd])
@@ -824,11 +831,12 @@ model SalesOrder {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  customer  Customer          @relation(fields: [customerId], references: [id])
-  user      User              @relation(fields: [userId], references: [id])
-  items     SalesOrderItem[]
-  payments  CustomerPayment[]
-  shipments Shipment[]
+  customer     Customer          @relation(fields: [customerId], references: [id])
+  user         User              @relation(fields: [userId], references: [id])
+  items        SalesOrderItem[]
+  payments     CustomerPayment[]
+  shipments    Shipment[]
+  salesReturns SalesReturn[]
 
   // Cluster 2 — A4/B3: فهرس مركب على (status, createdAt) لاستعلامات الـ dashboard
   @@index([status, createdAt])
@@ -843,10 +851,53 @@ model SalesOrderItem {
   unitPrice        Decimal @db.Decimal(10, 2)
   totalPrice       Decimal @db.Decimal(10, 2)
 
-  salesOrder SalesOrder     @relation(fields: [salesOrderId], references: [id])
-  variant    ProductVariant @relation(fields: [productVariantId], references: [id])
+  salesOrder  SalesOrder        @relation(fields: [salesOrderId], references: [id])
+  variant     ProductVariant    @relation(fields: [productVariantId], references: [id])
+  returnItems SalesReturnItem[]
 
   @@map("sales_order_items")
+}
+
+model SalesReturn {
+  id               String   @id @default(uuid())
+  code             String   @unique
+  salesOrderId     String
+  userId           String
+  totalAmount      Decimal  @db.Decimal(12, 2)
+  totalVat         Decimal  @default(0) @db.Decimal(12, 2)
+  totalCogs        Decimal  @default(0) @db.Decimal(12, 2)
+  reason           String?
+  returnedAt       DateTime @default(now())
+  idempotencyKeyId String?  @unique
+
+  salesOrder     SalesOrder        @relation(fields: [salesOrderId], references: [id])
+  user           User              @relation(fields: [userId], references: [id])
+  idempotencyKey IdempotencyKey?   @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  items          SalesReturnItem[]
+
+  @@index([salesOrderId, returnedAt])
+  @@map("sales_returns")
+}
+
+model SalesReturnItem {
+  id               String  @id @default(uuid())
+  returnId         String
+  salesOrderItemId String
+  productVariantId String
+  quantity         Int
+  unitPrice        Decimal @db.Decimal(10, 2)
+  vatAmount        Decimal @default(0) @db.Decimal(10, 2)
+  cogsUnitCost     Decimal @db.Decimal(10, 4)
+  totalAmount      Decimal @db.Decimal(12, 2)
+  totalCogs        Decimal @db.Decimal(12, 2)
+
+  salesReturn    SalesReturn    @relation(fields: [returnId], references: [id])
+  salesOrderItem SalesOrderItem @relation(fields: [salesOrderItemId], references: [id])
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id])
+
+  @@unique([returnId, salesOrderItemId])
+  @@index([salesOrderItemId])
+  @@map("sales_return_items")
 }
 
 model CustomerPayment {
@@ -909,16 +960,16 @@ model PurchaseOrderItem {
 }
 
 model PurchaseReceipt {
-  id              String   @id @default(uuid())
-  code            String   @unique
-  purchaseOrderId String
-  userId          String
-  receivedAt       DateTime          @default(now())
+  id               String                @id @default(uuid())
+  code             String                @unique
+  purchaseOrderId  String
+  userId           String
+  receivedAt       DateTime              @default(now())
   notes            String?
-  idempotencyKeyId String?           @unique
-  purchaseOrder    PurchaseOrder     @relation(fields: [purchaseOrderId], references: [id])
-  user             User              @relation(fields: [userId], references: [id])
-  idempotencyKey   IdempotencyKey?   @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  idempotencyKeyId String?               @unique
+  purchaseOrder    PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  user             User                  @relation(fields: [userId], references: [id])
+  idempotencyKey   IdempotencyKey?       @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
   items            PurchaseReceiptItem[]
 
   @@index([purchaseOrderId, receivedAt])
@@ -1014,7 +1065,7 @@ model FiscalPeriod {
   createdAt   DateTime           @default(now())
   updatedAt   DateTime           @updatedAt
 
-  createdBy     User           @relation("FiscalPeriodCreator", fields: [createdById], references: [id])
+  createdBy      User           @relation("FiscalPeriodCreator", fields: [createdById], references: [id])
   journalEntries JournalEntry[]
 
   @@unique([startDate, endDate])
@@ -1050,44 +1101,44 @@ model Account {
 }
 
 model JournalEntry {
-  id           String    @id @default(uuid())
-  code         String    @unique
-  description  String
-  reference    String?
-  date         DateTime  @default(now())
-  isAuto       Boolean   @default(false)
+  id             String    @id @default(uuid())
+  code           String    @unique
+  description    String
+  reference      String?
+  date           DateTime  @default(now())
+  isAuto         Boolean   @default(false)
   // E1: audit trail — من أنشأ القيد (nullable للقيود الالية).
-  createdById  String?
-  createdAt    DateTime  @default(now())
+  createdById    String?
+  createdAt      DateTime  @default(now())
   // A9: reversal tracking — القيد الأصلي يُعلَّم كمعكوس، والقيد العكسي يربط بـ reversalOfId.
   // لا cascade delete — العلاقة استشارية لحفظ سجل المراجعة.
-  isReversed   Boolean   @default(false)
-  reversalOfId String?
-  reversedById String?
-  reversedAt   DateTime?
+  isReversed     Boolean   @default(false)
+  reversalOfId   String?
+  reversedById   String?
+  reversedAt     DateTime?
   // A9: payload of linked side effects used for atomic reversal.
-  metadata     Json?
+  metadata       Json?
   // Financial posting idempotency: same key + same hash replays; different hash conflicts.
-  postingKey   String?
-  postingHash  String?
+  postingKey     String?
+  postingHash    String?
   // E5: multi-currency — العملة التي أُنشئ بها القيد + سعر الصرف مقابل عملة النظام.
   // NULL = system default (EGP). exchangeRate defaults to 1.0 when currencyId is NULL.
   currencyId     String?
-  exchangeRate   Decimal? @db.Decimal(10, 6)
+  exchangeRate   Decimal?  @db.Decimal(10, 6)
   fiscalPeriodId String?
 
   lines        JournalLine[]
-  fiscalPeriod FiscalPeriod? @relation(fields: [fiscalPeriodId], references: [id])
+  fiscalPeriod FiscalPeriod?  @relation(fields: [fiscalPeriodId], references: [id])
   // E1: علاقة اختيارية للمستخدم (لا cascade delete — لا تُحذف القيود).
-  createdBy  User?          @relation("JournalEntryCreator", fields: [createdById], references: [id])
+  createdBy    User?          @relation("JournalEntryCreator", fields: [createdById], references: [id])
   // A9: من عكس القيد (audit trail).
-  reversedBy User?          @relation("JournalEntryReverser", fields: [reversedById], references: [id])
+  reversedBy   User?          @relation("JournalEntryReverser", fields: [reversedById], references: [id])
   // A9: علاقة ذاتية للربط بين القيد العكسي والأصلي.
-  reversalOf JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id])
-  reversals  JournalEntry[] @relation("JournalEntryReversal")
+  reversalOf   JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id])
+  reversals    JournalEntry[] @relation("JournalEntryReversal")
   // E5: FK to Currency (nullable — defaults to system EGP).
-  currency   Currency?      @relation(fields: [currencyId], references: [id])
-  vouchers   Voucher[]
+  currency     Currency?      @relation(fields: [currencyId], references: [id])
+  vouchers     Voucher[]
 
   @@unique([reversalOfId])
   @@unique([postingKey])
