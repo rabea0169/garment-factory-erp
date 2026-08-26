@@ -315,13 +315,30 @@ export class ProductionWorkflowService {
             ) {
               throw new ConflictException('Idempotency key payload mismatch');
             }
-            if (!existingKey.response) {
-              throw new ConflictException('العملية السابقة لم تكتمل بعد');
+            if (existingKey.response) {
+              return {
+                ...(existingKey.response as Omit<
+                  StageOutputResult,
+                  'replayed'
+                >),
+                replayed: true,
+              } satisfies StageOutputResult;
             }
-            return {
-              ...(existingKey.response as Omit<StageOutputResult, 'replayed'>),
-              replayed: true,
-            } satisfies StageOutputResult;
+            // Older completed stage outputs may have the relation saved but
+            // no response JSON. Treat the committed stage run as a replay too.
+            if (
+              stageRun.status === ProductionStageRunStatus.COMPLETED &&
+              stageRun.idempotencyKeyId === existingKey.id
+            ) {
+              return {
+                replayed: true,
+                workOrderId: stageRun.workOrderId,
+                stage: stageRun.stage,
+                stageRunId: stageRun.id,
+                status: stageRun.status,
+              } satisfies StageOutputResult;
+            }
+            throw new ConflictException('العملية السابقة لم تكتمل بعد');
           }
         }
 
@@ -371,6 +388,13 @@ export class ProductionWorkflowService {
           stageRunId: stageRun.id,
           status: ProductionStageRunStatus.COMPLETED,
         } satisfies StageOutputResult;
+
+        if (input.idempotencyKey) {
+          await tx.idempotencyKey.update({
+            where: { key: input.idempotencyKey },
+            data: { response: result },
+          });
+        }
 
         if (actorId) {
           await tx.activityLog.create({

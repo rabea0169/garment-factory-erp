@@ -5,7 +5,7 @@
 - **Task ID:** GF-REMAINING-006
 - **Base:** `origin/main@1bc1fc4` after merge of PR #55.
 - **Scope:** منع تجاوز integration tests بصمت، وإضافة تغطية RBAC للمسارات الجديدة في Dashboard واستلام المشتريات.
-- **Status:** production stage-output concurrency regression fixed locally; full local gates pass; new PostgreSQL CI run required before merge.
+- **Status:** production stage-output concurrency regression fixed locally; full local gates pass; PostgreSQL CI rerun required before merge.
 
 ## 2. Changes
 
@@ -15,7 +15,7 @@
 
 أضيفت حالات E2E لمسار `GET /dashboard/stats` ومسار إنشاء receipt للمشتريات: بلا توكن تعاد 401، وVIEWER ممنوع من إنشاء receipt وتعاد 403.
 
-أثناء أول CI للمرحلة، كشف الاختبار الحقيقي على PostgreSQL أن طلبين متزامنين متطابقين لـ`recordStageOutput` قد يقرأان المرحلة كـ`IN_PROGRESS` ثم يفشل أحدهما بـ`Stage run is already completed` بدلاً من replay. أضيف قفل صف `ProductionStageRun` وإعادة فحص مفتاح idempotency بعد القفل؛ بذلك ينتظر الطلب الخاسر ثم يعيد النتيجة المخزنة بلا إكمال أو ActivityLog إضافي.
+أثناء أول CI للمرحلة، كشف الاختبار الحقيقي على PostgreSQL أن طلبين متزامنين متطابقين لـ`recordStageOutput` قد يقرأان المرحلة كـ`IN_PROGRESS` ثم يفشل أحدهما بدلاً من replay. أضيف قفل صف `ProductionStageRun` وإعادة فحص مفتاح idempotency بعد القفل، مع حفظ `response` داخل نفس transaction؛ بذلك ينتظر الطلب الخاسر ثم يعيد النتيجة المخزنة بلا إكمال أو ActivityLog إضافي. أظهر التشغيل الثاني أن القفل وحده كان يرى مفتاحاً بلا response، وتم إغلاق هذه الفجوة في التصحيح النهائي.
 
 ## 3. Verification
 
