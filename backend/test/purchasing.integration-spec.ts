@@ -1,4 +1,5 @@
 import {
+  AccountType,
   PaymentType,
   Prisma,
   PurchaseOrderStatus,
@@ -10,6 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 import { PurchasingService } from '../src/modules/purchasing/purchasing.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -43,6 +45,9 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
       TRUNCATE TABLE
+        "journal_lines",
+        "journal_entries",
+        "accounts",
         "purchase_receipt_items",
         "purchase_receipts",
         "purchase_order_items",
@@ -64,6 +69,22 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
       },
     });
     userId = user.id;
+    await prisma.account.createMany({
+      data: [
+        {
+          id: CHART_OF_ACCOUNTS.INVENTORY,
+          code: '1300-GF16',
+          name: 'GF-0016 Inventory',
+          type: AccountType.ASSET,
+        },
+        {
+          id: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+          code: '2200-GF16',
+          name: 'GF-0016 Accounts Payable',
+          type: AccountType.LIABILITY,
+        },
+      ],
+    });
     const supplier = await prisma.supplier.create({
       data: {
         code: `SUP-GF16-${randomUUID().slice(0, 8)}`,
