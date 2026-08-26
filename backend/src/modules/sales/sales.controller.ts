@@ -14,6 +14,7 @@ import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { ConfirmSalesOrderDto } from './dto/confirm-sales-order.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
@@ -63,9 +64,15 @@ export class SalesController {
   async confirmOrder(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
+    @Body() body: ConfirmSalesOrderDto = {},
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<unknown> {
     // A8: Idempotency-Key على التأكيد — يمنع صرفًا مزدوجًا عند إعادة المحاولة.
-    return await this.salesService.confirmOrder(id, userId, idempotencyKey);
+    return await this.salesService.confirmOrder(
+      id,
+      userId,
+      idempotencyKey,
+      body?.treasuryId,
+    );
   }
 }

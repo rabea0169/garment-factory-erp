@@ -8,25 +8,23 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `0b34949` — دمج PR #56 وإغلاق GF-REMAINING-006؛ CI main run `32952725645` أخضر |
-| فرع العمل الحالي | `phase2/gf-remaining-007-performance` — benchmark أداء قابل للتكرار |
-| آخر commit في فرع العمل | `0b34949` — بداية GF7 فوق main بعد دمج GF6؛ تغييرات الأداء قيد التنفيذ |
-| Pull Requests الأخيرة | PR #55 و#57 و#58 و#60 و#56 مدمجة؛ GF7 قيد التنفيذ |
-| آخر مرحلة مكتملة بالكامل على main | GF-REMAINING-005 + payroll payment؛ CI النهائي أخضر |
-| حالة CI على main | `main@0b34949` بعد دمج PR #56؛ CI run `32952725645` أخضر |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ PR #57 لا يضيف migration جديدة؛ GF6 لا يضيف migration |
-| إصدار API | `1.1`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` وreceipt/AP idempotency وPOD وfiscal periods/journal entries |
-| قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
+| آخر commit على main | `78de23a` — دمج PR #62 وإغلاق GF-REMAINING-007؛ CI main run `32956288873` أخضر |
+| فرع العمل الحالي | `fix/p0-financial-reconciliation-rebased` — إغلاق فجوات المصالحة المالية وسباقات production |
+| آخر commit في فرع العمل | إعادة تأسيس فرع PR #64 على `origin/main@78de23a` قيد الإتمام |
+| Pull Request الحالي | PR #64 مفتوح؛ كان متعارضاً مع main ويجري تحديثه قبل إعادة CI |
+| آخر مرحلة مكتملة بالكامل على main | GF-REMAINING-007؛ الأداء والـPostgreSQL integration وFlutter وSecret Scan أخضر |
+| حالة CI على main | `main@78de23a`؛ CI run `32956288873` أخضر ويشمل Performance وPostgreSQL integration |
+| حالة قاعدة البيانات | migrations الحالية نجحت على PostgreSQL الاختبارية؛ PR #64 لا يضيف migration جديدة، لكنه يضيف assertions للمصالحة المالية |
+| إصدار API | `1.1`؛ Dashboard حقيقي، receipt/AP idempotency، production replay، وقيود مالية مرتبطة بالمصدر |
+| قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL محلي؛ PostgreSQL integration يجب إثباتها في CI أو بيئة اختبارية مخصصة |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-007 — اختبار الأداء القابل للتكرار؛ التنفيذ مكتمل في PR #62 |
-| المرحلة النشطة | GF-REMAINING-007 مكتملة على فرع مستقل؛ CI run `32954663324` أخضر؛ Production ما زال No-Go حتى اعتماد thresholds وrelease gates |
-| سبب عدم بدء GF-REMAINING-008 | يجب أولاً اعتماد نتائج GF7 ودمجها، ثم تنفيذ Backup/Restore Drill وUAT وGo/No-Go |
-| حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
-| حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
-| Security blockers | لا P0/P1 أمني جديد في الإصلاحات المدمجة؛ Secret Scan وCI PASS، لكن Prisma Compute الخارجي وnpm audit وRelease gates ما زالت مفتوحة |
-| Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-007.md` — benchmark ونتائج CI موثقة |
-| Next exact action | مراجعة artifact GF7 مع مالك المنتج واعتماد thresholds، ثم دمج PR #62 بتفويض صريح؛ بعده Backup/Restore Drill وUAT وGo/No-Go |
+| المهمة النشطة | P0 Financial Reconciliation — PR #64 |
+| المرحلة النشطة | المصالحة المالية قيد الإغلاق؛ لا يبدأ Backup/Restore أو Go/No-Go قبل نجاح CI الخارجي والمراجعة والدمج |
+| حالة الإصلاحات | خزينة البيع النقدي، metadata للعكس، مرتجع المورد، production idempotency، وtransaction timeout مغطاة بالكود والاختبارات على فرع PR #64 |
+| Security blockers | لا سر جديد مثبت؛ Secret Scan main أخضر، لكن Prisma Compute في PR #64 فاشل والمصالحة المالية وBackup/Restore وUAT وPilot ما زالت موانع |
+| Open decisions | القيود التاريخية الناقصة metadata تحتاج reconciliation/adjustment معتمدًا؛ Backup/Restore وUAT وmonitoring وPilot خارج الإصلاح الحالي |
+| Last handoff | `docs/handoffs/HANDOFF-P0-FINANCIAL.md` |
+| Next exact action | إتمام rebase وحل التعارضات، تشغيل كل بوابات PR #64 بما فيها Prisma Compute وPostgreSQL، ثم طلب الدمج؛ بعده تنفيذ Backup/Restore Drill وUAT |
 
 ## المهام المكتملة على main
 

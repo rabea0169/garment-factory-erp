@@ -182,3 +182,7 @@ DROP INDEX IF EXISTS "raw_materials_code_isActive_idx";
 تضيف migration الحقل nullable `shipments.idempotencyKeyId` مع unique index وFK إلى `idempotency_keys`. الشحنات القديمة تبقى صالحة، بينما الطلبات الجديدة التي تحمل `Idempotency-Key` تحفظ المفتاح والاستجابة داخل transaction واحدة. لا تُعدّل المهاجرة المخزون؛ صرف المنتج التام ما يزال داخل انتقال SHIPPED عبر InventoryService.
 
 يجب إثبات replay، اختلاف المحتوى، وrollback المعاملة في CI على PostgreSQL قبل أي بيئة مشتركة. rollback عبر backup/restore أو migration عكسية معتمدة، ولا تُحذف shipments أو stock ledger entries يدويًا.
+
+## P0 Financial Reconciliation Fixes
+
+هذه الإصلاحات لا تتطلب migration لأنها تستخدم الحقول الموجودة. البيع النقدي يمرر `treasuryUpdates` داخل transaction ويحفظها في `JournalEntry.metadata`. مرتجع المورد يستخدم `StockLedgerEntry.totalValue` الفعلي ويرحل مدين AP/دائن Inventory مع خفض Supplier.balance. إنشاء Voucher يحفظ treasury/customer/supplier updates في metadata حتى يقلبها reversal. لا تُعدّل القيود التاريخية التي تفتقد metadata تلقائيًا؛ تحتاج reconciliation معتمدًا. rollback هو rollback للـtransaction أو git revert، وليس حذف حركات أو قيود.

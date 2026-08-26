@@ -209,6 +209,41 @@ export class AccountingService {
           ];
     const treasuryDelta =
       data.type === VoucherType.RECEIPT ? data.amount : -data.amount;
+    const treasuryUpdates = [
+      { treasuryId: data.treasuryId, delta: treasuryDelta },
+    ];
+    const customerUpdates =
+      data.counterpartyType === 'CUSTOMER' && data.counterpartyId
+        ? [
+            {
+              customerId: data.counterpartyId,
+              delta:
+                data.type === VoucherType.RECEIPT ? -data.amount : data.amount,
+            },
+          ]
+        : undefined;
+    const supplierUpdates =
+      data.counterpartyType === 'SUPPLIER' && data.counterpartyId
+        ? [
+            {
+              supplierId: data.counterpartyId,
+              delta:
+                data.type === VoucherType.PAYMENT ? -data.amount : data.amount,
+            },
+          ]
+        : undefined;
+    const postingMetadata = {
+      source: 'accounting.voucher',
+      treasuryUpdates,
+      ...(customerUpdates ? { customerUpdates } : {}),
+      ...(supplierUpdates ? { supplierUpdates } : {}),
+      ...(data.counterpartyType && data.counterpartyId
+        ? {
+            counterpartyType: data.counterpartyType,
+            counterpartyId: data.counterpartyId,
+          }
+        : {}),
+    };
 
     return this.prisma.$transaction(async (tx) => {
       const entry = await this.financial.postJournalEntryInTx(
@@ -222,44 +257,10 @@ export class AccountingService {
           isAuto: true,
           lines,
           userId: createdById,
-          metadata: {
-            source: 'accounting.voucher',
-            ...(data.counterpartyType && data.counterpartyId
-              ? {
-                  counterpartyType: data.counterpartyType,
-                  counterpartyId: data.counterpartyId,
-                }
-              : {}),
-          },
-          treasuryUpdates: [
-            { treasuryId: data.treasuryId, delta: treasuryDelta },
-          ],
-          ...(data.counterpartyType === 'CUSTOMER' && data.counterpartyId
-            ? {
-                customerUpdates: [
-                  {
-                    customerId: data.counterpartyId,
-                    delta:
-                      data.type === VoucherType.RECEIPT
-                        ? -data.amount
-                        : data.amount,
-                  },
-                ],
-              }
-            : {}),
-          ...(data.counterpartyType === 'SUPPLIER' && data.counterpartyId
-            ? {
-                supplierUpdates: [
-                  {
-                    supplierId: data.counterpartyId,
-                    delta:
-                      data.type === VoucherType.PAYMENT
-                        ? -data.amount
-                        : data.amount,
-                  },
-                ],
-              }
-            : {}),
+          metadata: postingMetadata,
+          treasuryUpdates,
+          customerUpdates,
+          supplierUpdates,
         },
         createdById,
       );
