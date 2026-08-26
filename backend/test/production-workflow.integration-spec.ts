@@ -769,14 +769,6 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       { workOrderId: scenario.workOrderId, toStage: ProductionStage.CUTTING },
       scenario.userId,
     );
-    await workflowService.recordStageOutput({
-      workOrderId: scenario.workOrderId,
-      stage: ProductionStage.CUTTING,
-      inputQty: 10,
-      acceptedQty: 8,
-      rejectedQty: 1,
-      wasteQty: 1,
-    });
     await workflowService.consumeMaterial(
       {
         workOrderId: scenario.workOrderId,
@@ -791,6 +783,14 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       },
       scenario.userId,
     );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+    });
     await workflowService.transitionStage(
       { workOrderId: scenario.workOrderId, toStage: ProductionStage.SEWING },
       scenario.userId,
