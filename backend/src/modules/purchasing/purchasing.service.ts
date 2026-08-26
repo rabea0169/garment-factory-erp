@@ -427,6 +427,74 @@ export class PurchasingService {
         tx,
       );
 
+      // COMM-F01: Post the reverse GL entry — debit ACCOUNTS_PAYABLE
+      // (reduces what we owe the supplier) and credit INVENTORY (reduces
+      // the carrying value of stock at weighted-average cost). Without
+      // this, the stock ledger shows the return but the GL keeps the
+      // original payable intact — leaving the supplier's balance and
+      // ACCOUNTS_PAYABLE overstated, and creating a silent gap between
+      // the inventory sub-ledger and the GL Inventory account.
+      const rawMaterial = await tx.rawMaterial.findUnique({
+        where: { id: item.rawMaterialId },
+        select: { costPerUnit: true, currentStock: true },
+      });
+      if (!rawMaterial) {
+        throw new NotFoundException(
+          `الخام ${item.rawMaterialId} غير موجود لإقفال قيد الإرجاع`,
+        );
+      }
+      const weightedAvgCost = Number(rawMaterial.costPerUnit);
+      const returnAmount = round2(dto.quantity * weightedAvgCost);
+
+      if (returnAmount > 0) {
+        // supplier name is fetched for the description (audit trail).
+        const supplier = await tx.supplier.findUnique({
+          where: { id: order.supplierId },
+          select: { id: true, name: true },
+        });
+
+        await this.financialPosting.postJournalEntryInTx(
+          tx,
+          {
+            description: `إرجاع بضاعة للمورد ${supplier?.name ?? order.supplierId} - أمر شراء #${order.code}`,
+            reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+                creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                amount: returnAmount,
+                description: `عكس إثبات مخزون مقابل مورد ${order.supplierId}`,
+              },
+            ],
+            supplierUpdates: [
+              { supplierId: order.supplierId, delta: -returnAmount },
+            ],
+            metadata: {
+              source: 'PURCHASE_RETURN',
+              purchaseOrderId: order.id,
+              purchaseOrderItemId: dto.purchaseOrderItemId,
+              quantity: dto.quantity,
+              unitCost: weightedAvgCost,
+            },
+            // COMM-F01 idempotency: per-task spec is `supplier-return-${po.id}-${itemId}`.
+            // We extend with the return idempotency record id (when available) so
+            // that multiple distinct returns for the same item don't collide on
+            // the JournalEntry.postingKey unique constraint and silently reuse
+            // a prior posting (which would skip GL for subsequent returns).
+            postingKey: `supplier-return-${order.id}-${dto.purchaseOrderItemId}${
+              returnIdempotencyKeyId ? `-${returnIdempotencyKeyId}` : ''
+            }`,
+          },
+          userId,
+        );
+      }
+
+      // TODO(COMM-F12/F13): If Input VAT was tracked on the original receipt
+      // (currently createReceipt posts only Dr Inventory / Cr AP — no VAT
+      // line), reverse it here as Dr VAT_PAYABLE / Cr INVENTORY (or AP).
+      // Leaving as no-op until VAT tracking is added to the receipt path.
+
       const response = {
         success: true,
         message: 'Return processed',
@@ -440,4 +508,13 @@ export class PurchasingService {
       return response;
     });
   }
+}
+
+/**
+ * Round to 2 decimal places (banker-safe round-half-up with EPSILON bias).
+ * Matches the canonical pattern used by sales.service.ts for monetary amounts
+ * before they hit the GL JournalLines.
+ */
+function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
 }

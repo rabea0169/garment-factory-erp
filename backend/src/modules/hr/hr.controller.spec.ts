@@ -15,6 +15,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     recordAdvance: jest.Mock;
     createPayroll: jest.Mock;
     approvePayroll: jest.Mock;
+    payPayroll: jest.Mock;
   };
 
   beforeEach(() => {
@@ -26,6 +27,9 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       recordAdvance: jest.fn().mockResolvedValue({ id: 'adv-1' }),
       createPayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
       approvePayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
+      // COMM-F04: new method — must be on the service mock so the controller
+      // delegate test doesn't crash with "service.payPayroll is not a function".
+      payPayroll: jest.fn().mockResolvedValue({ id: 'pay-1', status: 'PAID' }),
     };
     controller = new HrController(service as unknown as HrService);
   });
@@ -133,6 +137,29 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       'approvePayroll',
     );
     expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
+  });
+
+  // COMM-F04: New endpoint to mark an APPROVED payroll as PAID.
+  it('صرف payroll يمرر id وactor وIdempotency-Key إلى الخدمة', async () => {
+    await controller.payPayroll('pay-1', 'cashier-1', 'pay-key');
+    expect(service.payPayroll).toHaveBeenCalledWith(
+      'pay-1',
+      'cashier-1',
+      'pay-key',
+    );
+  });
+
+  it('صرف payroll محمي بدوري GENERAL_MANAGER وACCOUNTANT وCASHIER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      HrController.prototype,
+      'payPayroll',
+    );
+    expect(roles).toEqual([
+      UserRole.GENERAL_MANAGER,
+      UserRole.ACCOUNTANT,
+      UserRole.CASHIER,
+    ]);
   });
 
   it('تسجيل سلفة مقيّد بـ HR_MANAGER فقط', () => {

@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { HrService } from './hr.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('HrService — العمال والإنتاج بالقطعة (GF-0003)', () => {
@@ -10,7 +11,22 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new HrService(prisma as unknown as PrismaService);
+    // COMM-F03/F04: HrService now injects FinancialPostingService — provide
+    // a no-op mock since the GF-0003 specs don't exercise payroll flows.
+    const financial = {
+      postJournalEntryInTx: jest.fn().mockResolvedValue({
+        entryId: 'je-mock',
+        entryCode: 'JE-MOCK',
+        totalDebit: 0,
+        totalCredit: 0,
+        linesCount: 0,
+        createdAt: new Date(),
+      }),
+    };
+    service = new HrService(
+      prisma as unknown as PrismaService,
+      financial as unknown as FinancialPostingService,
+    );
   });
 
   it('يجلب العمال مرتبين بالأحدث', async () => {

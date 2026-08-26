@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { ProductionWorkflowService } from '../src/modules/production/production-workflow.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -39,8 +40,16 @@ integrationDescribe('GF-0013 production workflow integration', () => {
 
     prisma = new PrismaService();
     await prisma.$connect();
-    inventoryService = new InventoryService(prisma, new EventEmitter2());
-    workflowService = new ProductionWorkflowService(prisma, inventoryService);
+    inventoryService = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
+    workflowService = new ProductionWorkflowService(
+      prisma,
+      inventoryService,
+      new FinancialPostingService(prisma),
+    );
   });
 
   beforeEach(async () => {
@@ -646,8 +655,16 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    inventoryService = new InventoryService(prisma, new EventEmitter2());
-    workflowService = new ProductionWorkflowService(prisma, inventoryService);
+    inventoryService = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
+    workflowService = new ProductionWorkflowService(
+      prisma,
+      inventoryService,
+      new FinancialPostingService(prisma),
+    );
   });
 
   beforeEach(async () => {

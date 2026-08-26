@@ -9,6 +9,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -25,7 +26,11 @@ describe('GF-REMAINING-002 inventory warehouse balances', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    service = new InventoryService(prisma, new EventEmitter2());
+    service = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
     const user = await prisma.user.create({
       data: {
         name: 'GF-REMAINING-002 Integration User',

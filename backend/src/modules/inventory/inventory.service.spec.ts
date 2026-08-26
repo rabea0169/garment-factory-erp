@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-member-access, */
 import { createHash } from 'node:crypto';
 import {
   BadRequestException,
@@ -12,6 +13,8 @@ import {
   createPrismaMock,
 } from '../../../test/helpers/prisma-mock';
 import { EVENTS } from '../../events/event-types';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 /**
  * GF-0007 — اختبارات أساس المخزون القابل للتدقيق.
@@ -106,12 +109,36 @@ describe('InventoryService — أساس المخزون القابل للتدقي
   let prisma: ExtendedPrismaMock;
   let tx: ReturnType<typeof createTxMock>;
   let eventEmitter: { emitAsync: jest.Mock };
+  let financialPosting: {
+    postJournalEntry: jest.Mock;
+    postJournalEntryInTx: jest.Mock;
+    reverseJournalEntry: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createInventoryPrismaMock();
     tx = createTxMock();
     eventEmitter = createEventEmitterMock() as unknown as {
       emitAsync: jest.Mock;
+    };
+    financialPosting = {
+      postJournalEntry: jest.fn().mockResolvedValue({
+        entryId: 'je-mock',
+        entryCode: 'JE-MOCK',
+        totalDebit: 0,
+        totalCredit: 0,
+        linesCount: 0,
+        createdAt: new Date(),
+      }),
+      postJournalEntryInTx: jest.fn().mockResolvedValue({
+        entryId: 'je-mock',
+        entryCode: 'JE-MOCK',
+        totalDebit: 0,
+        totalCredit: 0,
+        linesCount: 0,
+        createdAt: new Date(),
+      }),
+      reverseJournalEntry: jest.fn(),
     };
     prisma.$transaction.mockImplementation(
       async (
@@ -129,6 +156,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
     service = new InventoryService(
       prisma as unknown as PrismaService,
       eventEmitter as never,
+      financialPosting as unknown as FinancialPostingService,
     );
   });
 
@@ -501,6 +529,177 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         select: { entryCode: true, createdAt: true },
       });
       expect(result.totalValue).toBe(113.75);
+    });
+  });
+
+  // ============ OPS-F01 / OPS-F11: GL posting on waste + adjust ============
+
+  describe('WAVE2-B — ترحيل قيد GL عند الهدر (OPS-F01 / OPS-F11)', () => {
+    it('ينشر قيدًا (Dr WASTE_EXPENSE / Cr INVENTORY) بقيمة quantity × weightedAvgCost', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 197.5,
+        costPerUnit: 45.5,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
+      });
+
+      await service.waste(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantity: 2.5,
+          reason: 'قماش مبلل تالف',
+        },
+        'user-1',
+      );
+
+      expect(financialPosting.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const [txClient, input, userId] =
+        financialPosting.postJournalEntryInTx.mock.calls[0];
+      expect(txClient).toBe(tx);
+      expect(input.isAuto).toBe(true);
+      expect(input.userId).toBe('user-1');
+      expect(input.lines).toHaveLength(1);
+      expect(input.lines[0].debitAccountId).toBe(
+        CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+      );
+      expect(input.lines[0].creditAccountId).toBe(CHART_OF_ACCOUNTS.INVENTORY);
+      // amount = quantity × weightedAvgCost = 2.5 × 45.5 = 113.75
+      expect(input.lines[0].amount).toBe(113.75);
+      // postingKey idempotent per stockLedgerEntry.entryCode
+      expect(input.postingKey).toMatch(/^inventory\.waste:SLE-/);
+      expect(input.metadata).toMatchObject({
+        source: 'inventory.movement',
+        movementType: StockMovementType.WASTE,
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        delta: -2.5,
+        totalValue: 113.75,
+      });
+      expect(userId).toBe('user-1');
+    });
+
+    it('لا ينشر قيد GL عند RECEIVE (التسوية تتم في مسار المشتريات)', async () => {
+      await service.receive(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantity: 10,
+          unitCost: 50,
+        },
+        'user-1',
+      );
+      expect(financialPosting.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+
+    it('لا ينشر قيد GL عند ISSUE (يُرحَّل في consumeMaterial)', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 190,
+        costPerUnit: 50,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
+      });
+      await service.issue(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantity: 10,
+        },
+        'user-1',
+      );
+      expect(financialPosting.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('WAVE2-B — ترحيل قيد GL عند تسوية الجرد (OPS-F01)', () => {
+    it('تسوية موجبة (delta > 0): Dr INVENTORY / Cr INVENTORY_ADJUSTMENT_INCOME', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 210,
+        costPerUnit: 50,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
+      });
+
+      await service.adjust(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantityDelta: 10,
+          reason: 'زيادة جرد',
+        },
+        'user-1',
+      );
+
+      expect(financialPosting.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const input = financialPosting.postJournalEntryInTx.mock.calls[0][1];
+      expect(input.lines[0].debitAccountId).toBe(CHART_OF_ACCOUNTS.INVENTORY);
+      expect(input.lines[0].creditAccountId).toBe(
+        CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+      );
+      // amount = quantityDelta(10) × costPerUnit(50) = 500
+      expect(input.lines[0].amount).toBe(500);
+      expect(input.postingKey).toMatch(/^inventory\.adjustment:SLE-/);
+      expect(input.metadata.delta).toBe(10);
+    });
+
+    it('تسوية سالبة (delta < 0): Dr INVENTORY_ADJUSTMENT_EXPENSE / Cr INVENTORY', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 190,
+        costPerUnit: 50,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
+      });
+
+      await service.adjust(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantityDelta: -10,
+          reason: 'عجز جرد',
+        },
+        'user-1',
+      );
+
+      expect(financialPosting.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const input = financialPosting.postJournalEntryInTx.mock.calls[0][1];
+      expect(input.lines[0].debitAccountId).toBe(
+        CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+      );
+      expect(input.lines[0].creditAccountId).toBe(CHART_OF_ACCOUNTS.INVENTORY);
+      // amount = |quantityDelta|(10) × costPerUnit(50) = 500
+      expect(input.lines[0].amount).toBe(500);
+      expect(input.metadata.delta).toBe(-10);
+    });
+
+    it('لا ينشر قيد GL لو كانت totalValue = 0 (costPerUnit = 0)', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 210,
+        costPerUnit: 0,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
+      });
+
+      await service.adjust(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantityDelta: 10,
+          reason: 'زيادة بدون تكلفة',
+        },
+        'user-1',
+      );
+
+      expect(financialPosting.postJournalEntryInTx).not.toHaveBeenCalled();
     });
   });
 

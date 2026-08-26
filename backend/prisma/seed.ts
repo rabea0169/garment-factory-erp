@@ -279,6 +279,12 @@ async function main() {
   // معرفات ثابتة (UUIDs من src/core/financial/chart-of-accounts.ts) يستوردها
   // FinancialPostingService دون بحث — تُنشأ هنا كـ upsert لضمان وجودها على
   // كل قاعدة بيانات جديدة بعد prisma migrate deploy + db seed.
+  //
+  // Wave2: تمت إضافة الحسابات التفصيلية للمخزون (WIP, FINISHED_GOOD_STOCK,
+  // WORKER_ADVANCES) والأجور المستحقة (SALARIES_PAYABLE) وإيراد/مصروف تسوية
+  // المخزون (INVENTORY_ADJUSTMENT_INCOME, WASTE_EXPENSE,
+  // INVENTORY_ADJUSTMENT_EXPENSE) ومصروفات الأجور والشحن (SALARIES_EXPENSE,
+  // SHIPPING_EXPENSE) لتغطية قيود GL من subagents B و C.
   const chartAccounts = [
     {
       id: CHART_OF_ACCOUNTS.CASH,
@@ -305,6 +311,24 @@ async function main() {
       type: AccountType.ASSET,
     },
     {
+      id: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+      code: '1310',
+      name: 'مخزون البضاعة التامة (Finished Goods)',
+      type: AccountType.ASSET,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.WIP,
+      code: '1320',
+      name: 'إنتاج تحت التشغيل (Work in Progress)',
+      type: AccountType.ASSET,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+      code: '1330',
+      name: 'سلف العمال (Worker Advances)',
+      type: AccountType.ASSET,
+    },
+    {
       id: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
       code: '2200',
       name: 'الموردون (ذمم دائنة)',
@@ -314,6 +338,12 @@ async function main() {
       id: CHART_OF_ACCOUNTS.VAT_PAYABLE,
       code: '2300',
       name: 'ضريبة القيمة المضافة المستحقة',
+      type: AccountType.LIABILITY,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+      code: '2400',
+      name: 'الأجور المستحقة (Salaries Payable)',
       type: AccountType.LIABILITY,
     },
     {
@@ -329,6 +359,12 @@ async function main() {
       type: AccountType.REVENUE,
     },
     {
+      id: CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+      code: '4200',
+      name: 'إيراد تسوية المخزون (Inventory Adjustment Income)',
+      type: AccountType.REVENUE,
+    },
+    {
       id: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
       code: '5100',
       name: 'تكلفة البضاعة المباعة',
@@ -338,6 +374,30 @@ async function main() {
       id: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
       code: '5000',
       name: 'مصروف عام',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+      code: '5300',
+      name: 'مصروف الهدر (Waste Expense)',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+      code: '5400',
+      name: 'مصروف تسوية المخزون (Inventory Adjustment Expense)',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+      code: '5500',
+      name: 'مصروف الأجور (Salaries Expense)',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.SHIPPING_EXPENSE,
+      code: '5600',
+      name: 'مصروف الشحن (Shipping Expense)',
       type: AccountType.EXPENSE,
     },
   ];

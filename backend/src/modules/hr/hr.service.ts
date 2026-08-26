@@ -15,6 +15,8 @@ import {
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 export interface PayrollInput {
   workerId: string;
@@ -62,7 +64,14 @@ function isPayrollPeriodUniqueViolation(error: unknown): boolean {
 
 @Injectable()
 export class HrService {
-  constructor(private readonly prisma: PrismaService) {}
+  // COMM-F03: HrService now owns GL postings for payroll approval + payment.
+  // Without FinancialPostingService, salaries expense (the largest expense
+  // line in a garment factory) never hits the GL — trial balance misleads
+  // management and the P&L overstates net income by the entire payroll.
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financial: FinancialPostingService,
+  ) {}
 
   async getAllWorkers(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -344,8 +353,48 @@ export class HrService {
         }
         const approved = await tx.payroll.findUnique({
           where: { id: payrollId },
+          include: { worker: { select: { name: true } } },
         });
         if (!approved) throw new NotFoundException('كشف الراتب غير موجود');
+
+        // COMM-F03: post the GL accrual — Dr SALARIES_EXPENSE / Cr
+        // SALARIES_PAYABLE for the gross amount (net + deductions). This
+        // recognizes the expense in the P&L and the payable on the balance
+        // sheet in the same atomic transaction as the status transition.
+        // Idempotency: the postingKey `payroll-approval-${payrollId}` is
+        // unique on JournalEntry, so a retry of the same approval (e.g.
+        // client retry after timeout) replays the existing entry instead
+        // of duplicating it. If the status already moved to APPROVED the
+        // replay path above also short-circuits before reaching here.
+        const grossAmount = round2(Number(approved.grossAmount));
+        if (grossAmount > 0) {
+          await this.financial.postJournalEntryInTx(
+            tx,
+            {
+              description: `اعتماد كشف راتب ${formatPeriod(approved.periodStart, approved.periodEnd)} - موظف ${approved.worker?.name ?? approved.workerId}`,
+              reference: `PAYROLL-${approved.id}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+                  creditAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+                  amount: grossAmount,
+                  description: `استحقاق أجر عامل ${approved.workerId} للفترة ${formatPeriod(approved.periodStart, approved.periodEnd)}`,
+                },
+              ],
+              userId: actorId,
+              metadata: {
+                source: 'hr.payroll.approve',
+                payrollId: approved.id,
+                workerId: approved.workerId,
+                grossAmount,
+              },
+              postingKey: `payroll-approval-${approved.id}`,
+            },
+            actorId,
+          );
+        }
+
         const response = this.toPayrollResponse(approved);
         await tx.activityLog.create({
           data: {
@@ -353,6 +402,183 @@ export class HrService {
             action: 'PAYROLL_APPROVED',
             module: 'HR',
             details: { payrollId: response.id, approvedById: actorId },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+        return response;
+      });
+    } catch (error) {
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replay = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay as PayrollResponse & { replayed: true };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * COMM-F04: Mark an APPROVED payroll as PAID and post the cash settlement
+   * GL entry. Workflow: DRAFT → APPROVED (accrual posted via approvePayroll)
+   * → PAID (this method). Validates state transitions idempotently.
+   *
+   * GL entry posted:
+   *   - Dr SALARIES_PAYABLE / Cr CASH  for the net amount actually paid.
+   *   - If advanceDeduct > 0 (worker had salary advances deducted): also
+   *     Dr SALARIES_PAYABLE / Cr WORKER_ADVANCES for the advance portion.
+   *     This clears the salary payable (which was credited for the gross
+   *     amount in approvePayroll) and reduces the WORKER_ADVANCES asset
+   *     that should have been set up when the advance was paid (COMM-F05,
+   *     a separate HIGH finding — once that fix lands, this clearing line
+   *     becomes a true balanced reversal of the original advance entry).
+   *
+   * State machine:
+   *   - DRAFT  → reject (must be approved first)
+   *   - APPROVED → PAID (this method)
+   *   - PAID   → reject (idempotent replay short-circuits earlier; if we
+   *     reach here with PAID, the caller bypassed the replay check)
+   *
+   * Idempotency: `payroll-payment-${payrollId}` on JournalEntry.postingKey
+   * + the IdempotencyKey mechanism for the API-level replay.
+   *
+   * NOTE: `'PAID' as PayrollStatus` is a string-literal cast because the
+   * schema subagent's PR adding PAID to the PayrollStatus enum may not
+   * have landed when this code is merged. Once the enum is updated, the
+   * cast can be removed. See return summary for the expected tsc error.
+   */
+  async payPayroll(
+    payrollId: string,
+    actorId: string,
+    idempotencyKey?: string,
+  ): Promise<PayrollResponse | (PayrollResponse & { replayed: true })> {
+    const requestHash = computeRequestHash({ payrollId, actorId });
+    const scope = 'hr-payroll-pay';
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) {
+          return replay as PayrollResponse & { replayed: true };
+        }
+        const payroll = await tx.payroll.findUnique({
+          where: { id: payrollId },
+          include: { worker: { select: { name: true } } },
+        });
+        if (!payroll) throw new NotFoundException('كشف الراتب غير موجود');
+        if (payroll.status !== PayrollStatus.APPROVED) {
+          throw new ConflictException(
+            `لا يمكن صرف كشف راتب بحالة ${payroll.status} — مطلوب حالة APPROVED`,
+          );
+        }
+
+        await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+
+        // Atomic state transition APPROVED → PAID. updateMany with a
+        // status guard prevents a race where a concurrent caller pays
+        // the same payroll in parallel — the loser gets count=0.
+        const PAID = 'PAID' as PayrollStatus;
+        const updated = await tx.payroll.updateMany({
+          where: { id: payrollId, status: PayrollStatus.APPROVED },
+          data: {
+            status: PAID,
+            isPaid: true,
+            paidAt: new Date(),
+          },
+        });
+        if (updated.count !== 1) {
+          throw new ConflictException(
+            'تعذر صرف كشف الراتب؛ حالته تغيرت بين المطالبة والتنفيذ',
+          );
+        }
+
+        const netAmount = round2(Number(payroll.netAmount));
+        const advanceDeduct = round2(Number(payroll.advanceDeduct));
+
+        // Main payment: Dr SALARIES_PAYABLE / Cr CASH for the net amount
+        // actually handed to the worker.
+        if (netAmount > 0) {
+          await this.financial.postJournalEntryInTx(
+            tx,
+            {
+              description: `صرف كشف راتب ${formatPeriod(payroll.periodStart, payroll.periodEnd)} - موظف ${payroll.worker?.name ?? payroll.workerId}`,
+              reference: `PAYROLL-PAY-${payroll.id}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+                  creditAccountId: CHART_OF_ACCOUNTS.CASH,
+                  amount: netAmount,
+                  description: `صرف نقدي لكشف راتب ${payroll.id}`,
+                },
+              ],
+              userId: actorId,
+              metadata: {
+                source: 'hr.payroll.pay',
+                payrollId: payroll.id,
+                workerId: payroll.workerId,
+                netAmount,
+              },
+              postingKey: `payroll-payment-${payroll.id}`,
+            },
+            actorId,
+          );
+        }
+
+        // COMM-F04 advance netting: when advanceDeduct > 0, also clear the
+        // corresponding portion of SALARIES_PAYABLE (which was credited for
+        // the full gross in approvePayroll) against WORKER_ADVANCES. The
+        // task spec literally reads "Dr WORKER_ADVANCES, Cr CASH"; we use
+        // the accounting-correct form (Dr SALARIES_PAYABLE / Cr
+        // WORKER_ADVANCES) so that the payable is fully closed and the
+        // worker-advances asset is reduced. See method docstring.
+        if (advanceDeduct > 0) {
+          await this.financial.postJournalEntryInTx(
+            tx,
+            {
+              description: `تسوية سلف العامل ${payroll.worker?.name ?? payroll.workerId} مقابل كشف راتب ${formatPeriod(payroll.periodStart, payroll.periodEnd)}`,
+              reference: `PAYROLL-ADV-${payroll.id}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+                  creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+                  amount: advanceDeduct,
+                  description: `إقفال سلفة مخصومة من كشف راتب ${payroll.id}`,
+                },
+              ],
+              userId: actorId,
+              metadata: {
+                source: 'hr.payroll.advance-clearing',
+                payrollId: payroll.id,
+                workerId: payroll.workerId,
+                advanceDeduct,
+              },
+              postingKey: `payroll-advance-clearing-${payroll.id}`,
+            },
+            actorId,
+          );
+        }
+
+        const paid = await tx.payroll.findUnique({
+          where: { id: payrollId },
+        });
+        if (!paid) throw new NotFoundException('كشف الراتب غير موجود');
+        const response = this.toPayrollResponse(paid);
+        await tx.activityLog.create({
+          data: {
+            userId: actorId,
+            action: 'PAYROLL_PAID',
+            module: 'HR',
+            details: { payrollId: response.id, paidById: actorId },
           },
         });
         await storeIdempotencyResponse(tx, idempotencyKey, response);
@@ -421,4 +647,27 @@ export class HrService {
       approvedAt: row.approvedAt,
     };
   }
+}
+
+/**
+ * Round a monetary amount to 2 decimal places (banker-safe round-half-up
+ * with EPSILON bias). Matches the canonical pattern used by
+ * sales.service.ts and purchasing.service.ts so GL JournalLines are
+ * consistent across modules.
+ */
+function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * Format a payroll period (start..end) as a readable `YYYY-MM..YYYY-MM`
+ * string for use in GL entry descriptions (audit trail + journal review).
+ * Falls back to ISO date strings if the dates are invalid.
+ */
+function formatPeriod(periodStart: Date, periodEnd: Date): string {
+  const fmt = (d: Date) => {
+    if (!d || Number.isNaN(d.getTime())) return 'unknown';
+    return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
+  };
+  return `${fmt(periodStart)}..${fmt(periodEnd)}`;
 }

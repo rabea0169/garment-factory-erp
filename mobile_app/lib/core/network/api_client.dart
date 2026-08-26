@@ -66,7 +66,8 @@ class ApiClient {
         onRequest: (options, handler) async {
           // D1: لا نقرأ التوكن من SharedPreferences ولا من body؛ مصدره Keystore/Keychain.
           final token = await _authStorage.readAccessToken();
-          if (token != null && token.isNotEmpty &&
+          if (token != null &&
+              token.isNotEmpty &&
               options.headers['Authorization'] == null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
@@ -101,12 +102,13 @@ class ApiClient {
           // D5: Retry على 5xx + connection/timeout errors — exponential backoff.
           // لا نعيد retry على 4xx (خطأ عميل) ولا على 401 (تمت معالجته أعلاه).
           final status = error.response?.statusCode;
-          final isRetryable = error.type == DioExceptionType.connectionTimeout ||
-              error.type == DioExceptionType.sendTimeout ||
-              error.type == DioExceptionType.receiveTimeout ||
-              error.type == DioExceptionType.connectionError ||
-              error.type == DioExceptionType.unknown ||
-              (status != null && status >= 500 && status < 600);
+          final isRetryable =
+              error.type == DioExceptionType.connectionTimeout ||
+                  error.type == DioExceptionType.sendTimeout ||
+                  error.type == DioExceptionType.receiveTimeout ||
+                  error.type == DioExceptionType.connectionError ||
+                  error.type == DioExceptionType.unknown ||
+                  (status != null && status >= 500 && status < 600);
           if (isRetryable && !isLoginRequest) {
             // قراءة عدد المحاولات السابق من extra — نبدأ من 0 لو غير مضبوط.
             final attempt =
@@ -158,7 +160,14 @@ class ApiClient {
       final status = error.response?.statusCode;
       if (status == 401) return 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى';
       if (status == 403) return 'ليس لديك صلاحية لتنفيذ هذا الإجراء';
+      // MOBILE-F04: 404 يُحوَّل لرسالة عربية ودودة بدلاً من عرض خطأ HTTP صامت.
+      if (status == 404) {
+        return 'البيانات المطلوبة غير متاحة حاليًا؛ تأكد من تحديث التطبيق أو تواصل مع الدعم';
+      }
       if (status == 429) return 'تجاوزت عدد الطلبات المسموح، انتظر قليلاً';
+      if (status == 500 || status == 502 || status == 503 || status == 504) {
+        return 'الخادم غير متاح مؤقتًا، حاول مرة أخرى بعد قليل';
+      }
       if (error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout ||
           error.type == DioExceptionType.receiveTimeout) {

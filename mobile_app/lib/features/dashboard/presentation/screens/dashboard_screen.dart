@@ -1,69 +1,220 @@
 import 'package:flutter/material.dart';
-import 'package:go_router/go_router.dart';
-import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
+import 'package:intl/intl.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../auth/presentation/cubit/auth_cubit.dart';
+import '../cubit/dashboard_cubit.dart';
+import '../cubit/dashboard_state.dart';
 
+/// MOBILE-F03: لوحة تحكم حقيقية — لا توجد بيانات hardcoded.
+///
+/// البيانات كلها تأتي من GET /dashboard/stats (backend DashboardController)
+/// عبر [DashboardCubit]. أي فشل في الشبكة أو الخادم يظهر كحالة خطأ عربيًا
+/// مع زر إعادة المحاولة، وحالة التحميل تُظهر مؤشر دوار + نص "جاري التحميل...".
 class DashboardScreen extends StatelessWidget {
   const DashboardScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('لوحة التحكم'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.notifications_outlined),
-            onPressed: () {},
-          ),
-          IconButton(
-            icon: const Icon(Icons.account_circle_outlined),
-            onPressed: () {},
-          ),
-        ],
-      ),
-      drawer: _buildDrawer(context),
-      body: RefreshIndicator(
-        onRefresh: () async => await Future.delayed(const Duration(seconds: 1)),
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // مرحبًا
-              _buildGreetingHeader(context),
-              const SizedBox(height: 16),
-              // KPI Cards
-              _buildKpiGrid(context),
-              const SizedBox(height: 24),
-              // رسم بياني للإنتاج مقابل المبيعات
-              _buildProductionChart(context),
-              const SizedBox(height: 24),
-              // آخر أوامر التشغيل
-              _buildRecentWorkOrders(context),
-              const SizedBox(height: 24),
-              // تنبيهات المخزن المنخفض
-              _buildLowStockAlerts(context),
-              const SizedBox(height: 24),
-              // الديون المتأخرة
-              _buildOverdueDebts(context),
+    return BlocProvider(
+      create: (_) => DashboardCubit()..fetchStats(),
+      child: Builder(
+        builder: (context) => Scaffold(
+          appBar: AppBar(
+            title: const Text('لوحة التحكم'),
+            actions: [
+              IconButton(
+                tooltip: 'تحديث',
+                icon: const Icon(Icons.refresh),
+                onPressed: () => context.read<DashboardCubit>().fetchStats(),
+              ),
             ],
           ),
+          drawer: _buildDrawer(context),
+          body: BlocBuilder<DashboardCubit, DashboardState>(
+            builder: (context, state) {
+              if (state is DashboardLoading || state is DashboardInitial) {
+                return const _DashboardLoading();
+              }
+              if (state is DashboardError) {
+                return _DashboardError(
+                  message: state.message,
+                  onRetry: () => context.read<DashboardCubit>().fetchStats(),
+                );
+              }
+              if (state is DashboardEmpty) {
+                return _DashboardEmpty(
+                  onRetry: () => context.read<DashboardCubit>().fetchStats(),
+                );
+              }
+              if (state is DashboardLoaded) {
+                return _DashboardContent(stats: state.stats);
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () => context.go(AppRouter.production),
+            icon: const Icon(Icons.add),
+            label: const Text(
+              'أمر تشغيل جديد',
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
+          ),
         ),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => context.go(AppRouter.production),
-        icon: const Icon(Icons.add),
-        label: const Text('أمر تشغيل جديد', style: TextStyle(fontFamily: 'Cairo')),
       ),
     );
   }
 
-  Widget _buildGreetingHeader(BuildContext context) {
+  Widget _buildDrawer(BuildContext context) {
+    final menuItems = [
+      _MenuItem('لوحة التحكم', Icons.dashboard_rounded, AppRouter.dashboard),
+      _MenuItem('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
+      _MenuItem('الإنتاج', Icons.precision_manufacturing_rounded,
+          AppRouter.production),
+      _MenuItem('الجودة', Icons.verified_rounded, AppRouter.quality),
+      _MenuItem('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
+      _MenuItem(
+          'المبيعات والمشتريات', Icons.receipt_long_rounded, AppRouter.sales),
+      _MenuItem(
+          'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
+      _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
+      _MenuItem(
+          'التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
+    ];
+
+    return Drawer(
+      child: Column(
+        children: [
+          DrawerHeader(
+            decoration: const BoxDecoration(color: AppColors.primary),
+            child: Row(
+              children: [
+                const CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.white,
+                  child: Icon(Icons.factory_rounded,
+                      size: 32, color: AppColors.primary),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'مدير المصنع',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontFamily: 'Cairo',
+                            fontWeight: FontWeight.w700,
+                            fontSize: 16),
+                      ),
+                      const Text(
+                        'admin@factory.com',
+                        style: TextStyle(
+                            color: Colors.white70,
+                            fontFamily: 'Cairo',
+                            fontSize: 12),
+                      ),
+                      const SizedBox(height: 6),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.2),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        child: const Text(
+                          'مدير عام',
+                          style: TextStyle(
+                              color: Colors.white,
+                              fontFamily: 'Cairo',
+                              fontSize: 10),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: ListView.builder(
+              padding: EdgeInsets.zero,
+              itemCount: menuItems.length,
+              itemBuilder: (context, index) {
+                final item = menuItems[index];
+                return ListTile(
+                  leading:
+                      Icon(item.icon, color: AppColors.textSecondary, size: 22),
+                  title: Text(item.title,
+                      style:
+                          const TextStyle(fontFamily: 'Cairo', fontSize: 14)),
+                  onTap: () {
+                    Navigator.pop(context);
+                    context.go(item.route);
+                  },
+                );
+              },
+            ),
+          ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.logout, color: AppColors.error),
+            title: const Text('تسجيل الخروج',
+                style: TextStyle(
+                    fontFamily: 'Cairo', color: AppColors.error, fontSize: 14)),
+            onTap: () async {
+              await context.read<AuthCubit>().logout();
+              if (context.mounted) context.go(AppRouter.login);
+            },
+          ),
+          const SizedBox(height: 8),
+        ],
+      ),
+    );
+  }
+}
+
+// ============================= Content =============================
+
+class _DashboardContent extends StatelessWidget {
+  const _DashboardContent({required this.stats});
+
+  final DashboardStats stats;
+
+  @override
+  Widget build(BuildContext context) {
+    // التاريخ يُنسَّق محليًا (اليوم الحالي للمستخدم) عربيًا عبر intl.
+    final cubit = context.read<DashboardCubit>();
+    final arabicDate = cubit.todayArabicDate;
+
+    return RefreshIndicator(
+      onRefresh: () => cubit.fetchStats(),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildGreetingHeader(context, arabicDate),
+            const SizedBox(height: 16),
+            _buildKpiGrid(context),
+            const SizedBox(height: 24),
+            _buildRecentTransactions(context),
+            const SizedBox(height: 24),
+            _buildQuickLinks(context),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGreetingHeader(BuildContext context, String arabicDate) {
     return Row(
       children: [
         Expanded(
@@ -71,11 +222,11 @@ class DashboardScreen extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'مرحباً، مدير المصنع 👋',
+                'مرحباً، مدير المصنع',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               Text(
-                'السبت، 23 أغسطس 2026',
+                arabicDate,
                 style: Theme.of(context).textTheme.bodyMedium,
               ),
             ],
@@ -92,7 +243,11 @@ class DashboardScreen extends StatelessWidget {
             children: [
               Icon(Icons.circle, size: 8, color: AppColors.success),
               SizedBox(width: 6),
-              Text('متصل', style: TextStyle(color: AppColors.success, fontFamily: 'Cairo', fontSize: 12)),
+              Text('متصل',
+                  style: TextStyle(
+                      color: AppColors.success,
+                      fontFamily: 'Cairo',
+                      fontSize: 12)),
             ],
           ),
         ),
@@ -101,11 +256,31 @@ class DashboardScreen extends StatelessWidget {
   }
 
   Widget _buildKpiGrid(BuildContext context) {
-    final kpis = [
-      _KpiData('مبيعات اليوم', '١٢,٥٠٠ ج', Icons.trending_up, AppColors.success),
-      _KpiData('الإنتاج اليوم', '٣٢٠ قطعة', Icons.precision_manufacturing, AppColors.primary),
-      _KpiData('إجمالي الديون', '٨٥,٠٠٠ ج', Icons.account_balance_wallet, AppColors.warning),
-      _KpiData('رصيد الخزينة', '٤٥,٢٠٠ ج', Icons.account_balance, AppColors.info),
+    final kpis = <_KpiData>[
+      _KpiData(
+        'مبيعات اليوم',
+        _formatCurrency(stats.salesToday),
+        Icons.trending_up,
+        AppColors.success,
+      ),
+      _KpiData(
+        'قيمة المخزون',
+        _formatCurrency(stats.inventoryValue),
+        Icons.inventory_2,
+        AppColors.primary,
+      ),
+      _KpiData(
+        'أوامر تشغيل قيد التنفيذ',
+        _formatInt(stats.pendingWorkOrders),
+        Icons.precision_manufacturing,
+        AppColors.warning,
+      ),
+      _KpiData(
+        'رصيد الخزينة',
+        _formatCurrency(stats.treasuryBalance),
+        Icons.account_balance,
+        AppColors.info,
+      ),
     ];
 
     return GridView.builder(
@@ -115,7 +290,7 @@ class DashboardScreen extends StatelessWidget {
         crossAxisCount: 2,
         crossAxisSpacing: 12,
         mainAxisSpacing: 12,
-        childAspectRatio: 1.6,
+        childAspectRatio: 1.5,
       ),
       itemCount: kpis.length,
       itemBuilder: (context, index) => _buildKpiCard(context, kpis[index]),
@@ -133,7 +308,13 @@ class DashboardScreen extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(kpi.title, style: Theme.of(context).textTheme.bodySmall),
+                Flexible(
+                  child: Text(
+                    kpi.title,
+                    style: Theme.of(context).textTheme.bodySmall,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
                 Container(
                   padding: const EdgeInsets.all(6),
                   decoration: BoxDecoration(
@@ -144,11 +325,12 @@ class DashboardScreen extends StatelessWidget {
                 ),
               ],
             ),
+            const SizedBox(height: 4),
             Text(
               kpi.value,
               style: TextStyle(
                 fontFamily: 'Cairo',
-                fontSize: 18,
+                fontSize: 16,
                 fontWeight: FontWeight.w700,
                 color: kpi.color,
               ),
@@ -159,349 +341,254 @@ class DashboardScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildProductionChart(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('الإنتاج مقابل المبيعات', style: Theme.of(context).textTheme.titleMedium),
-                Row(
-                  children: [
-                    _legendItem('إنتاج', AppColors.primary),
-                    const SizedBox(width: 12),
-                    _legendItem('مبيعات', AppColors.secondary),
-                  ],
-                ),
-              ],
-            ),
-            const SizedBox(height: 16),
-            SizedBox(
-              height: 160,
-              child: LineChart(
-                LineChartData(
-                  gridData: FlGridData(
-                    show: true,
-                    drawVerticalLine: false,
-                    horizontalInterval: 100,
-                    getDrawingHorizontalLine: (value) => FlLine(
-                      color: AppColors.divider,
-                      strokeWidth: 1,
-                    ),
-                  ),
-                  titlesData: FlTitlesData(
-                    bottomTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        getTitlesWidget: (value, meta) {
-                          final days = ['أحد', 'إثن', 'ثلا', 'أرب', 'خمي', 'جمع', 'سبت'];
-                          return Text(
-                            days[value.toInt() % 7],
-                            style: const TextStyle(fontFamily: 'Cairo', fontSize: 10, color: AppColors.textSecondary),
-                          );
-                        },
-                      ),
-                    ),
-                    leftTitles: AxisTitles(
-                      sideTitles: SideTitles(
-                        showTitles: true,
-                        interval: 100,
-                        getTitlesWidget: (value, meta) => Text(
-                          '${value.toInt()}',
-                          style: const TextStyle(fontFamily: 'Cairo', fontSize: 10, color: AppColors.textSecondary),
-                        ),
-                      ),
-                    ),
-                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  ),
-                  borderData: FlBorderData(show: false),
-                  lineBarsData: [
-                    LineChartBarData(
-                      spots: const [
-                        FlSpot(0, 280), FlSpot(1, 310), FlSpot(2, 295),
-                        FlSpot(3, 340), FlSpot(4, 320), FlSpot(5, 200), FlSpot(6, 320),
-                      ],
-                      isCurved: true,
-                      color: AppColors.primary,
-                      barWidth: 3,
-                      belowBarData: BarAreaData(
-                        show: true,
-                        color: AppColors.primary.withValues(alpha: 0.1),
-                      ),
-                      dotData: const FlDotData(show: false),
-                    ),
-                    LineChartBarData(
-                      spots: const [
-                        FlSpot(0, 200), FlSpot(1, 250), FlSpot(2, 220),
-                        FlSpot(3, 280), FlSpot(4, 260), FlSpot(5, 180), FlSpot(6, 260),
-                      ],
-                      isCurved: true,
-                      color: AppColors.secondary,
-                      barWidth: 3,
-                      belowBarData: BarAreaData(
-                        show: true,
-                        color: AppColors.secondary.withValues(alpha: 0.1),
-                      ),
-                      dotData: const FlDotData(show: false),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _legendItem(String label, Color color) {
-    return Row(
-      children: [
-        Container(width: 12, height: 3, decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 4),
-        Text(label, style: TextStyle(fontFamily: 'Cairo', fontSize: 11, color: color)),
-      ],
-    );
-  }
-
-  Widget _buildRecentWorkOrders(BuildContext context) {
-    final orders = [
-      _WorkOrderData('WO-2026-089', 'تيشيرت قطني صيفي', '٥٠٠ قطعة', 'خياطة', AppColors.statusSewing),
-      _WorkOrderData('WO-2026-088', 'بنطلون جينز', '٢٠٠ قطعة', 'قص', AppColors.statusCutting),
-      _WorkOrderData('WO-2026-087', 'فستان كاجوال', '١٥٠ قطعة', 'تشطيب', AppColors.statusFinishing),
-    ];
-
+  Widget _buildRecentTransactions(BuildContext context) {
+    final txs = stats.recentTransactions;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            Text('آخر أوامر التشغيل', style: Theme.of(context).textTheme.titleMedium),
-            TextButton(
-              onPressed: () => context.go(AppRouter.production),
-              child: const Text('عرض الكل', style: TextStyle(fontFamily: 'Cairo')),
+            Text(
+              'آخر الحركات المالية',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
+            if (stats.lowStockMaterials > 0)
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Text(
+                  '${_formatInt(stats.lowStockMaterials)} خام منخفض',
+                  style: const TextStyle(
+                    color: AppColors.warning,
+                    fontFamily: 'Cairo',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
           ],
         ),
         const SizedBox(height: 8),
-        ...orders.map((o) => _buildWorkOrderTile(context, o)),
+        if (txs.isEmpty)
+          Card(
+            child: ListTile(
+              leading: const Icon(Icons.inbox, color: AppColors.textSecondary),
+              title: const Text(
+                'لا توجد حركات حديثة',
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+            ),
+          )
+        else
+          ...txs.map((t) => _buildTransactionTile(context, t)),
       ],
     );
   }
 
-  Widget _buildWorkOrderTile(BuildContext context, _WorkOrderData order) {
+  Widget _buildTransactionTile(BuildContext context, DashboardTransaction t) {
+    final isReceipt = t.type == 'RECEIPT';
+    final color = isReceipt ? AppColors.success : AppColors.error;
     return Card(
       margin: const EdgeInsets.only(bottom: 8),
       child: ListTile(
-        leading: Container(
-          width: 44, height: 44,
-          decoration: BoxDecoration(
-            color: order.statusColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(10),
+        leading: CircleAvatar(
+          backgroundColor: color.withValues(alpha: 0.12),
+          child: Icon(
+            isReceipt ? Icons.arrow_upward : Icons.arrow_downward,
+            color: color,
           ),
-          child: Icon(Icons.precision_manufacturing, color: order.statusColor, size: 22),
         ),
-        title: Text(order.productName, style: Theme.of(context).textTheme.titleSmall),
-        subtitle: Text('${order.code} • ${order.quantity}', style: Theme.of(context).textTheme.bodySmall),
-        trailing: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-          decoration: BoxDecoration(
-            color: order.statusColor.withValues(alpha: 0.12),
-            borderRadius: BorderRadius.circular(20),
+        title: Text(
+          t.description.isEmpty ? t.code : t.description,
+          style: Theme.of(context).textTheme.titleSmall,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+        subtitle: Text(
+          '${t.code} • ${_formatDate(t.date)}',
+          style: Theme.of(context).textTheme.bodySmall,
+        ),
+        trailing: Text(
+          _formatCurrency(t.amount),
+          style: TextStyle(
+            fontFamily: 'Cairo',
+            fontWeight: FontWeight.w700,
+            fontSize: 14,
+            color: color,
           ),
-          child: Text(order.status, style: TextStyle(color: order.statusColor, fontFamily: 'Cairo', fontSize: 11, fontWeight: FontWeight.w600)),
         ),
       ),
     );
   }
 
-  Widget _buildLowStockAlerts(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 20),
-                const SizedBox(width: 8),
-                Text('تنبيهات المخزن المنخفض', style: Theme.of(context).textTheme.titleMedium),
-              ],
-            ),
-            const SizedBox(height: 12),
-            _buildStockAlertRow(context, 'قماش قطني أبيض', '١٢ متر', '٥٠ متر'),
-            const Divider(height: 16),
-            _buildStockAlertRow(context, 'خيط بوليستر أسود', '٣ بكرة', '١٠ بكرة'),
-            const Divider(height: 16),
-            _buildStockAlertRow(context, 'زراير بلاستيك رقم ٢٤', '٥٠ حبة', '٢٠٠ حبة'),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStockAlertRow(BuildContext context, String name, String current, String minimum) {
-    return Row(
-      children: [
-        Expanded(child: Text(name, style: Theme.of(context).textTheme.bodyMedium)),
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.end,
-          children: [
-            Text(current, style: const TextStyle(color: AppColors.error, fontFamily: 'Cairo', fontWeight: FontWeight.w600, fontSize: 13)),
-            Text('الحد الأدنى: $minimum', style: Theme.of(context).textTheme.labelSmall),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildOverdueDebts(BuildContext context) {
+  Widget _buildQuickLinks(BuildContext context) {
+    final links = [
+      _QuickLink('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
+      _QuickLink('الإنتاج', Icons.precision_manufacturing_rounded,
+          AppRouter.production),
+      _QuickLink('المبيعات', Icons.receipt_long_rounded, AppRouter.sales),
+      _QuickLink('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
+      _QuickLink('التقارير', Icons.bar_chart_rounded, AppRouter.reports),
+      _QuickLink('الشحن', Icons.local_shipping_rounded, AppRouter.shipping),
+    ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            Text('الديون المتأخرة', style: Theme.of(context).textTheme.titleMedium),
-            TextButton(
-              onPressed: () => context.go(AppRouter.sales),
-              child: const Text('عرض الكل', style: TextStyle(fontFamily: 'Cairo')),
-            ),
-          ],
+        Text('روابط سريعة', style: Theme.of(context).textTheme.titleMedium),
+        const SizedBox(height: 8),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          children: links
+              .map((l) => ActionChip(
+                    label: Text(l.title,
+                        style: const TextStyle(fontFamily: 'Cairo')),
+                    avatar: Icon(l.icon, size: 18, color: AppColors.primary),
+                    onPressed: () => context.go(l.route),
+                  ))
+              .toList(),
         ),
-        const SizedBox(height: 8),
-        _buildDebtCard(context, 'مجموعة النيل للتجارة', '١٥,٠٠٠ ج', '٥ أيام', AppColors.error),
-        const SizedBox(height: 8),
-        _buildDebtCard(context, 'شركة المحروسة', '٨,٥٠٠ ج', '٢ يوم', AppColors.warning),
       ],
     );
   }
 
-  Widget _buildDebtCard(BuildContext context, String customer, String amount, String overdue, Color color) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            CircleAvatar(
-              backgroundColor: color.withValues(alpha: 0.12),
-              child: Icon(Icons.business, color: color, size: 20),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(customer, style: Theme.of(context).textTheme.titleSmall),
-                  Text('متأخر منذ $overdue', style: TextStyle(color: color, fontFamily: 'Cairo', fontSize: 11)),
-                ],
-              ),
-            ),
-            Text(amount, style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700, fontSize: 15, color: color)),
-          ],
-        ),
-      ),
-    );
+  String _formatCurrency(num value) {
+    try {
+      final nf = NumberFormat.decimalPattern('ar');
+      return '${nf.format(value)} ج';
+    } catch (_) {
+      return '$value ج';
+    }
   }
 
-  Widget _buildDrawer(BuildContext context) {
-    final menuItems = [
-      _MenuItem('لوحة التحكم', Icons.dashboard_rounded, AppRouter.dashboard),
-      _MenuItem('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
-      _MenuItem('الإنتاج', Icons.precision_manufacturing_rounded, AppRouter.production),
-      _MenuItem('الجودة', Icons.verified_rounded, AppRouter.quality),
-      _MenuItem('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
-      _MenuItem('المبيعات والمشتريات', Icons.receipt_long_rounded, AppRouter.sales),
-      _MenuItem('الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
-      _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
-      _MenuItem('التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
-    ];
+  String _formatInt(num value) {
+    try {
+      final nf = NumberFormat.decimalPattern('ar');
+      return nf.format(value);
+    } catch (_) {
+      return '$value';
+    }
+  }
 
-    return Drawer(
+  String _formatDate(String iso) {
+    if (iso.isEmpty) return '';
+    try {
+      final dt = DateTime.parse(iso);
+      return DateFormat.yMMMd('ar').format(dt);
+    } catch (_) {
+      return iso;
+    }
+  }
+}
+
+// ============================= Loading / Error / Empty =============================
+
+class _DashboardLoading extends StatelessWidget {
+  const _DashboardLoading();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(color: AppColors.primary),
-            child: Row(
-              children: [
-                const CircleAvatar(
-                  radius: 30,
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.factory_rounded, size: 32, color: AppColors.primary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      const Text(
-                        'مدير المصنع',
-                        style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontWeight: FontWeight.w700, fontSize: 16),
-                      ),
-                      const Text(
-                        'admin@factory.com',
-                        style: TextStyle(color: Colors.white70, fontFamily: 'Cairo', fontSize: 12),
-                      ),
-                      const SizedBox(height: 6),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: const Text(
-                          'مدير عام',
-                          style: TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 10),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text(
+            'جاري التحميل...',
+            style: TextStyle(fontFamily: 'Cairo'),
           ),
-          Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              itemCount: menuItems.length,
-              itemBuilder: (context, index) {
-                final item = menuItems[index];
-                return ListTile(
-                  leading: Icon(item.icon, color: AppColors.textSecondary, size: 22),
-                  title: Text(item.title, style: const TextStyle(fontFamily: 'Cairo', fontSize: 14)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    context.go(item.route);
-                  },
-                );
-              },
-            ),
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.logout, color: AppColors.error),
-            title: const Text('تسجيل الخروج', style: TextStyle(fontFamily: 'Cairo', color: AppColors.error, fontSize: 14)),
-            onTap: () async {
-              await context.read<AuthCubit>().logout();
-              if (context.mounted) context.go(AppRouter.login);
-            },
-          ),
-          const SizedBox(height: 8),
         ],
       ),
     );
   }
 }
 
-// Data Classes
+class _DashboardError extends StatelessWidget {
+  const _DashboardError({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.cloud_off, size: 56, color: AppColors.error),
+            const SizedBox(height: 12),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('إعادة المحاولة',
+                  style: TextStyle(fontFamily: 'Cairo')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DashboardEmpty extends StatelessWidget {
+  const _DashboardEmpty({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.inbox_outlined,
+                size: 56, color: AppColors.textSecondary),
+            const SizedBox(height: 12),
+            const Text(
+              'لا توجد بيانات',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontFamily: 'Cairo', fontSize: 16),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'لم يتم تسجيل أي مبيعات أو حركات مالية بعد. سيتم عرض الإحصائيات فور توفّرها.',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                  fontFamily: 'Cairo',
+                  color: AppColors.textSecondary,
+                  fontSize: 12),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('تحديث', style: TextStyle(fontFamily: 'Cairo')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ============================= Data Classes =============================
+
 class _KpiData {
   final String title;
   final String value;
@@ -510,13 +597,11 @@ class _KpiData {
   const _KpiData(this.title, this.value, this.icon, this.color);
 }
 
-class _WorkOrderData {
-  final String code;
-  final String productName;
-  final String quantity;
-  final String status;
-  final Color statusColor;
-  const _WorkOrderData(this.code, this.productName, this.quantity, this.status, this.statusColor);
+class _QuickLink {
+  final String title;
+  final IconData icon;
+  final String route;
+  const _QuickLink(this.title, this.icon, this.route);
 }
 
 class _MenuItem {

@@ -7,6 +7,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { HrService } from '../src/modules/hr/hr.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -26,7 +27,10 @@ integrationDescribe('GF-0015 payroll integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    hrService = new HrService(prisma);
+    // COMM-F03/F04: HrService now requires FinancialPostingService so the
+    // approval and payment paths can post GL entries against a real DB.
+    const financial = new FinancialPostingService(prisma);
+    hrService = new HrService(prisma, financial);
   });
 
   beforeEach(async () => {

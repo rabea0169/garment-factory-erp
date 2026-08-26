@@ -15,6 +15,8 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 export interface TransitionStageInput {
   workOrderId: string;
@@ -109,6 +111,7 @@ export class ProductionWorkflowService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
+    private readonly financialPostingService: FinancialPostingService,
   ) {}
 
   async transitionStage(
@@ -277,11 +280,25 @@ export class ProductionWorkflowService {
                 currentStage: true,
                 productVariantId: true,
                 code: true,
+                status: true,
               },
             },
           },
         });
         if (!stageRun) throw new NotFoundException('Stage run not found');
+
+        // OPS-F03: لا يمكن تسجيل إنتاج على أمر تشغيل مُلغى أو مُغلق.
+        // CLOSED قد لا يكون موجودًا في الـ enum حاليًا لكن نرفضه دفاعيًا.
+        const blockedStatuses: WorkOrderStatus[] = [
+          WorkOrderStatus.CANCELLED,
+          'CLOSED' as unknown as WorkOrderStatus,
+        ];
+        if (blockedStatuses.includes(stageRun.workOrder.status)) {
+          throw new BadRequestException(
+            `لا يمكن تسجيل إنتاج على أمر تشغيل بحالة ${stageRun.workOrder.status}`,
+          );
+        }
+
         if (stageRun.workOrder.currentStage !== input.stage) {
           throw new BadRequestException(
             'Stage output must be recorded for the current production stage',
@@ -352,6 +369,16 @@ export class ProductionWorkflowService {
           input.acceptedQty === 0
         ) {
           return result;
+        }
+
+        // OPS-F05: لا يمكن إكمال أمر التشغيل دون فحص جودة موثَّق على الأقل.
+        const qualityCheckCount = await tx.qualityCheck.count({
+          where: { workOrderId: input.workOrderId },
+        });
+        if (qualityCheckCount === 0) {
+          throw new BadRequestException(
+            'لا يمكن إكمال أمر تشغيل دون فحص جودة موثَّق',
+          );
         }
 
         const warehouse = await tx.warehouse.findFirst({
@@ -456,6 +483,43 @@ export class ProductionWorkflowService {
             endDate: new Date(),
           },
         });
+
+        // ACC-F01 / OPS-F01: ترحيل قيد GL مزدوج عند إكمال أمر التشغيل — نقل
+        // قيمة الخامات المُستهلكة من WIP إلى مخزون المنتج التام.
+        // القيد ذري داخل نفس tx المُحيطة بتحديث حالة أمر التشغيل؛ فشل القيد
+        // يرجع المعاملة كلها فلا يحدث انفصال بين الحالة المادية والقيد المحاسبي.
+        // postingKey يُولِّد idempotency على مستوى JournalEntry — حتى لو تم
+        // استدعاء الترحيل مرتين لنفس أمر التشغيل لا يُنشأ قيدان.
+        if (materialCost.greaterThan(0)) {
+          await this.financialPostingService.postJournalEntryInTx(
+            tx,
+            {
+              description: `ترحيل إنتاج تام من أمر تشغيل #${stageRun.workOrder.code}`,
+              reference: stageRun.workOrder.code,
+              postingKey: `production-completion:${input.workOrderId}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+                  creditAccountId: CHART_OF_ACCOUNTS.WIP,
+                  amount: materialCost.toDecimalPlaces(2).toNumber(),
+                  description: `ترحيل تكلفة إنتاج ${stageRun.workOrder.code}`,
+                },
+              ],
+              userId: actorId,
+              metadata: {
+                source: 'production.completion',
+                workOrderId: input.workOrderId,
+                stageRunId: stageRun.id,
+                acceptedQty: input.acceptedQty,
+                materialCost: materialCost.toNumber(),
+                wasteCost: wasteCost.toNumber(),
+                unitCost: unitCost.toNumber(),
+              },
+            },
+            actorId,
+          );
+        }
         return result;
       });
     } catch (error) {

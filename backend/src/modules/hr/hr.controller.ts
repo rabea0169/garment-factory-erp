@@ -102,4 +102,28 @@ export class HrController {
   ) {
     return this.hrService.approvePayroll(payrollId, actorId, idempotencyKey);
   }
+
+  // COMM-F04: New endpoint to mark an APPROVED payroll as PAID and post the
+  // cash settlement GL entry (Dr Salaries Payable / Cr Cash). Without this
+  // endpoint, the payroll workflow is stuck at APPROVED forever — there is
+  // no way to mark a salary as actually paid, no PAID filter, no annual
+  // reconciliation of paid vs. outstanding liabilities.
+  @Post('payrolls/:id/pay')
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.ACCOUNTANT, UserRole.CASHIER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'مفتاح إعادة المحاولة الآمنة لصرف كشف الراتب',
+  })
+  @ApiOperation({
+    summary:
+      'صرف كشف راتب معتمد: تحويل الحالة إلى PAID + ترحيل قيد صرف نقدي (Dr Salaries Payable / Cr Cash)',
+  })
+  async payPayroll(
+    @Param('id') payrollId: string,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.payPayroll(payrollId, actorId, idempotencyKey);
+  }
 }

@@ -646,6 +646,7 @@ model QualityCheck {
 enum PayrollStatus {
   DRAFT
   APPROVED
+  PAID
 }
 
 enum WorkerSpecialty {
@@ -1082,6 +1083,14 @@ model JournalEntry {
   currencyId     String?
   exchangeRate   Decimal?  @db.Decimal(10, 6)
   fiscalPeriodId String?
+  // Wave2-F01: defense-in-depth — running totals maintained by a trigger on
+  // journal_lines (enforce_journal_entry_balance). The DB CHECK constraint
+  // `journal_entries_debit_credit_balanced_check` ensures debitTotal = creditTotal
+  // at the column level. The original `check_journal_entry_balanced` trigger from
+  // migration gf0018 was broken (only checked single-line `amount > 0`); this
+  // pair of columns + the recomputed trigger is the correct fix.
+  debitTotal     Decimal   @default(0) @db.Decimal(15, 2)
+  creditTotal    Decimal   @default(0) @db.Decimal(15, 2)
 
   lines        JournalLine[]
   fiscalPeriod FiscalPeriod?  @relation(fields: [fiscalPeriodId], references: [id])
@@ -1144,11 +1153,22 @@ model Voucher {
   // A3: ربط السند بقيد مالي حقيقي (لا قيد لا سند — لا أثر مالي خفي).
   journalEntryId   String?
   treasuryId       String?
-  // Polymorphic counterparty — لا FK (يمكن أن يكون customer/supplier/worker).
+  // Wave2-F02: Polymorphic counterparty — intentially NO FK because the
+  // counterparty can be a Customer, Supplier, Worker, Treasury, or NONE.
+  // A DB-level CHECK constraint (`vouchers_counterparty_type_check`) restricts
+  // counterpartyType to known enum values. Runtime validation that counterpartyId
+  // references an existing entity of the given type is the responsibility of the
+  // service layer (see accounting.service.ts createVoucher — TODO: that runtime
+  // check is currently enforced only partially and should be made strict in a
+  // future PR; see audit finding SCHEMA-F02).
   counterpartyType String?
   counterpartyId   String?
 
-  createdBy    User?         @relation(fields: [createdById], references: [id])
+  // Wave2-F03: createdBy is required (matches NOT NULL column `createdById`
+  // created in init migration). onDelete: Restrict prevents User deletion when
+  // vouchers exist — safer than cascade and prevents the runtime P2003 error
+  // that Prisma's default `SetNull` would cause on a NOT NULL column.
+  createdBy    User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
   journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id])
   treasury     Treasury?     @relation(fields: [treasuryId], references: [id])
 

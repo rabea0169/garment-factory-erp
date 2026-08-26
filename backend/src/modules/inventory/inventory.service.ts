@@ -11,6 +11,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { EVENTS } from '../../events/event-types';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 /**
  * GF-0007 — Domain Foundation: Inventory Application Service (مبدئي).
@@ -179,6 +181,7 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly financialPostingService: FinancialPostingService,
   ) {}
 
   // ===================== RAW MATERIALS (reads) =====================
@@ -1015,6 +1018,73 @@ export class InventoryService {
           where: { key: input.idempotencyKey },
           data: { response: response },
         });
+      }
+
+      // OPS-F01 / OPS-F11: ترحيل قيد GL مزدوج عند الهدر أو تسوية الجرد.
+      // القيد ذري داخل نفس tx المُحيطة بإنشاء stockLedgerEntry؛ فشل القيد
+      // يرجع المعاملة كلها فلا يحدث انفصال بين الحركة المادية والقيد المحاسبي.
+      // postingKey على basis entryCode يُولِّد idempotency على مستوى JournalEntry
+      // — حتى لو تكرر تنفيذ الحركة بلا idempotencyKey، القيد لا يُنشأ مرتين.
+      if (
+        (input.type === StockMovementType.WASTE ||
+          input.type === StockMovementType.ADJUSTMENT) &&
+        totalValue > 0
+      ) {
+        const isPositiveAdjustment =
+          input.type === StockMovementType.ADJUSTMENT && input.delta > 0;
+        const glLines =
+          input.type === StockMovementType.WASTE
+            ? [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+                  creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  amount: totalValue,
+                  description: `هدر مخزون خامات ${input.rawMaterialId}`,
+                },
+              ]
+            : isPositiveAdjustment
+              ? [
+                  {
+                    debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                    creditAccountId:
+                      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+                    amount: totalValue,
+                    description: `تسوية جرد موجبة ${input.rawMaterialId}`,
+                  },
+                ]
+              : [
+                  {
+                    debitAccountId:
+                      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+                    creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                    amount: totalValue,
+                    description: `تسوية جرد سالبة ${input.rawMaterialId}`,
+                  },
+                ];
+        await this.financialPostingService.postJournalEntryInTx(
+          tx,
+          {
+            description:
+              input.type === StockMovementType.WASTE
+                ? `ترحيل هدر مخزون ${input.rawMaterialId}`
+                : `ترحيل تسوية جرد ${input.rawMaterialId}`,
+            reference: input.reference ?? entry.entryCode,
+            postingKey: `inventory.${input.type.toLowerCase()}:${entry.entryCode}`,
+            isAuto: true,
+            lines: glLines,
+            userId: input.userId,
+            metadata: {
+              source: 'inventory.movement',
+              movementType: input.type,
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.warehouseId,
+              stockLedgerEntryCode: entry.entryCode,
+              delta: input.delta,
+              totalValue,
+            },
+          },
+          input.userId,
+        );
       }
 
       eventContext = {

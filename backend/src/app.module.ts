@@ -14,6 +14,8 @@ import { AccountingModule } from './modules/accounting/accounting.module';
 import { QualityModule } from './modules/quality/quality.module';
 import { ShippingModule } from './modules/shipping/shipping.module';
 import { PurchasingModule } from './modules/purchasing/purchasing.module';
+// MOBILE-F03/F04: تجميع إحصائيات حقيقية من جداول النظام لشاشتي لوحة التحكم والتقارير.
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { JwtAuthGuard } from './modules/auth/jwt-auth.guard';
 import { RolesGuard } from './modules/auth/roles.guard';
 import { AppController } from './app.controller';
@@ -56,6 +58,8 @@ import { HealthController } from './common/health.controller';
     QualityModule,
     ShippingModule,
     PurchasingModule,
+    // MOBILE-F03/F04: مسار /dashboard/stats — يستهلكه DashboardCubit و ReportsCubit.
+    DashboardModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200
