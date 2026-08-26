@@ -4,10 +4,17 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, SalesOrderStatus, ShipmentStatus } from '@prisma/client';
+import {
+  Prisma,
+  SalesOrderStatus,
+  ShipmentStatus,
+  WarehouseType,
+} from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-
+import { InventoryService } from '../inventory/inventory.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
   computeRequestHash,
@@ -21,9 +28,15 @@ import {
   DocumentCodePrefix,
 } from '../../core/common/codes.util';
 
+const STATUS_SCOPE = 'shipping.shipment.status';
+
 @Injectable()
 export class ShippingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly inventoryService: InventoryService,
+    private readonly financial: FinancialPostingService,
+  ) {}
 
   async getShipments(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -103,7 +116,7 @@ export class ShippingService {
           shippingCost: Number(created.shippingCost),
         };
         await storeIdempotencyResponse(tx, idempotencyKey, response);
-        return created;
+        return response;
       });
     } catch (error) {
       if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
@@ -124,7 +137,23 @@ export class ShippingService {
     status: ShipmentStatus,
     actorId: string,
     proofOfDelivery?: string,
+    idempotencyKey?: string,
   ) {
+    const requestHash = computeRequestHash({
+      operation: STATUS_SCOPE,
+      id,
+      status,
+      actorId,
+      proofOfDelivery: proofOfDelivery?.trim() ?? null,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      STATUS_SCOPE,
+      requestHash,
+    );
+    if (replay) return replay;
+
     const shipment = await this.prisma.shipment.findUnique({
       where: { id },
       include: { salesOrder: { include: { items: true } } },
@@ -150,45 +179,143 @@ export class ShippingService {
       );
     }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const result = await tx.shipment.updateMany({
-        where: { id, status: shipment.status },
-        data: {
-          status,
-          shippedAt:
-            status === ShipmentStatus.SHIPPED ? new Date() : shipment.shippedAt,
-          deliveredAt:
-            status === ShipmentStatus.DELIVERED
-              ? new Date()
-              : shipment.deliveredAt,
-          proofOfDelivery:
-            status === ShipmentStatus.DELIVERED
-              ? proofOfDelivery?.trim()
-              : undefined,
-          deliveredById:
-            status === ShipmentStatus.DELIVERED ? actorId : undefined,
-        },
-      });
-      if (result.count !== 1) {
-        throw new ConflictException('Shipment status changed concurrently');
-      }
+    try {
+      return await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          await createIdempotencyKey(
+            tx,
+            idempotencyKey,
+            STATUS_SCOPE,
+            requestHash,
+          );
 
-      const updated = await tx.shipment.findUnique({ where: { id } });
-      if (!updated) throw new NotFoundException('Shipment not found');
-      await tx.activityLog.create({
-        data: {
-          userId: actorId,
-          action: 'SHIPMENT_STATUS_CHANGED',
-          module: 'SHIPPING',
-          details: {
-            shipmentId: id,
-            from: shipment.status,
-            to: status,
-            proofOfDelivery: status === ShipmentStatus.DELIVERED,
-          },
+          const result = await tx.shipment.updateMany({
+            where: { id, status: shipment.status },
+            data: {
+              status,
+              shippedAt:
+                status === ShipmentStatus.SHIPPED
+                  ? new Date()
+                  : shipment.shippedAt,
+              deliveredAt:
+                status === ShipmentStatus.DELIVERED
+                  ? new Date()
+                  : shipment.deliveredAt,
+              proofOfDelivery:
+                status === ShipmentStatus.DELIVERED
+                  ? proofOfDelivery?.trim()
+                  : undefined,
+              deliveredById:
+                status === ShipmentStatus.DELIVERED ? actorId : undefined,
+            },
+          });
+          if (result.count !== 1) {
+            throw new ConflictException('Shipment status changed concurrently');
+          }
+
+          if (status === ShipmentStatus.SHIPPED) {
+            const warehouse = await tx.warehouse.findFirst({
+              where: {
+                code: 'WH-FG',
+                type: WarehouseType.FINISHED_GOODS,
+                isActive: true,
+              },
+            });
+            if (!warehouse) {
+              throw new BadRequestException(
+                'Finished goods warehouse not found',
+              );
+            }
+
+            let totalCogs = 0;
+            for (const item of shipment.salesOrder.items) {
+              const movement = await this.inventoryService.issueFinishedGood(
+                {
+                  productVariantId: item.productVariantId,
+                  warehouseId: warehouse.id,
+                  quantity: item.quantity,
+                  reference: shipment.code,
+                  notes: `صرف شحنة ${shipment.code}`,
+                  idempotencyKey: `shipment.ship:${shipment.id}:${item.id}`,
+                },
+                actorId,
+                tx,
+              );
+              totalCogs += movement.totalValue ?? 0;
+            }
+
+            if (totalCogs > 0) {
+              await this.financial.postJournalEntryInTx(
+                tx,
+                {
+                  description: `تكلفة بضاعة شحنة ${shipment.code}`,
+                  reference: `SHIPMENT:${shipment.code}`,
+                  postingKey: `shipment-cogs:${shipment.id}`,
+                  isAuto: true,
+                  lines: [
+                    {
+                      debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+                      creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                      amount:
+                        Math.round((totalCogs + Number.EPSILON) * 100) / 100,
+                      description: `تكلفة بضاعة مباعة ${shipment.code}`,
+                    },
+                  ],
+                  metadata: {
+                    source: 'shipping.shipped',
+                    shipmentId: shipment.id,
+                    salesOrderId: shipment.salesOrderId,
+                  },
+                },
+                actorId,
+              );
+            }
+
+            const orderTransition = await tx.salesOrder.updateMany({
+              where: {
+                id: shipment.salesOrderId,
+                status: SalesOrderStatus.CONFIRMED,
+              },
+              data: { status: SalesOrderStatus.SHIPPED },
+            });
+            if (orderTransition.count !== 1) {
+              throw new ConflictException(
+                'Sales order status changed before shipment completion',
+              );
+            }
+          }
+
+          const updated = await tx.shipment.findUnique({ where: { id } });
+          if (!updated) throw new NotFoundException('Shipment not found');
+          await tx.activityLog.create({
+            data: {
+              userId: actorId,
+              action: 'SHIPMENT_STATUS_CHANGED',
+              module: 'SHIPPING',
+              details: {
+                shipmentId: id,
+                from: shipment.status,
+                to: status,
+                proofOfDelivery: status === ShipmentStatus.DELIVERED,
+                inventoryIssued: status === ShipmentStatus.SHIPPED,
+              },
+            },
+          });
+          await storeIdempotencyResponse(tx, idempotencyKey, updated);
+          return updated;
         },
-      });
-      return updated;
-    });
+      );
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          STATUS_SCOPE,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 }

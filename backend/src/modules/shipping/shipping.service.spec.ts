@@ -2,18 +2,28 @@ import { BadRequestException } from '@nestjs/common';
 import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { ShippingService } from './shipping.service';
 import { PrismaService } from '../../prisma/prisma.service';
-
+import { InventoryService } from '../inventory/inventory.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('ShippingService — الشحنات (GF-0003)', () => {
   let service: ShippingService;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let inventoryService: { issueFinishedGood: jest.Mock };
+  let financial: { postJournalEntryInTx: jest.Mock };
+
   beforeEach(() => {
     prisma = createPrismaMock();
+    inventoryService = { issueFinishedGood: jest.fn() };
+    financial = { postJournalEntryInTx: jest.fn() };
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
-    service = new ShippingService(prisma as unknown as PrismaService);
+    service = new ShippingService(
+      prisma as unknown as PrismaService,
+      inventoryService as unknown as InventoryService,
+      financial as never,
+    );
   });
 
   it('يجلب الشحنات مع أمر البيع والعميل', async () => {
@@ -109,50 +119,72 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     expect(prisma.shipment.create).not.toHaveBeenCalled();
   });
 
-  it('يسمح بانتقال PREPARING إلى SHIPPED دون تغيير المخزون (ADR-0017)', async () => {
+  it('يصرف المنتج التام ويحوّل أمر البيع عند انتقال PREPARING إلى SHIPPED', async () => {
     prisma.shipment.findUnique
       .mockResolvedValueOnce({
         id: 'sh-1',
         status: ShipmentStatus.PREPARING,
         code: 'SHP-1',
+        salesOrderId: 'so-1',
         salesOrder: {
           items: [{ id: 'soi-1', productVariantId: 'v-1', quantity: 2 }],
         },
       })
-      .mockResolvedValue({
+      .mockResolvedValueOnce({
         id: 'sh-1',
         status: ShipmentStatus.SHIPPED,
       });
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
     prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
-    prisma.shipment.findUnique.mockResolvedValue({
-      id: 'sh-1',
-      status: ShipmentStatus.SHIPPED,
-    });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
     prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
+    inventoryService.issueFinishedGood.mockResolvedValue({ totalValue: 40 });
 
-    await service.updateShipmentStatus(
+    const shipped = await service.updateShipmentStatus(
       'sh-1',
       ShipmentStatus.SHIPPED,
       'actor-1',
+      undefined,
+      'ship-status-key',
     );
 
-    const calls = prisma.shipment.updateMany.mock.calls as unknown as Array<
-      [
-        {
-          where: { id: string; status: ShipmentStatus };
-          data: { status: ShipmentStatus; shippedAt?: Date };
-        },
-      ]
-    >;
-    const request = calls[0][0];
-    expect(request.where).toEqual({
-      id: 'sh-1',
-      status: ShipmentStatus.PREPARING,
+    expect(shipped).toMatchObject({ status: ShipmentStatus.SHIPPED });
+    expect(inventoryService.issueFinishedGood).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productVariantId: 'v-1',
+        warehouseId: 'wh-fg',
+        quantity: 2,
+        reference: 'SHP-1',
+        idempotencyKey: 'shipment.ship:sh-1:soi-1',
+      }),
+      'actor-1',
+      prisma,
+    );
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: 'so-1', status: SalesOrderStatus.CONFIRMED },
+      data: { status: SalesOrderStatus.SHIPPED },
     });
-    expect(request.data.status).toBe(ShipmentStatus.SHIPPED);
-    expect(request.data.shippedAt).toBeInstanceOf(Date);
-    // تأكيد عدم استدعاء أي عمليات مخزنية أو مالية
-    expect(prisma.warehouse.findFirst).not.toHaveBeenCalled();
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        reference: 'SHIPMENT:SHP-1',
+        postingKey: 'shipment-cogs:sh-1',
+        lines: [
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+            creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+            amount: 40,
+          }),
+        ],
+      }),
+      'actor-1',
+    );
+    expect(prisma.activityLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'actor-1',
+        action: 'SHIPMENT_STATUS_CHANGED',
+      }) as Record<string, unknown>,
+    });
   });
 
   it('يرفض انتقالًا غير منطقي في حالة الشحنة', async () => {

@@ -204,6 +204,12 @@ export function createPrismaMock() {
       update: jest.fn(),
       count: jest.fn(),
     },
+    customerPayment: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+    },
     supplier: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -215,6 +221,7 @@ export function createPrismaMock() {
     shipment: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),
