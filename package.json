@@ -1,0 +1,13 @@
+{
+  "name": "garment-factory-erp-deploy",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Deployment wrapper for the Garment Factory ERP backend",
+  "scripts": {
+    "build": "npm --prefix backend ci --include=dev && npm --prefix backend run build",
+    "start": "npm --prefix backend run start:prod"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
