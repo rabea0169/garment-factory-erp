@@ -195,7 +195,53 @@ async function main() {
   await prisma.finishedGood.create({
     data: { productVariantId: variantL.id, quantity: 30 },
   });
-  console.log('Finished Goods seeded');
+
+  // GF-AUDIT-001A: seed the authoritative per-warehouse balance and its opening ledger.
+  // The upsert update is intentionally empty so rerunning seed never overwrites live stock.
+  for (const [variantId, quantity, suffix] of [
+    [variantM.id, 50, 'M'],
+    [variantL.id, 30, 'L'],
+  ] as const) {
+    const stock = await prisma.finishedGoodStock.upsert({
+      where: {
+        warehouseId_productVariantId: {
+          warehouseId: whFg.id,
+          productVariantId: variantId,
+        },
+      },
+      update: {},
+      create: {
+        warehouseId: whFg.id,
+        productVariantId: variantId,
+        quantity,
+        unitCost: 0,
+      },
+    });
+    const openingReference = `SEED-OPENING-FG-${suffix}`;
+    const opening = await prisma.stockLedgerEntry.findFirst({
+      where: { reference: openingReference },
+      select: { id: true },
+    });
+    if (!opening) {
+      await prisma.stockLedgerEntry.create({
+        data: {
+          entryCode: `SEED-FG-${suffix}`,
+          type: StockMovementType.RECEIVE,
+          warehouseId: whFg.id,
+          productVariantId: variantId,
+          quantityDelta: quantity,
+          balanceAfter: stock.quantity,
+          unitCost: 0,
+          totalValue: 0,
+          reference: openingReference,
+          notes:
+            'رصيد افتتاحي للمنتج التام — يحتاج اعتماد تكلفة افتتاحية من المحاسبة',
+          createdById: admin.id,
+        },
+      });
+    }
+  }
+  console.log('Finished Goods seeded in authoritative stock ledger');
 
   // 4.5. Create Sample Work Order (GF-0008)
   await prisma.workOrder.create({
