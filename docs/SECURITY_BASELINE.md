@@ -62,7 +62,13 @@
 - P2-01: لا password policy ولا session expiry قصير (الافتراضي 7 أيام في `auth.module.ts`).
 - P2-02: لا audit logging للعمليات الحساسة (جدول `ActivityLog` موجود وغير مستخدم).
 - P2-03: `verboseMemoryLeak: true` مفعل في `app.module.ts` — لا يليق بالإنتاج.
-- P2-04: لا تقييم اعتماديات (`npm audit`) ولا secret scanning إضافي في CI.
+- **P2-04: ثغرات سلسلة Prisma في `deepmerge-ts` — 🟡 مخففة بالـoverride في GF-SEC-001**
+- **الأصل:** `prisma@7.9.1` → `@prisma/config@7.9.1` يثبت `deepmerge-ts@7.1.5`، المتأثر بـ`GHSA-ggr8-5vv4-36mx / CVE-2026-40345` (uncontrolled recursion، High).
+- **الإجراء:** `backend/package.json` يفرض override scoped إلى `@prisma/config > deepmerge-ts = 8.0.2`، مع تحديث `package-lock.json` وعدم تغيير Prisma major.
+- **الإثبات:** `npm audit --omit=dev --audit-level=high` أعاد صفر vulnerabilities في اختبار توافق معزول، و`prisma generate`, `prisma validate`, `typecheck`, `build`، و197 unit tests نجحت.
+- **الحدود:** هذا workaround مؤقت لأن upstream ما زال يثبت 7.1.5؛ يجب إزالته بعد إصدار Prisma رسمي يعتمد `deepmerge-ts >= 8.0.0` مع إعادة كل البوابات.
+- **المراجع:** [GitHub Advisory GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx) و[Prisma ORM issue #30052](https://github.com/prisma/orm/issues/30052).
+- P2-04b: لا يوجد secret scanning إضافي خارج بوابة CI الحالية.
 - P2-05: بيانات حساسة محتملة في رسائل الأخطاء (تفاصيل Prisma تصل للعميل كما هي).
 - P2-06: Swagger مكشوف للجمهور بلا حماية (`/api/docs`).
 - P2-07: أسرار خدمة pgAdmin مكتوبة نصًا في compose.
@@ -83,6 +89,7 @@
 | P1-02 | عالية | ✅ مغلقة | GF-0006 | README صادق + seed من env |
 | P1-06/07 | عالية | ✅ مغلقة | GF-0006 | localhost فقط + profile tools + healthcheck مصلح |
 | P1-03/04/05/08..12 | عالية | ❌ مفتوحة | — | Flutter/GF-0010، rate-limit/GF-0021، pagination/GF-0012، ADR-0003 |
-| P2-01..08 | متوسطة | ❌ مفتوحة | — | المراحل 7-9 |
+| P2-01..03, P2-05..08 | متوسطة | ❌ مفتوحة | — | المراحل 7-9 |
+| P2-04 | متوسطة | 🟡 مخففة مؤقتًا | GF-SEC-001 | override scoped + audit صفر؛ انتظار إصلاح Prisma الرسمي |
 
-**قاعدة الحوكمة:** لا تُغلق أي ثغرة في هذا الملف دون إشارة إلى commit الإغلاق واختبار يثبت السلوك (401/403/إقلاع فاشل…).
+**قاعدة الحوكمة:** لا تُغلق أي ثغرة في هذا الملف دون إشارة إلى commit الإغلاق واختبار يثبت السلوك (401/403/إقلاع فاشل…). الـoverride في GF-SEC-001 يمثل تخفيفًا مؤقتًا موثقًا، وليس إغلاقًا نهائيًا للسبب الجذري.
