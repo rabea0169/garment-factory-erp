@@ -2,15 +2,21 @@ import { BadRequestException } from '@nestjs/common';
 import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { ShippingService } from './shipping.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('ShippingService — الشحنات (GF-0003)', () => {
   let service: ShippingService;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let inventoryService: { issueFinishedGood: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new ShippingService(prisma as unknown as PrismaService);
+    inventoryService = { issueFinishedGood: jest.fn() };
+    service = new ShippingService(
+      prisma as unknown as PrismaService,
+      inventoryService as unknown as InventoryService,
+    );
   });
 
   it('يجلب الشحنات مع أمر البيع والعميل', async () => {
@@ -67,28 +73,49 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     expect(prisma.shipment.create).not.toHaveBeenCalled();
   });
 
-  it('يسمح بانتقال PREPARING إلى SHIPPED ويضع shippedAt', async () => {
+  it('يسمح بانتقال PREPARING إلى SHIPPED ويخصم المنتج التام', async () => {
     prisma.shipment.findUnique.mockResolvedValue({
       id: 'sh-1',
       status: ShipmentStatus.PREPARING,
+      code: 'SHP-1',
+      salesOrder: {
+        items: [{ id: 'soi-1', productVariantId: 'v-1', quantity: 2 }],
+      },
     });
-    prisma.shipment.update.mockResolvedValue({
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
+    prisma.$transaction.mockImplementation(
+      (cb: (tx: typeof prisma) => Promise<unknown>) => cb(prisma),
+    );
+    prisma.shipment.findUniqueOrThrow.mockResolvedValue({
       id: 'sh-1',
       status: ShipmentStatus.SHIPPED,
     });
 
     await service.updateShipmentStatus('sh-1', ShipmentStatus.SHIPPED);
 
-    const calls = prisma.shipment.update.mock.calls as unknown as Array<
+    expect(inventoryService.issueFinishedGood).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productVariantId: 'v-1',
+        warehouseId: 'wh-fg',
+        quantity: 2,
+      }),
+      undefined,
+      prisma,
+    );
+    const calls = prisma.shipment.updateMany.mock.calls as unknown as Array<
       [
         {
-          where: { id: string };
+          where: { id: string; status: ShipmentStatus };
           data: { status: ShipmentStatus; shippedAt?: Date };
         },
       ]
     >;
     const request = calls[0][0];
-    expect(request.where).toEqual({ id: 'sh-1' });
+    expect(request.where).toEqual({
+      id: 'sh-1',
+      status: ShipmentStatus.PREPARING,
+    });
     expect(request.data.status).toBe(ShipmentStatus.SHIPPED);
     expect(request.data.shippedAt).toBeInstanceOf(Date);
   });

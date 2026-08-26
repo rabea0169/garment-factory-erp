@@ -3,9 +3,11 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma, WarehouseType } from '@prisma/client';
+import { PrismaService as AppPrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
+import { InventoryService } from '../inventory/inventory.service';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
   generateDocumentCode,
@@ -14,7 +16,10 @@ import {
 
 @Injectable()
 export class ShippingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: AppPrismaService,
+    private readonly inventoryService: InventoryService,
+  ) {}
 
   async getShipments(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -62,7 +67,10 @@ export class ShippingService {
   }
 
   async updateShipmentStatus(id: string, status: ShipmentStatus) {
-    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id },
+      include: { salesOrder: { include: { items: true } } },
+    });
     if (!shipment) throw new NotFoundException('Shipment not found');
 
     const allowed: Record<ShipmentStatus, ShipmentStatus[]> = {
@@ -79,14 +87,52 @@ export class ShippingService {
       throw new BadRequestException('Invalid shipment status transition');
     }
 
-    return this.prisma.shipment.update({
-      where: { id },
-      data: {
-        status,
-        shippedAt: status === ShipmentStatus.SHIPPED ? new Date() : undefined,
-        deliveredAt:
-          status === ShipmentStatus.DELIVERED ? new Date() : undefined,
+    if (status !== ShipmentStatus.SHIPPED) {
+      return this.prisma.shipment.update({
+        where: { id },
+        data: {
+          status,
+          deliveredAt:
+            status === ShipmentStatus.DELIVERED ? new Date() : undefined,
+        },
+      });
+    }
+
+    const warehouse = await this.prisma.warehouse.findFirst({
+      where: {
+        code: 'WH-FG',
+        type: WarehouseType.FINISHED_GOODS,
+        isActive: true,
       },
+    });
+    if (!warehouse)
+      throw new BadRequestException('Finished goods warehouse not found');
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const transition = await tx.shipment.updateMany({
+        where: { id, status: ShipmentStatus.PREPARING },
+        data: { status: ShipmentStatus.SHIPPED, shippedAt: new Date() },
+      });
+      if (transition.count !== 1) {
+        throw new BadRequestException('Shipment was changed concurrently');
+      }
+
+      for (const item of shipment.salesOrder.items) {
+        await this.inventoryService.issueFinishedGood(
+          {
+            productVariantId: item.productVariantId,
+            warehouseId: warehouse.id,
+            quantity: item.quantity,
+            reference: shipment.code,
+            notes: `صرف شحنة ${shipment.code}`,
+            idempotencyKey: `shipment.ship:${shipment.id}:${item.id}`,
+          },
+          undefined,
+          tx,
+        );
+      }
+
+      return tx.shipment.findUniqueOrThrow({ where: { id } });
     });
   }
 }
