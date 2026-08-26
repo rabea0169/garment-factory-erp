@@ -148,6 +148,18 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       'u-1',
     );
     expect(prisma.finishedGood.updateMany).not.toHaveBeenCalled();
+    type IdempotencyUpdateCall = [
+      {
+        where: { key: string };
+        data: { response: { status: SalesOrderStatus } };
+      },
+    ];
+    const updateCalls = prisma.idempotencyKey.update.mock
+      .calls as unknown as IdempotencyUpdateCall[];
+    expect(updateCalls[0][0].where).toEqual({ key: 'confirm-key' });
+    expect(updateCalls[0][0].data.response.status).toBe(
+      SalesOrderStatus.CONFIRMED,
+    );
   });
 
   it('does not confirm twice when the order status changes concurrently', async () => {

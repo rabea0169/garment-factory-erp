@@ -356,11 +356,12 @@ export class SalesService {
           userId,
         );
 
-        await storeIdempotencyResponse(tx, idempotencyKey, order);
-        return tx.salesOrder.findUniqueOrThrow({
+        const confirmedOrder = await tx.salesOrder.findUniqueOrThrow({
           where: { id: orderId },
           include: { items: true },
         });
+        await storeIdempotencyResponse(tx, idempotencyKey, confirmedOrder);
+        return confirmedOrder;
       });
     } catch (error) {
       if (idempotencyKey && isIdempotencyUniqueViolation(error)) {

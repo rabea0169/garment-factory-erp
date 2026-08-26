@@ -4,7 +4,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { StockMovementType, WarehouseType } from '@prisma/client';
+import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
 import { InventoryService } from './inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -39,7 +39,12 @@ type ExtendedPrismaMock = ReturnType<typeof createPrismaMock> & {
 
 function createTxMock() {
   return {
+    $executeRaw: jest.fn(),
     rawMaterial: { update: jest.fn() },
+    finishedGoodStock: {
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+    },
     stockLedgerEntry: { create: jest.fn() },
     idempotencyKey: { create: jest.fn(), update: jest.fn() },
   };
@@ -117,6 +122,54 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       prisma as unknown as PrismaService,
       eventEmitter as never,
     );
+  });
+
+  // ============ FINISHED GOODS (authoritative stock) ============
+
+  describe('استلام المنتج التام (receiveFinishedGood)', () => {
+    it('يزيد FinishedGoodStock ويسجل حركة RECEIVE داخل transaction', async () => {
+      prisma.warehouse.findUnique.mockResolvedValue({
+        ...WAREHOUSE,
+        type: WarehouseType.FINISHED_GOODS,
+      });
+      tx.finishedGoodStock.findUniqueOrThrow.mockResolvedValue({
+        quantity: 150,
+        unitCost: new Prisma.Decimal(52),
+      });
+
+      const result = await service.receiveFinishedGood(
+        {
+          productVariantId: 'variant-1',
+          warehouseId: 'wh-fg',
+          quantity: 10,
+          unitCost: 60,
+          reference: 'WO-1',
+        },
+        'user-1',
+      );
+
+      expect(tx.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          type: StockMovementType.RECEIVE,
+          warehouseId: 'wh-fg',
+          productVariantId: 'variant-1',
+          quantityDelta: 10,
+          balanceAfter: 150,
+          unitCost: 60,
+          createdById: 'user-1',
+        }) as Record<string, unknown>,
+        select: { entryCode: true, createdAt: true },
+      });
+      expect(result).toMatchObject({
+        replayed: false,
+        quantityDelta: 10,
+        balanceAfter: 150,
+        costPerUnitAfter: 52,
+      });
+      expect(prisma.finishedGood.create).not.toHaveBeenCalled();
+      expect(prisma.finishedGood.update).not.toHaveBeenCalled();
+    });
   });
 
   // ============ receive: ledger + متوسط مرجح ============
@@ -857,16 +910,36 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       expect(result.data[0]).not.toHaveProperty('costPerUnit');
     });
 
-    it('يجلب المنتج التام مع الـ variant والمنتج', async () => {
-      const goods = [{ id: 'fg-1', variant: { product: { name: 'تيشيرت' } } }];
-      prisma.finishedGood.findMany.mockResolvedValue(goods);
+    it('يجلب رصيد المنتج التام من FinishedGoodStock مع المخزن والمنتج', async () => {
+      const rows = [
+        {
+          id: 'fg-stock-1',
+          quantity: 12,
+          warehouseId: 'wh-fg',
+          productVariant: { product: { name: 'تيشيرت' } },
+          warehouse: { code: 'WH-FG' },
+        },
+      ];
+      prisma.finishedGoodStock.findMany.mockResolvedValue(rows);
 
       const result = await service.getAllFinishedGoods({});
 
-      expect(result.data).toEqual(goods);
-      expect(prisma.finishedGood.findMany).toHaveBeenCalledWith(
+      expect(result.data).toEqual([
+        {
+          id: 'fg-stock-1',
+          quantity: 12,
+          warehouseId: 'wh-fg',
+          variant: { product: { name: 'تيشيرت' } },
+          warehouse: { code: 'WH-FG' },
+        },
+      ]);
+      expect(prisma.finishedGoodStock.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          include: { variant: { include: { product: true } } },
+          where: { quantity: { gt: 0 } },
+          include: {
+            productVariant: { include: { product: true } },
+            warehouse: true,
+          },
         }),
       );
     });
@@ -905,7 +978,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
             },
           ]);
         });
-      prisma.finishedGood.count.mockResolvedValue(4);
+      prisma.finishedGoodStock.count.mockResolvedValue(4);
 
       const result = await service.getDashboardSummary();
 

@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkOrderStatus, StockMovementType, Prisma } from '@prisma/client';
+import { WorkOrderStatus, Prisma } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EVENTS } from '../../events/event-types';
 import { InventoryService } from '../inventory/inventory.service';
@@ -82,7 +82,13 @@ export class ProductionService {
     const order = await this.prisma.workOrder.findUnique({
       where: { id },
       include: {
-        bomVersion: { include: { lines: true } },
+        bomVersion: {
+          include: {
+            lines: {
+              include: { rawMaterial: { select: { costPerUnit: true } } },
+            },
+          },
+        },
       },
     });
 
@@ -126,43 +132,30 @@ export class ProductionService {
           );
         }
 
-        // 3. استلام التام في المخزن
-        const fgRecord = await tx.finishedGood.findFirst({
-          where: { productVariantId: order.productVariantId },
-        });
-
-        const newBalance = (fgRecord?.quantity || 0) + order.quantity;
-
-        if (fgRecord) {
-          await tx.finishedGood.update({
-            where: { id: fgRecord.id },
-            data: { quantity: newBalance },
-          });
-        } else {
-          await tx.finishedGood.create({
-            data: {
-              productVariantId: order.productVariantId,
-              quantity: newBalance,
-            },
-          });
-        }
-
-        // إدراج حركة ledger للتام
-        await tx.stockLedgerEntry.create({
-          data: {
-            entryCode: generateDocumentCode(
-              DocumentCodePrefix.STOCK_LEDGER_ENTRY,
-            ),
-            type: StockMovementType.RECEIVE,
-            warehouseId: fgWarehouse.id,
+        // 3. استلام التام عبر مصدر الحقيقة الوحيد FinishedGoodStock + ledger.
+        const totalMaterialCost = order.bomVersion.lines.reduce(
+          (sum, line) =>
+            sum +
+            Number(line.quantity) *
+              order.quantity *
+              Number(line.rawMaterial.costPerUnit),
+          0,
+        );
+        const unitCost =
+          order.quantity > 0 ? totalMaterialCost / order.quantity : 0;
+        await this.inventoryService.receiveFinishedGood(
+          {
             productVariantId: order.productVariantId,
-            quantityDelta: order.quantity,
-            balanceAfter: newBalance,
+            warehouseId: fgWarehouse.id,
+            quantity: order.quantity,
+            unitCost,
             reference: updated.code,
             notes: `استلام تام من أمر تشغيل ${updated.code}`,
-            createdById: userId,
+            idempotencyKey: `production.legacy.receive:${updated.id}`,
           },
-        });
+          userId,
+          tx,
+        );
 
         return updated;
       },

@@ -49,7 +49,7 @@
 | POST | `/production/work-orders` | إنشاء أمر تشغيل | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
 | PATCH | `/production/work-orders/:id/status` | تحديث الحالة legacy | 🔒 JWT | PRODUCTION_MANAGER |
 | POST | `/production/work-orders/:id/stage-transitions` | نقل الأمر إلى المرحلة التالية | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
-| POST | `/production/work-orders/:id/stage-output` | تسجيل مخرجات المرحلة وإغلاقها | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+| POST | `/production/work-orders/:id/stage-output` | تسجيل مخرجات المرحلة وإغلاقها وتسجيل actor | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
 | POST | `/production/work-orders/:id/material-consumptions` | صرف خامة فعلي لمرحلة | 🔒 JWT | PRODUCTION_MANAGER, INVENTORY_MANAGER, GENERAL_MANAGER |
 | POST | `/production/work-orders/:id/cost/finalize` | تثبيت لقطة تكلفة المواد | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
 
@@ -86,6 +86,8 @@
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
+يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409.
+
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
 
 ## الشحن — `/shipping`
@@ -108,6 +110,15 @@
 يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
 
 **ملاحظة GF-0002:** `createdById` لم يعد يُقبل من body — من الجلسة.
+
+## الصحة والتشغيل — `/health`
+
+| Method | Path | الوظيفة | الحماية |
+|---|---|---|---|
+| GET | `/health` | فحص liveness للعملية فقط | 🌐 عام |
+| GET | `/health/ready` | فحص readiness واتصال PostgreSQL | 🌐 عام |
+
+`/health/ready` يعيد 200 فقط عند نجاح استعلام قاعدة البيانات، ويعيد 503 دون كشف تفاصيل الاتصال عند عدم الجاهزية.
 
 ## الجذر
 
@@ -156,7 +167,7 @@
 1. **لا endpoint للـ Dashboard/Reports** رغم أن Flutter يطلب `/dashboard/stats` (P1-05 — GF-0019).
 2. ~~**لا pagination** في القوائم~~ — ✅ **أُغلقت في GF-0012** بعقد موحد واختبارات حدودية.
 3. ~~**لا DTOs** في معظم مسارات الكتابة~~ — ✅ **أُغلقت في GF-0004**.
-4. **لا معالج أخطاء موحد** — أخطاء Prisma قد تتسرب بتفاصيلها (P2-05).
+4. ~~**لا معالج أخطاء موحد**~~ — ✅ **أُغلق في Cluster 4** عبر Global Exception Filter؛ يجب إضافة اختبارات عقدية لأي أخطاء جديدة.
 5. **قاعدة المجال المؤجلة**: `checked = passed + rejected` في فحص الجودة تُفرض في GF-0014.
 
 ## أمثلة Payloads الصحيحة (GF-0004)

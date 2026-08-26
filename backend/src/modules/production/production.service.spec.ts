@@ -12,14 +12,20 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   let service: ProductionService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let eventEmitter: { emitAsync: jest.Mock };
-  let inventoryService: { issue: jest.Mock };
+  let inventoryService: {
+    issue: jest.Mock;
+    receiveFinishedGood: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaMock();
     eventEmitter = createEventEmitterMock() as unknown as {
       emitAsync: jest.Mock;
     };
-    inventoryService = { issue: jest.fn() };
+    inventoryService = {
+      issue: jest.fn(),
+      receiveFinishedGood: jest.fn(),
+    };
     service = new ProductionService(
       prisma as unknown as PrismaService,
       eventEmitter as never,
@@ -122,18 +128,33 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       status: 'SEWING',
       productVariantId: 'v-1',
       quantity: 100,
+      code: 'WO-1',
       bomVersion: { lines: [] },
     });
     prisma.warehouse = {
       findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }),
     } as unknown as typeof prisma.warehouse;
-
-    // Mock transaction to just return a dummy order
-    prisma.$transaction.mockResolvedValue({
+    prisma.workOrder.update.mockResolvedValue({
       id: 'wo-1',
       status: 'COMPLETED',
       productVariantId: 'v-1',
       quantity: 100,
+    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    inventoryService.receiveFinishedGood.mockResolvedValue({
+      replayed: false,
+      entryCode: 'SLE-1',
+      type: 'RECEIVE',
+      rawMaterialId: '',
+      warehouseId: 'wh-1',
+      quantityDelta: 100,
+      balanceAfter: 100,
+      unitCost: 0,
+      totalValue: 0,
+      costPerUnitAfter: 0,
+      createdAt: new Date().toISOString(),
     });
 
     const result = await service.updateOrderStatus(
@@ -143,5 +164,16 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
 
     expect(result.status).toBe('COMPLETED');
     expect(prisma.$transaction).toHaveBeenCalled();
+    expect(inventoryService.receiveFinishedGood).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productVariantId: 'v-1',
+        warehouseId: 'wh-1',
+        quantity: 100,
+      }),
+      undefined,
+      prisma,
+    );
+    expect(prisma.finishedGood.create).not.toHaveBeenCalled();
+    expect(prisma.finishedGood.update).not.toHaveBeenCalled();
   });
 });
