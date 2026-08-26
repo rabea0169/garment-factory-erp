@@ -5,6 +5,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { PaymentType, PurchaseOrderStatus } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
+import { computeRequestHash } from '../../core/common/idempotency.util';
 
 describe('PurchasingService (GF-0009)', () => {
   let service: PurchasingService;
@@ -76,7 +77,7 @@ describe('PurchasingService (GF-0009)', () => {
         'user-1',
       );
 
-      expect(result.id).toBe('grn-1');
+      expect((result as { id: string }).id).toBe('grn-1');
       expect(inventoryService.receive).toHaveBeenCalledWith(
         expect.objectContaining({ rawMaterialId: 'rm-1', quantity: 4 }),
         'user-1',
@@ -86,6 +87,78 @@ describe('PurchasingService (GF-0009)', () => {
         where: { id: 'po-1' },
         data: { status: PurchaseOrderStatus.PENDING },
       });
+    });
+
+    it('يربط Idempotency-Key بإذن الاستلام ويخزن الاستجابة داخل transaction', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.PENDING,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+      prisma.purchaseReceipt.create.mockResolvedValue({
+        id: 'grn-1',
+        code: 'GRN-100',
+        items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }],
+      });
+      prisma.purchaseOrder.update.mockResolvedValue({
+        status: PurchaseOrderStatus.PENDING,
+      });
+
+      await service.createReceipt(
+        'po-1',
+        { items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }] },
+        'user-1',
+        'receipt-key',
+      );
+
+      expect(prisma.idempotencyKey.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          key: 'receipt-key',
+          scope: 'purchasing-receipt-create',
+        }),
+        select: { id: true },
+      });
+      expect(prisma.purchaseReceipt.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({ idempotencyKeyId: 'idem-1' }),
+        include: { items: true },
+      });
+      expect(prisma.idempotencyKey.update).toHaveBeenCalledWith({
+        where: { key: 'receipt-key' },
+        data: { response: expect.anything() },
+      });
+    });
+
+    it('يعيد replay لإذن الاستلام دون إنشاء receipt جديد', async () => {
+      const dto = { items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }] };
+      const key = 'receipt-replay-key';
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key,
+        scope: 'purchasing-receipt-create',
+        requestHash: computeRequestHash({
+          orderId: 'po-1',
+          items: dto.items,
+          notes: null,
+          userId: 'user-1',
+        }),
+        response: { id: 'grn-1', code: 'GRN-100' },
+      });
+
+      const result = await service.createReceipt('po-1', dto, 'user-1', key);
+
+      expect(result).toEqual({
+        id: 'grn-1',
+        code: 'GRN-100',
+        replayed: true,
+      });
+      expect(prisma.purchaseOrder.findUnique).not.toHaveBeenCalled();
+      expect(prisma.purchaseReceipt.create).not.toHaveBeenCalled();
     });
 
     it('يرفض الاستلام الذي يتجاوز كمية أمر الشراء', async () => {

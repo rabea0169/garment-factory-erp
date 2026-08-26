@@ -3,6 +3,7 @@ import {
   Get,
   Post,
   Body,
+  Headers,
   Param,
   Put,
   UseGuards,
@@ -48,8 +49,14 @@ export class PurchasingController {
     @Param('id') id: string,
     @Body() dto: CreatePurchaseReceiptDto,
     @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.purchasingService.createReceipt(id, dto, userId);
+    return this.purchasingService.createReceipt(
+      id,
+      dto,
+      userId,
+      idempotencyKey,
+    );
   }
 
   @Put(':id/receive')

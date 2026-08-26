@@ -90,6 +90,18 @@
 
 يدعم الإنشاء والاعتماد رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان الاستجابة المخزنة دون أثر ثانٍ، والمحتوى المختلف أو التكرار المتزامن يُرفض بـ409. الإنشاء يسجل `createdById` والاعتماد يسجل `approvedById` و`approvedAt` من JWT. لا يسمح اعتماد سجل معتمد ولا يغيّر `isPaid`; الدفع والقيد المالي مؤجلان إلى GF-0018.
 
+## المشتريات — `/purchasing`
+
+| Method | Path | الوظيفة | الحماية | الأدوار |
+|---|---|---|---|---|
+| GET | `/purchasing/orders` | أوامر الشراء مع pagination | 🔒 JWT | أي مستخدم موثّق |
+| POST | `/purchasing` | إنشاء أمر شراء | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
+| POST | `/purchasing/:id/receipts` | استلام جزئي أو كامل إلى مخزن الخامات | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
+| PUT | `/purchasing/:id/receive` | استلام legacy كامل | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
+| POST | `/purchasing/:id/return` | مرتجع إلى المورد | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
+
+يتطلب `POST /purchasing/:id/receipts` قائمة غير فارغة بلا تكرار لبند أمر الشراء. يتحقق الخادم من الكمية المتبقية، وينشئ receipt وحركات `RECEIVE` في `StockLedgerEntry` ويحدّث حالة الأمر داخل transaction واحدة؛ لا تُؤخذ الكمية أو التكلفة من حقيقة يرسلها العميل خارج عناصر أمر الشراء. يدعم الرأس الاختياري `Idempotency-Key`، وتكرار المفتاح مع نفس المحتوى يعيد الاستجابة دون receipt أو ledger إضافي، بينما المحتوى المختلف يُرفض بـ409. يجب إثبات اختبار PostgreSQL على CI قبل التشغيل المشترك.
+
 ## المبيعات — `/sales`
 
 | Method | Path | الوظيفة | الحماية | الأدوار |
