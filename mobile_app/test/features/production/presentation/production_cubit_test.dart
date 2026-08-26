@@ -28,15 +28,18 @@ void main() {
     );
     addTearDown(cubit.close);
 
-    final states = <ProductionState>[];
-    final subscription = cubit.stream.listen(states.add);
-    addTearDown(subscription.cancel);
+    final expectation = expectLater(
+      cubit.stream,
+      emitsInOrder([
+        isA<ProductionLoading>(),
+        predicate<ProductionLoaded>(
+          (state) => state.workOrders.single.id == 'wo-1',
+        ),
+      ]),
+    );
 
     await cubit.fetchWorkOrders();
-
-    expect(states[0], isA<ProductionLoading>());
-    expect(states[1], isA<ProductionLoaded>());
-    expect((states[1] as ProductionLoaded).workOrders.single.id, 'wo-1');
+    await expectation;
   });
 
   test('maps a network failure to an offline state', () async {
@@ -49,14 +52,16 @@ void main() {
     );
     addTearDown(cubit.close);
 
-    final states = <ProductionState>[];
-    final subscription = cubit.stream.listen(states.add);
-    addTearDown(subscription.cancel);
+    final expectation = expectLater(
+      cubit.stream,
+      emitsInOrder([
+        isA<ProductionLoading>(),
+        isA<ProductionOffline>(),
+      ]),
+    );
 
     await cubit.fetchWorkOrders();
-
-    expect(states, hasLength(2));
-    expect(states.last, isA<ProductionOffline>());
+    await expectation;
   });
 }
 
