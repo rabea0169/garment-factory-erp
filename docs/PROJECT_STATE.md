@@ -10,10 +10,10 @@
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `c18a2aa` — دمج PR #49 وإغلاق GF-REMAINING-002؛ CI PR أخضر |
 | فرع العمل الحالي | `fix/gf-remaining-003-production-idempotency` — حماية مخرجات المراحل من التكرار |
-| آخر commit في فرع العمل | `a688d22` — idempotency لمخرجات المراحل وmigration additive؛ CI أخضر |
+| آخر commit في فرع العمل | `813bbac` — idempotency لمخرجات المراحل وmigration additive؛ CI أخضر |
 | Pull Request الحالي | [PR #50](https://github.com/rabea0169/garment-factory-erp/pull/50) — CI أخضر؛ ينتظر الدمج |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
-| حالة CI على main | PASS — Run `32939638175` بعد merge PR #48؛ Backend/PostgreSQL وFlutter وSecret Scan ناجحة |
+| حالة CI على main | آخر main `c18a2aa` بعد PR #49؛ PR #50 CI run `32943011942` أخضر، وmain لا يزال بانتظار الدمج |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
 | إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |

@@ -14,7 +14,7 @@
 |---|---|
 | Working branch | `fix/gf-remaining-003-production-idempotency` |
 | Base SHA | `c18a2aa30163f94eccf45d53d1ee52aa83d3da92` |
-| Implementation commit | `d5e374b` — stage-output idempotency and additive migration |
+| Implementation commit | `813bbac` — stage-output idempotency and additive migration |
 | Pull Request | [#50](https://github.com/rabea0169/garment-factory-erp/pull/50) |
 | Merge status | not merged |
 | Local database | unavailable; PostgreSQL integration is CI-only |
@@ -49,8 +49,8 @@
 | Unit tests | `npm test -- --runInBand` | PASS | 30 suites / 188 tests |
 | E2E tests | `npm run test:e2e -- --runInBand` | PASS | 3 suites / 60 tests |
 | Integration tests | `npm run test:integration -- --runInBand` | SKIPPED LOCALLY | 7 suites / 29 tests; no `GF_INTEGRATION_DATABASE_URL` |
-| PostgreSQL migration + workflow | CI run `32942770760` | PASS | migration deploy and stage-output replay/mismatch/concurrency tests passed on PostgreSQL |
-| Secret scan | CI run `32942770760` | PASS | no hardcoded secret detected |
+| PostgreSQL migration + workflow | CI run `32943011942` | PASS | migration deploy and stage-output replay/mismatch/concurrency tests passed on PostgreSQL |
+| Secret scan | CI run `32943011942` | PASS | no hardcoded secret detected |
 | Diff check | `git diff --check` | PASS | no whitespace errors before commit |
 
 ## 6. Risks and limitations
