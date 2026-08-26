@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `c18a2aa` — دمج PR #49 وإغلاق GF-REMAINING-002؛ CI PR أخضر |
-| فرع العمل الحالي | `fix/gf-remaining-003-production-idempotency` — حماية مخرجات المراحل من التكرار |
-| آخر commit في فرع العمل | `813bbac` — idempotency لمخرجات المراحل وmigration additive؛ CI أخضر |
-| Pull Request الحالي | [PR #50](https://github.com/rabea0169/garment-factory-erp/pull/50) — CI أخضر؛ ينتظر الدمج |
-| آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
-| حالة CI على main | آخر main `c18a2aa` بعد PR #49؛ PR #50 CI run `32943011942` أخضر، وmain لا يزال بانتظار الدمج |
+| آخر commit على main | `2b530f9` — خط أساس origin/main بعد آخر الدمجات؛ لا يحتوي إصلاحات PR #52/#54 |
+| فرع العمل الحالي | `direct/gf-audit-002d-payroll-payment` — إصلاحات المشتريات، دفع الرواتب، Dashboard، وحماية الترحيل |
+| آخر commit في فرع العمل | `4fe6975` — قفل أرصدة الخزينة والموردين ومنع الرصيد السالب؛ CI اليدوي أخضر |
+| Pull Requests الحالية | [PR #52](https://github.com/rabea0169/garment-factory-erp/pull/52) للمشتريات + [PR #54](https://github.com/rabea0169/garment-factory-erp/pull/54) للتوسعة؛ كلاهما ينتظر المراجعة والدمج |
+| آخر مرحلة مكتملة بالكامل على main | GF-0019؛ الإصلاحات المباشرة GF-AUDIT-001C/001D وما بعدها ما زالت على PRs |
+| حالة CI على main | `origin/main@2b530f9`؛ CI اليدوي على `4fe6975` أخضر لكل Backend/Integration/Flutter/Secret Scan، بينما Prisma Compute Deploy الخارجي فاشل |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
-| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
+| إصدار API | `1.1-draft`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` على فرع الإصلاح، ولم يُعتمد الإصدار قبل الدمج |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-003 — idempotency لمخرجات مراحل الإنتاج |
-| المرحلة النشطة | GF-REMAINING-003 مكتملة على فرع مستقل؛ PR #50 وCI أخضران؛ الدمج فقط بتفويض صريح |
+| المهمة النشطة | GF-AUDIT-002D — دفع الرواتب وDashboard وحماية الأرصدة؛ التنفيذ المباشر مكتمل على PR #54 |
+| المرحلة النشطة | موجة الإصلاح المباشر؛ PR #54 مفتوح وCI اليدوي أخضر، وفحص Prisma Compute الخارجي فاشل؛ الدمج فقط بتفويض صريح |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
-| Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
+| Security blockers | لا P0/P1 أمني جديد من التغييرات الحالية؛ Secret Scan وCI الأخضر، لكن الإصدار يبقى No-Go حتى مراجعة PRs ومعالجة Prisma Compute وnpm audit |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-002.md`؛ handoff GF-REMAINING-003 سيُضاف مع الإصلاح |
-| Next exact action | دمج PR #50 بتفويض صريح ثم التحقق من main CI؛ بعدها يبدأ GF-REMAINING-004 |
+| Last handoff | `docs/handoffs/HANDOFF-GF-AUDIT-002D.md` سيُضاف مع اكتمال مراجعة PR #54 |
+| Next exact action | مراجعة PR #54 دلاليًا، حل فشل Prisma Compute الخارجي، ثم دمج PR #52/#54 بترتيب آمن وإعادة CI على main |
 
 ## المهام المكتملة على main
 
