@@ -330,6 +330,7 @@ export class HrService {
           throw new ConflictException('كشف الراتب معتمد ولا يمكن تعديله');
         }
 
+        await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
         const updated = await tx.payroll.updateMany({
           where: { id: payrollId, status: PayrollStatus.DRAFT },
           data: {
