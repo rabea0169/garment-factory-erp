@@ -35,7 +35,7 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
   beforeEach(async () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
-      TRUNCATE TABLE "activity_logs", "shipments", "sales_orders", "customers", "warehouses", "users" CASCADE
+      TRUNCATE TABLE "activity_logs", "stock_ledger_entries", "finished_good_stocks", "shipments", "sales_order_items", "sales_orders", "product_variants", "products", "customers", "warehouses", "users" CASCADE
     `);
     const user = await prisma.user.create({
       data: {
@@ -46,11 +46,34 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
       },
     });
     userId = user.id;
-    await prisma.warehouse.create({
+    const warehouse = await prisma.warehouse.create({
       data: {
         code: 'WH-FG',
         name: 'GF-0017 Finished Goods Warehouse',
         type: WarehouseType.FINISHED_GOODS,
+      },
+    });
+    const product = await prisma.product.create({
+      data: {
+        code: `PRD-GF19-${randomUUID().slice(0, 8)}`,
+        name: 'GF-0019 Finished Product',
+        retailPrice: new Prisma.Decimal('100.00'),
+        wholesalePrice: new Prisma.Decimal('80.00'),
+      },
+    });
+    const variant = await prisma.productVariant.create({
+      data: {
+        productId: product.id,
+        size: 'M',
+        color: 'Navy',
+      },
+    });
+    await prisma.finishedGoodStock.create({
+      data: {
+        warehouseId: warehouse.id,
+        productVariantId: variant.id,
+        quantity: 5,
+        unitCost: new Prisma.Decimal('40.00'),
       },
     });
     const customer = await prisma.customer.create({
@@ -66,8 +89,18 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
         userId,
         paymentType: PaymentType.CREDIT,
         status: SalesOrderStatus.CONFIRMED,
-        subtotal: new Prisma.Decimal('100.00'),
-        totalAmount: new Prisma.Decimal('100.00'),
+        subtotal: new Prisma.Decimal('200.00'),
+        totalAmount: new Prisma.Decimal('200.00'),
+        items: {
+          create: [
+            {
+              productVariantId: variant.id,
+              quantity: 2,
+              unitPrice: new Prisma.Decimal('100.00'),
+              totalPrice: new Prisma.Decimal('200.00'),
+            },
+          ],
+        },
       },
     });
     const shipment = await prisma.shipment.create({
@@ -109,11 +142,21 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
       proofOfDelivery: 'POD-GF17-001',
       deliveredById: userId,
     });
+    const shipmentCode = shipment?.code ?? 'missing-shipment-code';
     expect(
       await prisma.activityLog.count({
         where: { action: 'SHIPMENT_STATUS_CHANGED', userId },
       }),
     ).toBe(3);
+    const stock = await prisma.finishedGoodStock.findFirst({
+      where: { quantity: 3 },
+    });
+    expect(stock).toBeTruthy();
+    expect(
+      await prisma.stockLedgerEntry.count({
+        where: { type: 'ISSUE', quantityDelta: -2, reference: shipmentCode },
+      }),
+    ).toBe(1);
   });
 
   it('rejects delivery without proof and does not mutate the shipment', async () => {

@@ -158,3 +158,11 @@ DROP INDEX IF EXISTS "raw_materials_code_isActive_idx";
 ```
 3. أو للبيئات المحلية ببساطة: `docker-compose down -v` ثم `npx prisma migrate deploy` على الحالة المرجعة.
 4. **تحذير موثق:** حذف الـ ledger يُفقد تاريخ الحركات نهائيًا — لا يُنفذ على أي بيئة تحمل بيانات فعلية دون تصدير نسخة احتياطية أولًا (سياسة §2.5).
+
+## 11. Migration GF-0019 — Shipment Creation Idempotency
+
+**الاسم:** `20260830050000_gf0019_shipment_create_idempotency`
+
+تضيف migration الحقل nullable `shipments.idempotencyKeyId` مع unique index وFK إلى `idempotency_keys`. الشحنات القديمة تبقى صالحة، بينما الطلبات الجديدة التي تحمل `Idempotency-Key` تحفظ المفتاح والاستجابة داخل transaction واحدة. لا تُعدّل المهاجرة المخزون؛ صرف المنتج التام ما يزال داخل انتقال SHIPPED عبر InventoryService.
+
+يجب إثبات replay، اختلاف المحتوى، وrollback المعاملة في CI على PostgreSQL قبل أي بيئة مشتركة. rollback عبر backup/restore أو migration عكسية معتمدة، ولا تُحذف shipments أو stock ledger entries يدويًا.

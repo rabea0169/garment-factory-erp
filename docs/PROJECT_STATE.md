@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `5dfa0fe` — دمج PR #36 لإكمال GF-0018 بعد GF-0017 وGF-0016 وGF-0015 |
-| فرع العمل الحالي | `docs/post-gf0018-state` — توثيق post-merge |
-| آخر commit في فرع العمل | `5dfa0fe` — base verified؛ تحديث post-merge للتوثيق فقط |
-| Pull Request الحالي | لا يوجد؛ فرع post-merge docs قيد الإعداد قبل الرفع |
-| آخر مرحلة مكتملة بالكامل على main | GF-0018 fiscal periods and journal entries؛ CI الأخضر موثق أدناه |
-| حالة CI على main | PASS — Run `32933591101` على `5dfa0fe`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0018 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
-| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries |
+| آخر commit على main | `94ca689` — دمج PR #35 لإكمال صرف المنتج التام عند الشحن فوق GF-0018 |
+| فرع العمل الحالي | `phase/gf0019-shipment-idempotency` — حماية إنشاء الشحنة من التكرار |
+| آخر commit في فرع العمل | `94ca689` — base verified؛ تغييرات GF-0019 غير ملتزمة بعد |
+| Pull Request الحالي | لا يوجد؛ فرع GF-0019 قيد الإعداد قبل الرفع |
+| آخر مرحلة مكتملة بالكامل على main | GF-0018؛ GF-0019 مدمج جزئيًا عبر PR #35 وتدقيقه مستمر |
+| حالة CI على main | PASS — Run `32933999818` على `94ca689` بعد PR #35، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0018 نجحت على PostgreSQL 16؛ migration GF-0019 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
+| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries؛ createShipment idempotency قيد GF-0019 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | Post-merge verification؛ لا يبدأ GF-0019 قبل قرار ونطاق معتمد |
-| المرحلة النشطة | GF-0018 مكتملة؛ بوابة GF-0019 تنتظر مراجعة مستقلة |
+| المهمة النشطة | `GF-0019-IMPL`: idempotency لإنشاء الشحنة واختبار صرف المنتج التام الحقيقي |
+| المرحلة النشطة | GF-0019 — Shipping create idempotency and inventory proof |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-018.md` |
-| Next exact action | تحديث handoff/state post-merge في PR توثيقي مستقل، ثم مراجعة أي GF-0019 ظاهر قبل التنفيذ؛ لا اعتماد تلقائي لنطاق جديد |
+| Last handoff | `docs/handoffs/HANDOFF-018.md`؛ HANDOFF-019 قيد الإعداد |
+| Next exact action | تشغيل البوابات، commit/push وفتح PR GF-0019 مستقل، ثم انتظار migration وPostgreSQL integration في CI |
 
 ## المهام المكتملة على main
 
@@ -44,6 +44,7 @@
 | GF-0016 | receipt idempotency وربط الاستلام بالـledger | مكتملة ومُدمجة عبر PR #27 و#31؛ CI PostgreSQL أخضر |
 | GF-0017 | shipment lifecycle وproof of delivery وactor audit | مكتملة ومُدمجة عبر PR #29 و#33؛ CI PostgreSQL أخضر |
 | GF-0018 | fiscal periods وقيود متعددة البنود ومنع الترحيل المغلق | مكتملة ومُدمجة عبر PR #32 و#36؛ CI PostgreSQL أخضر |
+| GF-0019 | صرف المنتج التام عند SHIPPED وحماية إنشاء الشحنة من التكرار | صرف المنتج التام مدمج عبر PR #35؛ createShipment idempotency قيد التنفيذ |
 
 ## GF-0014 — الحالة التفصيلية
 
@@ -85,4 +86,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `docs/post-gf0018-state` فوق `main@5dfa0fe` بعد دمج PR #36. Run `32933591101` أخضر وحقق migration deploy وPostgreSQL integration وBackend وFlutter وSecret Scan. GF-0015 إلى GF-0018 مغلقة ضمن النطاق الحالي، مع بقاء متطلبات UAT والتشغيل المؤسسي العامة.
+تم تحديث هذا الملف على فرع `phase/gf0019-shipment-idempotency` فوق `main@94ca689` بعد تدقيق PR #35. صرف المنتج التام عند SHIPPED مدمج ومتحقق في CI، بينما حماية createShipment من retry وتجربة fixture مخزون حقيقي قيد هذا الفرع؛ لا يُعلن GF-0019 مكتملًا قبل PR/CI.

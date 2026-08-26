@@ -346,6 +346,7 @@ model IdempotencyKey {
   productionConsumption ProductionMaterialConsumption?
   qualityCheck          QualityCheck?
   purchaseReceipt       PurchaseReceipt?
+  shipment              Shipment?
 
   payroll               Payroll?
   @@index([scope, createdAt])
@@ -985,11 +986,13 @@ model Shipment {
   proofOfDelivery   String?
   deliveredById     String?
   notes             String?
+  idempotencyKeyId  String?        @unique
   createdAt         DateTime       @default(now())
 
   salesOrder      SalesOrder       @relation(fields: [salesOrderId], references: [id])
   deliveredBy     User?            @relation("ShipmentDeliverer", fields: [deliveredById], references: [id], onDelete: SetNull)
   shippingCompany ShippingCompany? @relation(fields: [shippingCompanyId], references: [id])
+  idempotencyKey  IdempotencyKey?  @relation(fields: [idempotencyKeyId], references: [id])
 
   @@map("shipments")
 }

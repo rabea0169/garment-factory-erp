@@ -47,12 +47,16 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
       Promise.resolve({ id: 'sh-2', ...data }),
     );
 
-    const result = await service.createShipment({
-      salesOrderId: 'so-1',
-      shippingCost: 75,
-      trackingNumber: 'TRK-99',
-    });
+    const result = await service.createShipment(
+      {
+        salesOrderId: 'so-1',
+        shippingCost: 75,
+        trackingNumber: 'TRK-99',
+      },
+      'actor-1',
+    );
 
+    if (!('code' in result)) throw new Error('Expected created shipment');
     expect(result.code).toMatch(/^SHP-\d{8}-[0-9A-F]{8}$/);
     expect(prisma.shipment.create).toHaveBeenCalledWith({
       data: {
@@ -64,6 +68,41 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     });
   });
 
+  it('يمنع تكرار إنشاء الشحنة عند إعادة استخدام Idempotency-Key', async () => {
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.CONFIRMED,
+    });
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    prisma.shipment.create.mockResolvedValue({
+      id: 'sh-3',
+      salesOrderId: 'so-1',
+      shippingCost: 75,
+    });
+
+    await service.createShipment(
+      { salesOrderId: 'so-1', shippingCost: 75 },
+      'actor-1',
+      'shipment-key-1',
+    );
+
+    expect(prisma.idempotencyKey.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          key: 'shipment-key-1',
+          scope: 'shipping.shipment.create',
+        }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
+    );
+    expect(prisma.idempotencyKey.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { key: 'shipment-key-1' } }) as Record<
+        string,
+        unknown
+      >,
+    );
+  });
+
   it('يرفض إنشاء شحنة لأمر غير مؤكد', async () => {
     prisma.salesOrder.findUnique.mockResolvedValue({
       id: 'so-1',
@@ -71,7 +110,7 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     });
 
     await expect(
-      service.createShipment({ salesOrderId: 'so-1' }),
+      service.createShipment({ salesOrderId: 'so-1' }, 'actor-1'),
     ).rejects.toThrow(BadRequestException);
     expect(prisma.shipment.create).not.toHaveBeenCalled();
   });

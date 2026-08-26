@@ -22,12 +22,16 @@ describe('ShippingController — التفويض والصلاحيات (GF-0003)',
     controller = new ShippingController(service as unknown as ShippingService);
   });
 
-  it('يفوّض قراءة الشحنات وإنشاءها إلى الخدمة', async () => {
+  it('يفوّض قراءة الشحنات وإنشاءها إلى الخدمة مع actor وidempotency', async () => {
     const body = { salesOrderId: 'so-1', shippingCost: 75 };
     await controller.getShipments();
-    await controller.createShipment(body);
+    await controller.createShipment(body, 'actor-1', 'shipment-key-1');
     expect(service.getShipments).toHaveBeenCalledTimes(1);
-    expect(service.createShipment).toHaveBeenCalledWith(body);
+    expect(service.createShipment).toHaveBeenCalledWith(
+      body,
+      'actor-1',
+      'shipment-key-1',
+    );
   });
 
   it('يمرر actor وPOD إلى خدمة انتقال الحالة', async () => {

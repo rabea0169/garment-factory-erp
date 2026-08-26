@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Query,
+  Headers,
 } from '@nestjs/common';
 import { ShippingService } from './shipping.service';
 import { ApiTags } from '@nestjs/swagger';
@@ -43,7 +44,11 @@ export class ShippingController {
 
   @Post()
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
-  async createShipment(@Body() body: CreateShipmentDto) {
-    return this.shippingService.createShipment(body);
+  async createShipment(
+    @Body() body: CreateShipmentDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.shippingService.createShipment(body, actorId, idempotencyKey);
   }
 }
