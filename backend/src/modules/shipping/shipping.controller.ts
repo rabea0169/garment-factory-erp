@@ -10,6 +10,7 @@ import {
 import { ShippingService } from './shipping.service';
 import { ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
 import { UpdateShipmentStatusDto } from './dto/update-shipment-status.dto';
@@ -30,8 +31,14 @@ export class ShippingController {
   async updateStatus(
     @Param('id') id: string,
     @Body() body: UpdateShipmentStatusDto,
+    @CurrentUser('id') actorId: string,
   ) {
-    return this.shippingService.updateShipmentStatus(id, body.status);
+    return this.shippingService.updateShipmentStatus(
+      id,
+      body.status,
+      actorId,
+      body.proofOfDelivery,
+    );
   }
 
   @Post()
