@@ -157,6 +157,45 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     expect(
       await prisma.stockLedgerEntry.count({ where: { reference: first.code } }),
     ).toBe(1);
+    const journal = await prisma.journalEntry.findFirst({
+      where: { reference: first.code },
+      include: { lines: true },
+    });
+    expect(journal).toMatchObject({ isAuto: true, reference: first.code });
+    expect(journal?.lines).toHaveLength(1);
+    expect(journal?.lines[0]).toMatchObject({
+      debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+      creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+    });
+    expect(journal?.lines[0].amount.toNumber()).toBe(50);
+    const accounts = await prisma.account.findMany({
+      where: {
+        id: {
+          in: [CHART_OF_ACCOUNTS.INVENTORY, CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE],
+        },
+      },
+      select: { id: true, balance: true },
+    });
+    expect(
+      accounts
+        .find((account) => account.id === CHART_OF_ACCOUNTS.INVENTORY)
+        ?.balance.toNumber(),
+    ).toBe(50);
+    expect(
+      accounts
+        .find((account) => account.id === CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE)
+        ?.balance.toNumber(),
+    ).toBe(-50);
+    const order = await prisma.purchaseOrder.findUnique({
+      where: { id: orderId },
+      select: { supplierId: true },
+    });
+    expect(order?.supplierId).toBeDefined();
+    const supplier = await prisma.supplier.findUnique({
+      where: { id: order!.supplierId },
+      select: { balance: true },
+    });
+    expect(supplier?.balance.toNumber()).toBe(50);
     const material = await prisma.rawMaterial.findUnique({
       where: { id: rawMaterialId },
     });
