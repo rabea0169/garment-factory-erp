@@ -81,7 +81,13 @@ describe('GF-0013 production workflow HTTP API (e2e)', () => {
         stageRunId: STAGE_RUN_UUID,
         stageVersion: 1,
       }),
-      recordStageOutput: jest.fn().mockResolvedValue(undefined),
+      recordStageOutput: jest.fn().mockResolvedValue({
+        replayed: false,
+        workOrderId: UUID,
+        stage: ProductionStage.CUTTING,
+        stageRunId: STAGE_RUN_UUID,
+        status: 'COMPLETED',
+      }),
       consumeMaterial: jest.fn().mockResolvedValue({
         replayed: false,
         consumptionId: UUID,
@@ -250,6 +256,7 @@ describe('GF-0013 production workflow HTTP API (e2e)', () => {
     await request(app.getHttpServer())
       .post(`/production/work-orders/${UUID}/stage-output`)
       .set('Authorization', `Bearer ${productionToken()}`)
+      .set('Idempotency-Key', 'http-stage-output-key-1')
       .send({
         stage: ProductionStage.CUTTING,
         inputQty: 10,
@@ -262,6 +269,8 @@ describe('GF-0013 production workflow HTTP API (e2e)', () => {
         workOrderId: UUID,
         stage: ProductionStage.CUTTING,
         status: 'COMPLETED',
+        replayed: false,
+        stageRunId: STAGE_RUN_UUID,
       });
 
     await request(app.getHttpServer())
@@ -277,9 +286,40 @@ describe('GF-0013 production workflow HTTP API (e2e)', () => {
         acceptedQty: 8,
         rejectedQty: 1,
         wasteQty: 1,
+        idempotencyKey: 'http-stage-output-key-1',
       },
       users[0].id,
     );
     expect(workflowMock.finalizeCost).toHaveBeenCalledWith(UUID, users[0].id);
+  });
+
+  it('يعيد نتيجة replay لمخرج المرحلة دون أثر إضافي عند تكرار المفتاح', async () => {
+    workflowMock.recordStageOutput.mockResolvedValueOnce({
+      replayed: true,
+      workOrderId: UUID,
+      stage: ProductionStage.CUTTING,
+      stageRunId: STAGE_RUN_UUID,
+      status: 'COMPLETED',
+    });
+
+    await request(app.getHttpServer())
+      .post(`/production/work-orders/${UUID}/stage-output`)
+      .set('Authorization', `Bearer ${productionToken()}`)
+      .set('Idempotency-Key', 'http-stage-output-key-1')
+      .send({
+        stage: ProductionStage.CUTTING,
+        inputQty: 10,
+        acceptedQty: 8,
+        rejectedQty: 1,
+        wasteQty: 1,
+      })
+      .expect(201)
+      .expect({
+        workOrderId: UUID,
+        stage: ProductionStage.CUTTING,
+        status: 'COMPLETED',
+        replayed: true,
+        stageRunId: STAGE_RUN_UUID,
+      });
   });
 });

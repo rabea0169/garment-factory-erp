@@ -50,7 +50,15 @@
 - لا توجد migration في GF-REMAINING-002؛ لا تغيير في schema ولا حذف أو backfill. يجب تشغيل reconciliation على كل خامة قبل أي بيئة مشتركة، ومقارنة `RawMaterial.currentStock` مع مجموع ledger الإجمالي، ثم مراجعة أي فروق legacy بقرار تدقيق مستقل.
 - اختبار PostgreSQL الحقيقي في `backend/test/inventory-warehouse.integration-spec.ts` يثبت مستودعين منفصلين، مطابقة الإجمالي، اختلاف `balanceAfter` بين المستودعات، وتعارض صرف متزامن مع rollback.
 
-## 5. Migration GF-0014 — Quality and Waste
+## 5. Migration GF-REMAINING-003 — Stage Output Idempotency
+
+**الاسم:** `20260830060000_gf_remaining_003_stage_output_idempotency`
+
+تضيف migration العمود nullable `production_stage_runs.idempotencyKeyId` مع unique index وFK إلى `idempotency_keys`. لا تعدّل مخرجات المراحل القديمة ولا تنشئ مفاتيح لها؛ الطلبات الجديدة التي تحمل `Idempotency-Key` تربط المفتاح بالـ`ProductionStageRun` داخل transaction واحدة. replay بالمفتاح والمحتوى نفسه يعيد النتيجة دون تحديث أو activity log إضافي، بينما المحتوى المختلف أو النطاق المختلف يُرفض بـ409.
+
+التغيير additive وغير تدميري، ولا يتطلب backfill. يجب تشغيل `npx prisma migrate deploy` على PostgreSQL نظيفة ونسخة بيانات legacy، ثم تشغيل اختبارات workflow والتزامن. rollback عبر backup/restore أو migration عكسية معتمدة بعد إيقاف مسار stage-output؛ SQL العكسي هو حذف FK والفهرس والعمود فقط، ولا يُحذف أي stage run أو idempotency record يدويًا.
+
+## 6. Migration GF-0014 — Quality and Waste
 
 **الاسم:** `20260830000000_gf0014_quality_waste`
 

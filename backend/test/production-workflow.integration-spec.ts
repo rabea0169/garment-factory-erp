@@ -303,6 +303,144 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     });
   });
 
+  it('replays identical stage output without a second completion or activity log', async () => {
+    const transition = await workflowService.transitionStage(
+      {
+        workOrderId: scenario.workOrderId,
+        toStage: ProductionStage.CUTTING,
+      },
+      scenario.userId,
+    );
+    const input = {
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+      idempotencyKey: `gf0013-stage-output-${randomUUID()}`,
+    };
+
+    const first = await workflowService.recordStageOutput(
+      input,
+      scenario.userId,
+    );
+    const replay = await workflowService.recordStageOutput(
+      input,
+      scenario.userId,
+    );
+
+    expect(first).toMatchObject({
+      replayed: false,
+      stageRunId: transition.stageRunId,
+      status: ProductionStageRunStatus.COMPLETED,
+    });
+    expect(replay).toMatchObject({
+      replayed: true,
+      stageRunId: transition.stageRunId,
+      status: ProductionStageRunStatus.COMPLETED,
+    });
+    expect(
+      await prisma.productionStageRun.count({
+        where: {
+          id: transition.stageRunId,
+          status: ProductionStageRunStatus.COMPLETED,
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.activityLog.count({
+        where: {
+          userId: scenario.userId,
+          action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
+        },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.idempotencyKey.count({
+        where: { key: input.idempotencyKey },
+      }),
+    ).toBe(1);
+  });
+
+  it('rejects a different stage-output payload with the same idempotency key', async () => {
+    await workflowService.transitionStage(
+      {
+        workOrderId: scenario.workOrderId,
+        toStage: ProductionStage.CUTTING,
+      },
+      scenario.userId,
+    );
+    const key = `gf0013-stage-output-mismatch-${randomUUID()}`;
+    const input = {
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+      idempotencyKey: key,
+    };
+    await workflowService.recordStageOutput(input, scenario.userId);
+
+    await expect(
+      workflowService.recordStageOutput(
+        { ...input, acceptedQty: 7, rejectedQty: 2 },
+        scenario.userId,
+      ),
+    ).rejects.toThrow('Idempotency key payload mismatch');
+
+    const saved = await prisma.productionStageRun.findUnique({
+      where: {
+        workOrderId_stage: {
+          workOrderId: scenario.workOrderId,
+          stage: ProductionStage.CUTTING,
+        },
+      },
+    });
+    expect(saved).toMatchObject({ acceptedQty: 8, rejectedQty: 1 });
+  });
+
+  it('handles concurrent identical stage outputs as one completion', async () => {
+    const transition = await workflowService.transitionStage(
+      {
+        workOrderId: scenario.workOrderId,
+        toStage: ProductionStage.CUTTING,
+      },
+      scenario.userId,
+    );
+    const input = {
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+      idempotencyKey: `gf0013-stage-output-concurrent-${randomUUID()}`,
+    };
+
+    const results = await Promise.all([
+      workflowService.recordStageOutput(input, scenario.userId),
+      workflowService.recordStageOutput(input, scenario.userId),
+    ]);
+
+    expect(results.filter((result) => !result.replayed)).toHaveLength(1);
+    expect(results.filter((result) => result.replayed)).toHaveLength(1);
+    expect(
+      await prisma.productionStageRun.count({
+        where: { id: transition.stageRunId },
+      }),
+    ).toBe(1);
+    expect(
+      await prisma.activityLog.count({
+        where: {
+          userId: scenario.userId,
+          action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
+        },
+      }),
+    ).toBe(1);
+  });
+
   it('records consumption, calculates material waste cost, and replays safely', async () => {
     const transition = await workflowService.transitionStage(
       {

@@ -21,14 +21,14 @@
 | ID | المهمة | الملفات الأساسية | التبعيات | معيار القبول | الحالة |
 |---|---|---|---|---|---|
 | GF-REMAINING-001 | حماية ProductsController الحساسة واختبار RBAC | `backend/src/modules/products/products.controller.ts`، الاختبارات، `docs/API_CONTRACT.md` | خط الأساس `ab8f87d` | كل مسار تعديل/حذف/BOM يحمل دورًا مناسبًا؛ `401` بلا token و`403` للدور الخطأ ونجاح للدور الصحيح، مع تحقق DTO | 🟡 منفذة على فرع `fix/gf-remaining-001-products-rbac`؛ تنتظر PR/CI |
-| GF-REMAINING-002 | إصلاح رصيد المستودع في القراءة والـledger | `backend/src/modules/inventory/**`، اختبارات التكامل، `docs/DATA_AND_MIGRATIONS.md` | GF-0007 وGF-REMAINING-001 بعد الدمج والتحقق | حركات في مستودعين تعطي رصيد كل مستودع بدقة؛ لا كتابة رصيد مباشر؛ اختبار PostgreSQL على CI | 🟡 منفذة على فرع `fix/gf-remaining-002-inventory-ledger`؛ تنتظر PR/CI |
+| GF-REMAINING-002 | إصلاح رصيد المستودع في القراءة والـledger | `backend/src/modules/inventory/**`، اختبارات التكامل، `docs/DATA_AND_MIGRATIONS.md` | GF-0007 وGF-REMAINING-001 بعد الدمج والتحقق | حركات في مستودعين تعطي رصيد كل مستودع بدقة؛ لا كتابة رصيد مباشر؛ اختبار PostgreSQL على CI | ✅ مدمجة في `main@c18a2aa`؛ PR #49 وCI أخضر |
 
 ## P1 — المسار التشغيلي والـPilot
 
 | ID | المهمة | الملفات الأساسية | التبعيات | معيار القبول | الحالة |
 |---|---|---|---|---|---|
-| GF-REMAINING-003 | ضمان idempotency لمخرجات المراحل | `backend/src/modules/production/**`، الاختبارات، `docs/API_CONTRACT.md` | GF-0013 وGF-REMAINING-002 بعد الدمج والتحقق | نفس المفتاح والمحتوى يعيدان النتيجة دون أثر ثانٍ؛ payload مختلف يرد `409`؛ replay متزامن آمن | 📅 مخططة |
-| GF-REMAINING-004 | Backend Dashboard/Reports حقيقي | وحدة جديدة محدودة أو `dashboard` حسب البنية الحالية، Flutter، docs، اختبارات | تثبيت تعريفات KPI وGF-REMAINING-002 | `/dashboard/stats` محمي ويعيد KPIs من قاعدة البيانات مع فترة ومصدر واضحين؛ لا static/mock fallback | 📅 مخططة |
+| GF-REMAINING-003 | ضمان idempotency لمخرجات المراحل | `backend/src/modules/production/**`، الاختبارات، `docs/API_CONTRACT.md` | GF-0013 وGF-REMAINING-002 بعد الدمج والتحقق | نفس المفتاح والمحتوى يعيدان النتيجة دون أثر ثانٍ؛ payload مختلف يرد `409`؛ replay متزامن آمن | 🟡 PR #50؛ CI أخضر؛ ينتظر الدمج |
+| GF-REMAINING-004 | Backend Dashboard/Reports حقيقي | وحدة جديدة محدودة أو `dashboard` حسب البنية الحالية، Flutter، docs، اختبارات | GF-REMAINING-003 بعد الدمج والتحقق؛ تثبيت تعريفات KPI | `/dashboard/stats` محمي ويعيد KPIs من قاعدة البيانات مع فترة ومصدر واضحين؛ لا static/mock fallback | ⏳ التالية بعد دمج PR #50 |
 | GF-REMAINING-005 | ربط استلام المشتريات بالترحيل المالي | `backend/src/modules/purchasing/**`، financial posting، schema إن لزم، اختبارات | GF-0018 أو قرار transaction موثق | `receiveOrder` يغيّر المخزون ويسجل قيدًا متوازنًا داخل transaction واحدة وبـidempotency؛ rollback عند الفشل | 📅 مخططة |
 | GF-REMAINING-006 | توسيع اختبارات PostgreSQL الحقيقية وRBAC | `backend/test/**`، CI | GF-REMAINING-001 إلى 005 بحسب المسار | migration deploy وintegration suites على PostgreSQL 16؛ اختبارات 401/403 والتكرار والrollback، مع عدم إخفاء فشل | 📅 مخططة |
 | GF-REMAINING-007 | اختبار الأداء القابل للتكرار | `backend/test/performance/**` أو أداة معتمدة، CI/docs | استقرار API وبيئة PostgreSQL | قياس p95 وthroughput وpool saturation لحمل موثق؛ العتبات تعتمد قرارًا لا تخمينًا | 📅 مخططة |

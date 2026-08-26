@@ -31,6 +31,7 @@ export interface RecordStageOutputInput {
   rejectedQty: number;
   wasteQty: number;
   notes?: string;
+  idempotencyKey?: string;
 }
 
 export interface ConsumeMaterialInput {
@@ -56,6 +57,14 @@ export interface StageTransitionResult {
   toStage: ProductionStage;
   stageRunId: string;
   stageVersion: number;
+}
+
+export interface StageOutputResult {
+  replayed: boolean;
+  workOrderId: string;
+  stage: ProductionStage;
+  stageRunId: string;
+  status: ProductionStageRunStatus;
 }
 
 export interface MaterialConsumptionResult {
@@ -233,7 +242,7 @@ export class ProductionWorkflowService {
   async recordStageOutput(
     input: RecordStageOutputInput,
     actorId?: string,
-  ): Promise<void> {
+  ): Promise<StageOutputResult> {
     assertNonNegativeQuantities({
       inputQty: input.inputQty,
       acceptedQty: input.acceptedQty,
@@ -249,125 +258,161 @@ export class ProductionWorkflowService {
       );
     }
 
-    await this.prisma.$transaction(async (tx) => {
-      const stageRun = await tx.productionStageRun.findUnique({
-        where: {
-          workOrderId_stage: {
-            workOrderId: input.workOrderId,
-            stage: input.stage,
-          },
-        },
-        include: {
-          workOrder: {
-            select: { currentStage: true, productVariantId: true, code: true },
-          },
-        },
-      });
-      if (!stageRun) throw new NotFoundException('Stage run not found');
-      if (stageRun.workOrder.currentStage !== input.stage) {
-        throw new BadRequestException(
-          'Stage output must be recorded for the current production stage',
-        );
-      }
-      if (stageRun.status === ProductionStageRunStatus.COMPLETED) {
-        throw new ConflictException('Stage run is already completed');
-      }
-      if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
-        throw new BadRequestException('Stage run is cancelled');
-      }
+    const hash = requestHash(input);
+    const replay = await this.findStageOutputReplay(input.idempotencyKey, hash);
+    if (replay) return replay;
 
-      await tx.productionStageRun.update({
-        where: { id: stageRun.id },
-        data: {
-          inputQty: input.inputQty,
-          acceptedQty: input.acceptedQty,
-          rejectedQty: input.rejectedQty,
-          wasteQty: input.wasteQty,
-          status: ProductionStageRunStatus.COMPLETED,
-          completedAt: new Date(),
-          notes: input.notes,
-        },
-      });
-
-      if (actorId) {
-        await tx.activityLog.create({
-          data: {
-            userId: actorId,
-            action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
-            module: 'production',
-            details: {
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const stageRun = await tx.productionStageRun.findUnique({
+          where: {
+            workOrderId_stage: {
               workOrderId: input.workOrderId,
               stage: input.stage,
-              inputQty: input.inputQty,
-              acceptedQty: input.acceptedQty,
-              rejectedQty: input.rejectedQty,
-              wasteQty: input.wasteQty,
+            },
+          },
+          include: {
+            workOrder: {
+              select: {
+                currentStage: true,
+                productVariantId: true,
+                code: true,
+              },
             },
           },
         });
-      }
+        if (!stageRun) throw new NotFoundException('Stage run not found');
+        if (stageRun.workOrder.currentStage !== input.stage) {
+          throw new BadRequestException(
+            'Stage output must be recorded for the current production stage',
+          );
+        }
+        if (stageRun.status === ProductionStageRunStatus.COMPLETED) {
+          throw new ConflictException('Stage run is already completed');
+        }
+        if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
+          throw new BadRequestException('Stage run is cancelled');
+        }
 
-      if (input.stage !== ProductionStage.PACKING || input.acceptedQty === 0) {
-        return;
-      }
+        let idempotencyKeyId: string | undefined;
+        if (input.idempotencyKey) {
+          const key = await tx.idempotencyKey.create({
+            data: {
+              key: input.idempotencyKey,
+              scope: 'production.stage-output',
+              requestHash: hash,
+            },
+            select: { id: true },
+          });
+          idempotencyKeyId = key.id;
+        }
 
-      const warehouse = await tx.warehouse.findFirst({
-        where: {
-          code: 'WH-FG',
-          type: 'FINISHED_GOODS',
-          isActive: true,
-        },
-      });
-      if (!warehouse) {
-        throw new BadRequestException('مخزن المنتج التام الافتراضي غير موجود');
-      }
+        await tx.productionStageRun.update({
+          where: { id: stageRun.id },
+          data: {
+            inputQty: input.inputQty,
+            acceptedQty: input.acceptedQty,
+            rejectedQty: input.rejectedQty,
+            wasteQty: input.wasteQty,
+            status: ProductionStageRunStatus.COMPLETED,
+            completedAt: new Date(),
+            notes: input.notes,
+            idempotencyKeyId,
+          },
+        });
 
-      const consumptions = await tx.productionMaterialConsumption.findMany({
-        where: { workOrderId: input.workOrderId },
-      });
-      if (consumptions.length === 0) {
-        throw new BadRequestException(
-          'لا يمكن ترحيل المنتج التام قبل تسجيل استهلاك خامات وتكلفة أمر التشغيل',
+        const result = {
+          replayed: false,
+          workOrderId: input.workOrderId,
+          stage: input.stage,
+          stageRunId: stageRun.id,
+          status: ProductionStageRunStatus.COMPLETED,
+        } satisfies StageOutputResult;
+
+        if (actorId) {
+          await tx.activityLog.create({
+            data: {
+              userId: actorId,
+              action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
+              module: 'production',
+              details: {
+                workOrderId: input.workOrderId,
+                stage: input.stage,
+                inputQty: input.inputQty,
+                acceptedQty: input.acceptedQty,
+                rejectedQty: input.rejectedQty,
+                wasteQty: input.wasteQty,
+              },
+            },
+          });
+        }
+
+        if (
+          input.stage !== ProductionStage.PACKING ||
+          input.acceptedQty === 0
+        ) {
+          return result;
+        }
+
+        const warehouse = await tx.warehouse.findFirst({
+          where: {
+            code: 'WH-FG',
+            type: 'FINISHED_GOODS',
+            isActive: true,
+          },
+        });
+        if (!warehouse) {
+          throw new BadRequestException(
+            'مخزن المنتج التام الافتراضي غير موجود',
+          );
+        }
+
+        const consumptions = await tx.productionMaterialConsumption.findMany({
+          where: { workOrderId: input.workOrderId },
+        });
+        if (consumptions.length === 0) {
+          throw new BadRequestException(
+            'لا يمكن ترحيل المنتج التام قبل تسجيل استهلاك خامات وتكلفة أمر التشغيل',
+          );
+        }
+        const materialCost = consumptions.reduce(
+          (sum, row) => sum.add(row.totalCost),
+          new Prisma.Decimal(0),
         );
-      }
-      const materialCost = consumptions.reduce(
-        (sum, row) => sum.add(row.totalCost),
-        new Prisma.Decimal(0),
-      );
-      const wasteCost = consumptions.reduce(
-        (sum, row) => sum.add(row.wasteCost),
-        new Prisma.Decimal(0),
-      );
-      const unitCost = materialCost.div(input.acceptedQty).toDecimalPlaces(4);
-      await tx.productionCostSnapshot.upsert({
-        where: {
-          workOrderId_status: {
+        const wasteCost = consumptions.reduce(
+          (sum, row) => sum.add(row.wasteCost),
+          new Prisma.Decimal(0),
+        );
+        const unitCost = materialCost.div(input.acceptedQty).toDecimalPlaces(4);
+        await tx.productionCostSnapshot.upsert({
+          where: {
+            workOrderId_status: {
+              workOrderId: input.workOrderId,
+              status: ProductionCostStatus.FINALIZED,
+            },
+          },
+          update: {
+            materialCost,
+            wasteCost,
+            totalCost: materialCost,
+            acceptedQty: input.acceptedQty,
+            unitCost,
+            capturedAt: new Date(),
+          },
+          create: {
             workOrderId: input.workOrderId,
             status: ProductionCostStatus.FINALIZED,
+            materialCost,
+            wasteCost,
+            totalCost: materialCost,
+            acceptedQty: input.acceptedQty,
+            unitCost,
           },
-        },
-        update: {
-          materialCost,
-          wasteCost,
-          totalCost: materialCost,
-          acceptedQty: input.acceptedQty,
-          unitCost,
-          capturedAt: new Date(),
-        },
-        create: {
-          workOrderId: input.workOrderId,
-          status: ProductionCostStatus.FINALIZED,
-          materialCost,
-          wasteCost,
-          totalCost: materialCost,
-          acceptedQty: input.acceptedQty,
-          unitCost,
-        },
-      });
+        });
 
-      // Atomic weighted-average receipt into the authoritative finished-good stock.
-      await tx.$executeRaw(
-        Prisma.sql`INSERT INTO "finished_good_stocks"
+        // Atomic weighted-average receipt into the authoritative finished-good stock.
+        await tx.$executeRaw(
+          Prisma.sql`INSERT INTO "finished_good_stocks"
           ("id", "warehouseId", "productVariantId", "quantity", "unitCost", "createdAt", "updatedAt")
         VALUES (${randomUUID()}, ${warehouse.id}, ${stageRun.workOrder.productVariantId}, ${input.acceptedQty}, ${unitCost}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
         ON CONFLICT ("warehouseId", "productVariantId") DO UPDATE SET
@@ -378,40 +423,51 @@ export class ProductionWorkflowService {
           END,
           "quantity" = "finished_good_stocks"."quantity" + EXCLUDED."quantity",
           "updatedAt" = CURRENT_TIMESTAMP`,
-      );
-      const stock = await tx.finishedGoodStock.findUniqueOrThrow({
-        where: {
-          warehouseId_productVariantId: {
+        );
+        const stock = await tx.finishedGoodStock.findUniqueOrThrow({
+          where: {
+            warehouseId_productVariantId: {
+              warehouseId: warehouse.id,
+              productVariantId: stageRun.workOrder.productVariantId,
+            },
+          },
+        });
+        await tx.stockLedgerEntry.create({
+          data: {
+            entryCode: `SLE-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomUUID().slice(0, 8).toUpperCase()}`,
+            type: 'RECEIVE',
             warehouseId: warehouse.id,
             productVariantId: stageRun.workOrder.productVariantId,
+            quantityDelta: input.acceptedQty,
+            balanceAfter: stock.quantity,
+            unitCost,
+            totalValue: unitCost.mul(input.acceptedQty),
+            reference: stageRun.workOrder.code,
+            notes: `إنتاج تام من التعبئة ${stageRun.workOrder.code}`,
           },
-        },
+        });
+        await tx.workOrder.update({
+          where: { id: input.workOrderId },
+          data: {
+            status: WorkOrderStatus.COMPLETED,
+            completedQty: { increment: input.acceptedQty },
+            rejectedQty: { increment: input.rejectedQty },
+            wasteQty: { increment: input.wasteQty },
+            endDate: new Date(),
+          },
+        });
+        return result;
       });
-      await tx.stockLedgerEntry.create({
-        data: {
-          entryCode: `SLE-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomUUID().slice(0, 8).toUpperCase()}`,
-          type: 'RECEIVE',
-          warehouseId: warehouse.id,
-          productVariantId: stageRun.workOrder.productVariantId,
-          quantityDelta: input.acceptedQty,
-          balanceAfter: stock.quantity,
-          unitCost,
-          totalValue: unitCost.mul(input.acceptedQty),
-          reference: stageRun.workOrder.code,
-          notes: `إنتاج تام من التعبئة ${stageRun.workOrder.code}`,
-        },
-      });
-      await tx.workOrder.update({
-        where: { id: input.workOrderId },
-        data: {
-          status: WorkOrderStatus.COMPLETED,
-          completedQty: { increment: input.acceptedQty },
-          rejectedQty: { increment: input.rejectedQty },
-          wasteQty: { increment: input.wasteQty },
-          endDate: new Date(),
-        },
-      });
-    });
+    } catch (error) {
+      if (input.idempotencyKey && isUniqueConstraintViolation(error)) {
+        const replay = await this.findStageOutputReplay(
+          input.idempotencyKey,
+          hash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
   }
 
   async consumeMaterial(
@@ -628,6 +684,36 @@ export class ProductionWorkflowService {
       toStage: transition.toStage,
       stageRunId: transition.toRun.id,
       stageVersion: transition.workOrder.stageVersion,
+    };
+  }
+
+  private async findStageOutputReplay(
+    key: string | undefined,
+    hash: string,
+  ): Promise<StageOutputResult | null> {
+    if (!key) return null;
+    const idempotency = await this.prisma.idempotencyKey.findUnique({
+      where: { key },
+    });
+    if (!idempotency) return null;
+    if (idempotency.scope !== 'production.stage-output') {
+      throw new ConflictException('Idempotency key scope mismatch');
+    }
+    if (idempotency.requestHash !== hash) {
+      throw new ConflictException('Idempotency key payload mismatch');
+    }
+    const stageRun = await this.prisma.productionStageRun.findUnique({
+      where: { idempotencyKeyId: idempotency.id },
+    });
+    if (!stageRun || stageRun.status !== ProductionStageRunStatus.COMPLETED) {
+      return null;
+    }
+    return {
+      replayed: true,
+      workOrderId: stageRun.workOrderId,
+      stage: stageRun.stage,
+      stageRunId: stageRun.id,
+      status: stageRun.status,
     };
   }
 
