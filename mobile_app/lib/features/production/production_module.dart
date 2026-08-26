@@ -13,5 +13,8 @@ ProductionCubit createProductionCubit({ApiClient? apiClient}) {
   return ProductionCubit(
     getWorkOrders: GetWorkOrders(repository),
     transitionStage: TransitionProductionStage(repository),
+    recordStageOutput: RecordProductionStageOutput(repository),
+    consumeMaterial: ConsumeProductionMaterial(repository),
+    finalizeCost: FinalizeProductionCost(repository),
   );
 }
