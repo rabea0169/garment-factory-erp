@@ -17,7 +17,7 @@
     "start": "nest start",
     "start:dev": "nest start --watch",
     "start:debug": "nest start --debug --watch",
-    "start:prod": "node dist/main",
+    "start:prod": "node dist/src/main.js",
     "lint": "eslint \"{src,apps,libs,test}/**/*.ts\"",
     "lint:fix": "eslint \"{src,apps,libs,test}/**/*.ts\" --fix",
     "typecheck": "tsc --noEmit",
@@ -28,7 +28,8 @@
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "test:e2e:cov": "jest --config ./test/jest-e2e.json --coverage --coverageReporters=text --coverageReporters=text-summary --coverageReporters=lcov",
     "test:integration": "jest --config ./test/jest-integration.json --runInBand",
-    "test:integration:required": "GF_REQUIRE_INTEGRATION=1 npm run test:integration"
+    "test:integration:required": "GF_REQUIRE_INTEGRATION=1 npm run test:integration",
+    "test:performance": "node test/performance/dashboard-load.mjs"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

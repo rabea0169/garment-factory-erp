@@ -7,7 +7,7 @@ import { Public } from './public.decorator';
 
 /**
  * C1: باكيت الأمان auth — 10 محاولات/دقيقة لكل IP لتقييد brute-force
- * على POST /auth/login. يتجاوز الـ default throttle (100/min).
+ * على POST /auth/login. يضيّق named default throttle (100/min) لهذا المسار فقط.
  */
 @ApiTags('Auth (المصادقة)')
 @Controller('auth')
@@ -15,7 +15,7 @@ export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
   @Public()
-  @Throttle({ auth: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('login')
   @HttpCode(HttpStatus.OK)
   @ApiOperation({ summary: 'تسجيل الدخول للموظفين والإدارة' })
