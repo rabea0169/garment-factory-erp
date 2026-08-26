@@ -1,5 +1,9 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { RejectionReason, WorkOrderStatus } from '@prisma/client';
+import {
+  ProductionStage,
+  QualityWasteReason,
+  RejectionReason,
+} from '@prisma/client';
 import {
   IsEnum,
   IsInt,
@@ -18,49 +22,58 @@ export class CreateQualityCheckDto {
   workOrderId: string;
 
   @ApiProperty({
-    enum: WorkOrderStatus,
-    example: WorkOrderStatus.SEWING,
-    description: 'المرحلة التي تم الفحص عندها',
+    example: 'uuid-of-stage-run',
+    description: 'معرف تنفيذ المرحلة الفعلي',
   })
-  @IsEnum(WorkOrderStatus, {
-    message: 'المرحلة يجب أن تكون إحدى قيم WorkOrderStatus',
-  })
-  stage: WorkOrderStatus;
+  @IsUUID(undefined, { message: 'معرف تنفيذ المرحلة يجب أن يكون UUID صالحًا' })
+  stageRunId: string;
 
-  @ApiProperty({ example: 100, description: 'الكمية المفحوصة (عدد صحيح ≥ 0)' })
+  @ApiProperty({
+    enum: ProductionStage,
+    example: ProductionStage.SEWING,
+    description: 'المرحلة الفعلية التي تم الفحص عندها',
+  })
+  @IsEnum(ProductionStage, { message: 'المرحلة غير صالحة' })
+  stage: ProductionStage;
+
+  @ApiProperty({ example: 100, description: 'الكمية المفحوصة' })
   @IsInt({ message: 'الكمية المفحوصة يجب أن تكون عددًا صحيحًا' })
   @Min(0, { message: 'الكمية المفحوصة لا يمكن أن تكون سالبة' })
   checkedQty: number;
 
-  @ApiProperty({ example: 95, description: 'الكمية الناجحة (عدد صحيح ≥ 0)' })
+  @ApiProperty({ example: 90, description: 'الكمية الناجحة' })
   @IsInt({ message: 'الكمية الناجحة يجب أن تكون عددًا صحيحًا' })
   @Min(0, { message: 'الكمية الناجحة لا يمكن أن تكون سالبة' })
   passedQty: number;
 
-  @ApiProperty({ example: 5, description: 'الكمية المرفوضة (عدد صحيح ≥ 0)' })
+  @ApiProperty({ example: 5, description: 'الكمية المرفوضة' })
   @IsInt({ message: 'الكمية المرفوضة يجب أن تكون عددًا صحيحًا' })
   @Min(0, { message: 'الكمية المرفوضة لا يمكن أن تكون سالبة' })
   rejectedQty: number;
 
+  @ApiProperty({ example: 5, description: 'كمية الهالك المصنف' })
+  @IsInt({ message: 'كمية الهالك يجب أن تكون عددًا صحيحًا' })
+  @Min(0, { message: 'كمية الهالك لا يمكن أن تكون سالبة' })
+  wasteQty: number;
+
   @ApiPropertyOptional({
     enum: RejectionReason,
     example: RejectionReason.SEWING_DEFECT,
-    description: 'سبب الرفض (اختياري)',
   })
   @IsOptional()
-  @IsEnum(RejectionReason, {
-    message: 'سبب الرفض يجب أن يكون إحدى قيم RejectionReason',
-  })
+  @IsEnum(RejectionReason, { message: 'سبب الرفض غير صالح' })
   rejectionReason?: RejectionReason;
 
   @ApiPropertyOptional({
-    example: 'عيوب خياطة في الأكمام',
-    description: 'ملاحظات (اختياري)',
+    enum: QualityWasteReason,
+    example: QualityWasteReason.DEFECT_RELATED,
   })
+  @IsOptional()
+  @IsEnum(QualityWasteReason, { message: 'سبب الهالك غير صالح' })
+  wasteReason?: QualityWasteReason;
+
+  @ApiPropertyOptional({ example: 'عيوب خياطة في الأكمام' })
   @IsOptional()
   @IsString()
   notes?: string;
-
-  // ملاحظة: قاعدة checked = passed + rejected (قاموس المجال رقم 3) تُفرض في GF-0014
-  // كقاعدة أعمال مع اختبار سلوكي — هنا نتحقق من صحة المدخلات فقط.
 }

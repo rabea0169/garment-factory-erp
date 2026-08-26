@@ -167,6 +167,14 @@ describe('Auth guard (e2e) — GF-0002', () => {
     return request(app.getHttpServer()).get('/hr/workers').expect(401);
   });
 
+  it('POST /quality بلا توكن → 401', () => {
+    return request(app.getHttpServer()).post('/quality').send({}).expect(401);
+  });
+
+  it('GET /quality/kpis بلا توكن → 401', () => {
+    return request(app.getHttpServer()).get('/quality/kpis').expect(401);
+  });
+
   it('GET /accounting/accounts بلا توكن → 401', () => {
     return request(app.getHttpServer()).get('/accounting/accounts').expect(401);
   });
@@ -242,6 +250,14 @@ describe('Auth guard (e2e) — GF-0002', () => {
       .post('/inventory/raw-materials/some-id/add-stock')
       .set('Authorization', `Bearer ${viewerToken()}`)
       .send({ quantity: 10, costPerUnit: 5 })
+      .expect(403);
+  });
+
+  it('VIEWER يحاول تسجيل فحص جودة (PRODUCTION_MANAGER) → 403', () => {
+    return request(app.getHttpServer())
+      .post('/quality')
+      .set('Authorization', `Bearer ${viewerToken()}`)
+      .send({})
       .expect(403);
   });
 

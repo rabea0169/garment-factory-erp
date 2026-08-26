@@ -42,12 +42,31 @@
 4. لا حذف نهائي لسجلات مالية/مخزنية — `isActive` أو حركة عكسية.
 5. القيم المالية (total/balance/amount) تُحسب في الخادم دائمًا.
 
-## 5. نقاط الاسترجاع (Rollback hooks)
+## 5. Migration GF-0014 — Quality and Waste
+
+**الاسم:** `20260830000000_gf0014_quality_waste`
+
+### ما تفعله
+
+1. تضيف `QualityWasteReason` و`QualityCheckStatus`، وتربط الفحص اختياريًا بـ`ProductionStageRun` وبالفاعل `User` وبمفتاح idempotency.
+2. تضيف `wasteQty`, `wasteReason`, `unitCost`, `wasteCost`, `status`, `createdById`, `idempotencyKeyId`, و`closedAt` إلى `quality_checks`.
+3. تضيف فهارس على أمر التشغيل/المرحلة/التاريخ والفاعل، وقيدًا فريدًا على `stageRunId` غير الفارغ، وقيود CHECK غير سالبة وقيد conservation وقيد إلزام سبب الهالك عند `wasteQty > 0`.
+4. تبقي `stage` القديم للقراءة والتوافق، بينما يفرض التطبيق على الكتابات الجديدة `ProductionStage` و`stageRunId` المرتبطين بأمر التشغيل.
+
+### الأثر على البيانات القديمة
+
+التغيير additive ولا يحذف سجلات. تحصل الصفوف القديمة على `wasteQty = 0` و`status = COMPLETED` و`closedAt = CURRENT_TIMESTAMP`، بينما تبقى `stageRunId` و`createdById` و`idempotencyKeyId` فارغة للسجلات التاريخية. قيود CHECK الجديدة معلنة `NOT VALID` حتى لا تمنع نشر migration بسبب صفوف تاريخية تحتاج reconciliation، لكنها تُطبق على الصفوف الجديدة.
+
+### التحقق والـrollback
+
+يجب تشغيل `npx prisma migrate deploy` على قاعدة اختبار نظيفة ونسخة تحتوي بيانات جودة قديمة، ثم تشغيل `npm run test:integration`. لا يُستخدم `db push`، ولا تُعدل migration بعد تطبيقها. في حال التراجع يُوقف استخدام الحقول الجديدة ويُنفذ `git revert` مع migration عكسية معتمدة؛ لا تُحذف سجلات الجودة أو الهالك حذفًا نهائيًا.
+
+## 6. نقاط الاسترجاع (Rollback hooks)
 
 - المستودع: `git revert` لأي commit — لا migration بعد عكس schema إلا بmigration عكسية.
 - قاعدة البيانات محليًا: إعادة `docker-compose down -v` ثم `migrate dev` + seed (بيانات تطوير فقط — لا بيانات إنتاج موجودة بعد).
 
-## 6. Migration GF-0007 — Domain Foundation (تفصيل موثق)
+## 7. Migration GF-0007 — Domain Foundation (تفصيل موثق)
 
 **الاسم:** `20260825070834_domain_foundation_warehouse_stock_ledger_idempotency`
 
