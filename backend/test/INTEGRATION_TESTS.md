@@ -23,6 +23,8 @@ npm run test:integration
 
 كما تثبت حفظ split الكمية وفق `inputQty = acceptedQty + rejectedQty + wasteQty`، وتتحقق من استهلاك الخامة داخل transaction، وحساب `totalCost` و`wasteCost` من Weighted Average، وإعادة تشغيل العملية دون ledger إضافي، وrollback الكامل عند عدم كفاية الرصيد.
 
+يضيف `inventory-warehouse.integration-spec.ts` سيناريو GF-REMAINING-002: استلام وصرف خامة في مستودعين، التحقق من أن `SUM(quantityDelta)` يعطي رصيد كل مستودع وأن الإجمالي يطابق `RawMaterial.currentStock`، ثم تنفيذ صرفين متزامنين للتأكد من نجاح واحد فقط وتراجع الآخر دون ledger زائد أو رصيد سالب.
+
 ## حدود التغطية
 
 هذه الاختبارات لا تغطي بعد API/RBAC الخاص بواجهات مراحل الإنتاج ولا استلام المنتج التام حسب `FinishedGoodStock`. هذان المساران يحتاجان endpoints وخدمة مخزون المنتج التام في مراحل GF-0013 اللاحقة.

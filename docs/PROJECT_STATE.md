@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `ab8f87d` — آخر main متحقق قبل GF-REMAINING-001 |
-| فرع العمل الحالي | `fix/gf-remaining-001-products-rbac` — إصلاح RBAC والتحقق لمسارات المنتجات |
-| آخر commit في فرع العمل | `eb1e393` — حماية مسارات المنتجات واختبارات RBAC/UUID |
-| Pull Request الحالي | سيُفتح بعد رفع `fix/gf-remaining-001-products-rbac` |
+| آخر commit على main | `a3b7191` — دمج PR #48 وإغلاق GF-REMAINING-001؛ CI main أخضر |
+| فرع العمل الحالي | `fix/gf-remaining-002-inventory-ledger` — فصل رصيد المستودع عن الإجمالي |
+| آخر commit في فرع العمل | `1d26eb5` — فصل رصيد المستودع عن الإجمالي واختبارات PostgreSQL |
+| Pull Request الحالي | سيُفتح بعد رفع `fix/gf-remaining-002-inventory-ledger` |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
-| حالة CI على main | PASS — Run `32935090736` على `d815831`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة CI على main | PASS — Run `32939638175` بعد merge PR #48؛ Backend/PostgreSQL وFlutter وSecret Scan ناجحة |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
 | إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-001 — حماية ProductsController واختبار RBAC وUUID |
-| المرحلة النشطة | GF-REMAINING-001 قيد التنفيذ على فرع مستقل؛ لا تغيير قاعدة بيانات |
+| المهمة النشطة | GF-REMAINING-002 — فصل رصيد المستودع عن الإجمالي وإثبات المطابقة |
+| المرحلة النشطة | GF-REMAINING-002 قيد التنفيذ على فرع مستقل؛ لا تغيير schema ولا migration |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-SYNC-AUDIT.md`؛ handoff GF-REMAINING-001 سيُضاف مع الإصلاح |
-| Next exact action | تشغيل بوابات الجودة وفتح PR لـGF-REMAINING-001، ثم انتظار CI؛ لا يبدأ GF-REMAINING-002 قبل الدمج والتحقق |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-001.md`؛ handoff GF-REMAINING-002 سيُضاف مع الإصلاح |
+| Next exact action | تشغيل بوابات GF-REMAINING-002 وفتح PR، ثم انتظار CI على PostgreSQL؛ لا يبدأ GF-REMAINING-003 قبل الدمج والتحقق |
 
 ## المهام المكتملة على main
 

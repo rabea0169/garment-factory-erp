@@ -41,8 +41,11 @@
 | GET | `/inventory/raw-materials` | الخامات | 🔒 JWT | أي مستخدم موثّق |
 | GET | `/inventory/raw-materials/low-stock` | تنبيه النقص | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/inventory/raw-materials/:id/add-stock` | إضافة رصيد | 🔒 JWT | INVENTORY_MANAGER |
+| GET | `/inventory/raw-materials/:id/balance-by-warehouse` | رصيد الخامة موزعاً على المستودعات | 🔒 JWT | أي مستخدم موثّق؛ `:id` UUID |
 | GET | `/inventory/finished-goods` | المنتج التام | 🔒 JWT | أي مستخدم موثّق |
 | GET | `/inventory/summary` | ملخص المخزون | 🔒 JWT | أي مستخدم موثّق |
+
+يعيد `/inventory/raw-materials/:id/balance-by-warehouse` رصيد كل مستودع من `SUM(stock_ledger_entries.quantityDelta)`، وليس من آخر `balanceAfter`. وفي استجابة حركات المخزون، يمثل `balanceAfter` الرصيد بعد الحركة داخل `warehouseId` المحدد؛ أما `RawMaterial.currentStock` فيبقى الإجمالي عبر المستودعات. معرف غير صالح يرد `400`.
 
 ## الإنتاج — `/production`
 

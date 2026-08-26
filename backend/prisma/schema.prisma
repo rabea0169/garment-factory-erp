@@ -291,8 +291,8 @@ enum StockMovementType {
 
 // سجل حركات المخزون الموحد — مصدر الحقيقة للتدقيق (append-only):
 // كل تغيير على RawMaterial.currentStock يصاحبه سطر واحد هنا داخل نفس
-// prisma.$transaction، مع لقطة الرصيد بعد الحركة (balanceAfter) لتسهيل
-// المطابقة: currentStock == SUM(quantityDelta) لكل خامة.
+// prisma.$transaction. balanceAfter لقطة لرصيد المستودع المحدد في الحركة؛
+// أما المطابقة الإجمالية فتعتمد على currentStock == SUM(quantityDelta) لكل خامة.
 model StockLedgerEntry {
   id               String            @id @default(uuid())
   entryCode        String            @unique

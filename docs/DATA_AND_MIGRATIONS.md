@@ -42,6 +42,14 @@
 4. لا حذف نهائي لسجلات مالية/مخزنية — `isActive` أو حركة عكسية.
 5. القيم المالية (total/balance/amount) تُحسب في الخادم دائمًا.
 
+### 4.1 GF-REMAINING-002 — رصيد الخامة حسب المستودع
+
+- `RawMaterial.currentStock` هو snapshot للإجمالي عبر جميع المستودعات، ولا يُستخدم لعرض رصيد مستودع منفرد.
+- الرصيد التشغيلي لكل مستودع هو `SUM(stock_ledger_entries.quantityDelta)` مع ترشيح `rawMaterialId` و`warehouseId`. لا يعتمد الاستعلام على آخر `balanceAfter` لأن هذا الحقل لقطة تدقيق وقديمة قد تكون كُتبت بدلالة الإجمالي قبل هذا الإصلاح.
+- عند تنفيذ حركة خامة، تُقفل صف الخامة عبر `UPDATE ... increment` داخل transaction، ثم يُجمع ledger للمستودع نفسه، ويُكتب `balanceAfter` كرصد ذلك المستودع. يُرفض الصرف إذا أصبح الإجمالي أو رصيد المستودع سالبًا، ويؤدي الرفض إلى rollback كامل.
+- لا توجد migration في GF-REMAINING-002؛ لا تغيير في schema ولا حذف أو backfill. يجب تشغيل reconciliation على كل خامة قبل أي بيئة مشتركة، ومقارنة `RawMaterial.currentStock` مع مجموع ledger الإجمالي، ثم مراجعة أي فروق legacy بقرار تدقيق مستقل.
+- اختبار PostgreSQL الحقيقي في `backend/test/inventory-warehouse.integration-spec.ts` يثبت مستودعين منفصلين، مطابقة الإجمالي، اختلاف `balanceAfter` بين المستودعات، وتعارض صرف متزامن مع rollback.
+
 ## 5. Migration GF-0014 — Quality and Waste
 
 **الاسم:** `20260830000000_gf0014_quality_waste`
