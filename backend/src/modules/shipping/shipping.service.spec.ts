@@ -79,10 +79,18 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
 
     await service.updateShipmentStatus('sh-1', ShipmentStatus.SHIPPED);
 
-    expect(prisma.shipment.update).toHaveBeenCalledWith({
-      where: { id: 'sh-1' },
-      data: { status: ShipmentStatus.SHIPPED, shippedAt: expect.any(Date) },
-    });
+    const calls = prisma.shipment.update.mock.calls as unknown as Array<
+      [
+        {
+          where: { id: string };
+          data: { status: ShipmentStatus; shippedAt?: Date };
+        },
+      ]
+    >;
+    const request = calls[0][0];
+    expect(request.where).toEqual({ id: 'sh-1' });
+    expect(request.data.status).toBe(ShipmentStatus.SHIPPED);
+    expect(request.data.shippedAt).toBeInstanceOf(Date);
   });
 
   it('يرفض انتقالًا غير منطقي في حالة الشحنة', async () => {
