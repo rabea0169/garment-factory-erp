@@ -35,7 +35,7 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
   beforeEach(async () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
-      TRUNCATE TABLE "activity_logs", "shipments", "sales_orders", "customers", "users" CASCADE
+      TRUNCATE TABLE "activity_logs", "shipments", "sales_orders", "customers", "warehouses", "users" CASCADE
     `);
     const user = await prisma.user.create({
       data: {
