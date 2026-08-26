@@ -15,7 +15,7 @@
 | Base branch | `origin/main` |
 | Base SHA | `ab8f87ddc2f4e54cc4846720f89eb0f54f577400` |
 | Working branch | `fix/gf-remaining-001-products-rbac` |
-| Head SHA | `eb1e39374edd1cc7fe7fb7a273caeb828fab1058` |
+| Head SHA | implementation commit `dae390d`; documentation commit is the latest commit on this branch |
 | Pull Request | pending push and PR creation |
 | Merge status | not merged |
 | CI run | local gates pass; remote CI pending |
@@ -63,7 +63,7 @@
 
 هذا الإصلاح يثبت التفويض والتحقق على مستوى المسارات، لكنه لا يثبت سلامة منطق الخدمة أو قاعدة البيانات أو صلاحيات الأدوار في كل الوحدات. اختبارات E2E الحالية mock-backed؛ لا تُعامل كبديل عن PostgreSQL integration.
 
-تم إنشاء commit `eb1e39374edd1cc7fe7fb7a273caeb828fab1058` بعد مراجعة diff ونجاح البوابات المحلية. لم يُرفع الفرع ولم يُفتح PR بعد في هذه اللحظة؛ يجب رفعه ثم انتظار CI. لا يُدمج الفرع دون نجاح كل البوابات المطلوبة.
+تم إنشاء implementation commit `dae390d` بعد مراجعة diff ونجاح البوابات المحلية، ثم استُكمل توثيق handoff/state في commit لاحق. لم يُرفع الفرع ولم يُفتح PR بعد في هذه اللحظة؛ يجب رفعه ثم انتظار CI. لا يُدمج الفرع دون نجاح كل البوابات المطلوبة.
 
 ## 7. Next agent instructions
 
