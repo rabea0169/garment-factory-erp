@@ -47,9 +47,19 @@
 |---|---|---|---|---|
 | GET | `/production/work-orders` | أوامر التشغيل | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/production/work-orders` | إنشاء أمر تشغيل | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
-| PATCH | `/production/work-orders/:id/status` | تحديث حالة/مرحلة | 🔒 JWT | PRODUCTION_MANAGER |
+| PATCH | `/production/work-orders/:id/status` | تحديث الحالة legacy | 🔒 JWT | PRODUCTION_MANAGER |
+| POST | `/production/work-orders/:id/stage-transitions` | نقل الأمر إلى المرحلة التالية | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+| POST | `/production/work-orders/:id/stage-output` | تسجيل مخرجات المرحلة وإغلاقها | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+| POST | `/production/work-orders/:id/material-consumptions` | صرف خامة فعلي لمرحلة | 🔒 JWT | PRODUCTION_MANAGER, INVENTORY_MANAGER, GENERAL_MANAGER |
+| POST | `/production/work-orders/:id/cost/finalize` | تثبيت لقطة تكلفة المواد | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+
+مسارات GF-0013 الجديدة تمرر هوية الفاعل من JWT إلى `ProductionWorkflowService`. يدعم `stage-transitions` و`material-consumptions` رأس `Idempotency-Key` اختياريًا؛ تكرار المفتاح مع نفس المحتوى يعيد النتيجة دون أثر إضافي، واستخدامه مع payload مختلف يرد بـ409. لا تُرسل `actorId` أو `createdById` في body.
 
 **ملاحظة GF-0002:** `creatorId` لم يعد يُقبل من body — يُستخرج من الجلسة (`@CurrentUser('id')`).
+
+### قواعد مراحل GF-0013
+
+المراحل المسموحة بالترتيب هي `CUTTING`, ثم `SEWING`, ثم `IRONING`, ثم `PACKING`. لا يقبل API القفز بين المراحل، ولا تسجيل مخرج لمرحلة غير `currentStage`. يجب أن تحقق مخرجات المرحلة `inputQty = acceptedQty + rejectedQty + wasteQty` قبل إغلاقها. أما تكلفة الوحدة فتستخدم accepted output لآخر مرحلة مكتملة، وتبقى التكلفة الحالية تكلفة مواد فقط إلى أن تعتمد مكونات العمالة والمصاريف العامة.
 
 ## الجودة — `/quality`
 
@@ -160,8 +170,18 @@
   "items": [{ "productVariantId": "uuid", "quantity": 2 }]
 }
 // POST /accounting/vouchers  { "type": "PAYMENT", "amount": 500, "description": "صرف نثريات" }
-// POST /production/work-orders  { "productId": "uuid", "quantity": 100 }
+// POST /production/work-orders  { "productVariantId": "uuid", "bomVersionId": "uuid", "quantity": 100 }
 // PATCH /production/work-orders/:uuid/status  { "status": "SEWING" }
+// POST /production/work-orders/:uuid/stage-transitions
+// Header: Idempotency-Key: transition-2026-001
+// Body: { "toStage": "CUTTING", "reason": "بدء القص" }
+// POST /production/work-orders/:uuid/stage-output
+// Body: { "stage": "CUTTING", "inputQty": 100, "acceptedQty": 95, "rejectedQty": 3, "wasteQty": 2 }
+// POST /production/work-orders/:uuid/material-consumptions
+// Header: Idempotency-Key: consumption-2026-001
+// Body: { "stageRunId": "uuid", "rawMaterialId": "uuid", "warehouseId": "uuid", "plannedQuantity": 50, "actualQuantity": 52, "wasteQuantity": 2, "unit": "METER", "wasteReason": "CUTTING_LOSS" }
+// POST /production/work-orders/:uuid/cost/finalize
+// Body: {}
 // POST /inventory/raw-materials/:uuid/add-stock  { "quantity": 50, "costPerUnit": 45.5 }
 // POST /hr/production  { "workerId": "uuid", "workOrderId": "uuid?", "date": "2026-08-25T00:00:00.000Z", "piecesCount": 100 }
 // POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
