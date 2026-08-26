@@ -10,8 +10,8 @@
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `dd200c5` — دمج PR #51 وإغلاق GF-REMAINING-004؛ CI main run `32946638174` أخضر |
 | فرع العمل الحالي | `fix/gf-remaining-005-purchasing-financial` — ربط الاستلام بالترحيل المالي الذري |
-| آخر commit في فرع العمل | `f9bac48` — إصلاحات purchasing جاهزة للتحقق المالي والتزامن |
-| Pull Request الحالي | سيُفتح بعد اكتمال GF-REMAINING-005 والـPostgreSQL CI |
+| آخر commit في فرع العمل | `8a1bf02` — ربط الاستلام بالقيد المالي الذري واختبارات PostgreSQL؛ CI أخضر |
+| Pull Request الحالي | [PR #55](https://github.com/rabea0169/garment-factory-erp/pull/55) — CI كامل أخضر؛ ينتظر الدمج |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
 | حالة CI على main | `main@dd200c5` بعد دمج PR #51؛ CI main run `32946638174` أخضر |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ GF5 لا يضيف migration |
@@ -19,13 +19,13 @@
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
 | المهمة النشطة | GF-REMAINING-005 — ربط استلام المشتريات بالترحيل المالي |
-| المرحلة النشطة | GF-REMAINING-005 قيد التنفيذ على فرع مستقل؛ يجب إثبات القيد والrollback على PostgreSQL |
+| المرحلة النشطة | GF-REMAINING-005 مكتملة على فرع مستقل؛ PR #55 وCI أخضران؛ الدمج فقط بتفويض صريح |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-004.md`؛ handoff GF-REMAINING-005 سيُضاف |
-| Next exact action | تشغيل full gates وفتح PR GF-REMAINING-005؛ لا يبدأ GF-REMAINING-006 قبل الدمج والتحقق |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-005.md` |
+| Next exact action | دمج PR #55 بتفويض صريح ثم التحقق من main CI؛ بعدها يبدأ GF-REMAINING-006 |
 
 ## المهام المكتملة على main
 

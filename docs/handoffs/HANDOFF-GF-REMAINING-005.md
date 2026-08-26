@@ -3,7 +3,7 @@
 ## 1. Scope and verdict
 
 - **Task ID:** GF-REMAINING-005
-- **Verdict:** implementation complete on branch; ready for PR review and PostgreSQL CI.
+- **Verdict:** implementation complete on branch; CI fully green and ready for merge authorization.
 - **Base:** `origin/main@dd200c5` after merge of PR #51.
 - **In scope:** ربط استلام المشتريات بالمخزون والقيد المالي والذمم داخل transaction واحدة، حماية الاستلامات المتزامنة، وإثبات idempotency والمرتجعات المالية.
 - **Out of scope:** اعتماد فواتير الموردين، الدفع النقدي، VAT على المشتريات، وإغلاق الفترات المالية خارج ما يفرضه FinancialPostingService.
@@ -30,9 +30,9 @@
 | Prisma format/validate/generate | PASS | no schema change in this task |
 | Backend format/typecheck/lint/build | PASS locally | after cherry-pick and test additions |
 | Purchasing unit tests | PASS locally | 3 suites / 15 tests |
-| Full unit/e2e | PASS before final assertion extension | rerun required before PR |
-| PostgreSQL integration | skipped locally | no `GF_INTEGRATION_DATABASE_URL`; mandatory on CI |
-| Secret scan | pending PR CI | no secret added |
+| Full unit/e2e | PASS on CI run `32949019351` | all gates green |
+| PostgreSQL integration | PASS on CI run `32949019351` | receipt journal, supplier balance, rollback, and return idempotency covered |
+| Secret scan | PASS on CI run `32949019351` | no secret added |
 
 ## 5. Risks and acceptance criteria
 
