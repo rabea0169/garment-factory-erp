@@ -470,10 +470,14 @@ export class HrService {
         }
 
         const amount = payroll.netAmount.toNumber();
+        const advanceDeduct = payroll.advanceDeduct.toNumber();
         if (!Number.isFinite(amount) || amount <= 0) {
           throw new BadRequestException(
             'لا يمكن دفع كشف راتب بصافي مبلغ غير موجب',
           );
+        }
+        if (!Number.isFinite(advanceDeduct) || advanceDeduct < 0) {
+          throw new BadRequestException('خصم السلفة في كشف الراتب غير صالح');
         }
 
         const treasury = await tx.treasury.findUnique({
@@ -518,12 +522,26 @@ export class HrService {
             isAuto: true,
             lines: [
               {
-                debitAccountId: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+                // Payment settles the liability recognized at approval; it must not
+                // recognize a second expense.
+                debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
                 creditAccountId: CHART_OF_ACCOUNTS.CASH,
                 amount,
                 description:
                   input.notes ?? `دفع صافي راتب العامل ${payroll.workerId}`,
               },
+              ...(advanceDeduct > 0
+                ? [
+                    {
+                      // Clear the worker advance that was deducted from gross
+                      // salary without creating another expense.
+                      debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+                      creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+                      amount: advanceDeduct,
+                      description: `تسوية سلفة العامل ${payroll.workerId}`,
+                    },
+                  ]
+                : []),
             ],
             treasuryUpdates: [{ treasuryId: input.treasuryId, delta: -amount }],
             metadata: {
