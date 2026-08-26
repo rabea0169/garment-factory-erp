@@ -29,6 +29,28 @@ class ReportsCubit extends Cubit<ReportsState> {
         return;
       }
 
+      // حالة "فارغ": لا مبيعات ولا إنتاج ولا عمال ولا مخزون في الفترة.
+      final sales = List<dynamic>.from(report['sales'] as List);
+      final production = List<dynamic>.from(report['production'] as List);
+      final topWorkers = List<dynamic>.from(report['topWorkers'] as List);
+      final inventory = Map<String, dynamic>.from(report['inventory'] as Map);
+      final totalMaterials =
+          (inventory['totalMaterials'] as num?)?.toInt() ?? 0;
+      final lowStock =
+          (inventory['lowStockMaterials'] as num?)?.toInt() ?? 0;
+      final finishedGoods =
+          (inventory['totalFinishedGoodsTypes'] as num?)?.toInt() ?? 0;
+      final isEmpty = sales.isEmpty &&
+          production.isEmpty &&
+          topWorkers.isEmpty &&
+          totalMaterials == 0 &&
+          lowStock == 0 &&
+          finishedGoods == 0;
+      if (isEmpty) {
+        emit(const ReportsEmpty());
+        return;
+      }
+
       emit(ReportsLoaded(report));
     } catch (error) {
       // لا نعرض بيانات وهمية؛ غياب التقرير الحقيقي يجب أن يظهر كخطأ قابل للتشخيص.

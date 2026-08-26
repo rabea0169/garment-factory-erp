@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PayrollStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -196,7 +197,8 @@ describe('HrService — GF-0015 payroll', () => {
       )
       .mockResolvedValueOnce(
         payrollRow({
-          status: PayrollStatus.APPROVED,
+          // COMM-F04: after payment, status transitions to PAID.
+          status: PayrollStatus.PAID,
           isPaid: true,
           paidAt: paymentDate,
           approvedById: 'manager-1',
@@ -218,11 +220,15 @@ describe('HrService — GF-0015 payroll', () => {
 
     expect(result).toMatchObject({
       isPaid: true,
-      status: PayrollStatus.APPROVED,
+      status: PayrollStatus.PAID,
     });
     expect(prisma.payroll.updateMany).toHaveBeenCalledWith({
       where: { id: 'pay-1', status: PayrollStatus.APPROVED, isPaid: false },
-      data: { isPaid: true, paidAt: paymentDate },
+      data: {
+        status: PayrollStatus.PAID,
+        isPaid: true,
+        paidAt: paymentDate,
+      },
     });
     expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
       prisma,
@@ -263,5 +269,122 @@ describe('HrService — GF-0015 payroll', () => {
     await expect(
       service.approvePayroll('missing', 'manager-1'),
     ).rejects.toThrow(NotFoundException);
+  });
+
+  // COMM-F03: approvePayroll يُرحّل قيد اعتماد الأجور (Dr Salaries Expense /
+  // Cr Salaries Payable) لمبلغ gross عند الانتقال DRAFT → APPROVED. القيد ذري
+  // داخل نفس tx ويستخدم postingKey ثابت لمنع الترحيل المزدوج.
+  it('يرحّل قيد اعتماد (Dr SALARIES_EXPENSE / Cr SALARIES_PAYABLE) لمبلغ gross', async () => {
+    prisma.payroll.findUnique
+      .mockResolvedValueOnce(payrollRow())
+      .mockResolvedValueOnce(
+        payrollRow({
+          status: PayrollStatus.APPROVED,
+          approvedById: 'manager-1',
+          approvedAt: new Date('2026-08-31T12:00:00.000Z'),
+        }),
+      );
+    prisma.worker.findUnique.mockResolvedValue({
+      id: 'worker-1',
+      name: 'أحمد محمود',
+    });
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.approvePayroll('pay-1', 'manager-1');
+
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        postingKey: 'payroll-approval:pay-1',
+        reference: 'PAYROLL:pay-1',
+        isAuto: true,
+        lines: [
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+            creditAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+            amount: 660,
+          }),
+        ],
+        metadata: expect.objectContaining({
+          source: 'payroll.approval',
+          payrollId: 'pay-1',
+          workerId: 'worker-1',
+        }),
+      }),
+      'manager-1',
+    );
+  });
+
+  it('يتخطى ترحيل القيد عندما يكون gross === 0', async () => {
+    const zeroRow = payrollRow({
+      grossAmount: new Prisma.Decimal('0.00'),
+      advanceDeduct: new Prisma.Decimal('0.00'),
+      absenceDeduct: new Prisma.Decimal('0.00'),
+      netAmount: new Prisma.Decimal('0.00'),
+    });
+    prisma.payroll.findUnique
+      .mockResolvedValueOnce(zeroRow)
+      .mockResolvedValueOnce(
+        payrollRow({
+          status: PayrollStatus.APPROVED,
+          grossAmount: new Prisma.Decimal('0.00'),
+          advanceDeduct: new Prisma.Decimal('0.00'),
+          absenceDeduct: new Prisma.Decimal('0.00'),
+          netAmount: new Prisma.Decimal('0.00'),
+          approvedById: 'manager-1',
+        }),
+      );
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.approvePayroll('pay-1', 'manager-1');
+
+    expect(result).toMatchObject({
+      status: PayrollStatus.APPROVED,
+      grossAmount: 0,
+    });
+    expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('يستخدم postingKey ثابت payroll-approval:<payrollId>', async () => {
+    prisma.payroll.findUnique
+      .mockResolvedValueOnce(payrollRow({ id: 'pay-77' }))
+      .mockResolvedValueOnce(
+        payrollRow({
+          id: 'pay-77',
+          status: PayrollStatus.APPROVED,
+          approvedById: 'manager-1',
+        }),
+      );
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+
+    await service.approvePayroll('pay-77', 'manager-1');
+
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        postingKey: 'payroll-approval:pay-77',
+        reference: 'PAYROLL:pay-77',
+      }),
+      'manager-1',
+    );
+  });
+
+  it('يرجع الـ transaction كله عند فشل ترحيل القيد', async () => {
+    prisma.payroll.findUnique
+      .mockResolvedValueOnce(payrollRow())
+      .mockResolvedValueOnce(
+        payrollRow({
+          status: PayrollStatus.APPROVED,
+          approvedById: 'manager-1',
+        }),
+      );
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+    financial.postJournalEntryInTx.mockRejectedValueOnce(
+      new ConflictException('posting key مستخدم مع محتوى مالي مختلف'),
+    );
+
+    await expect(service.approvePayroll('pay-1', 'manager-1')).rejects.toThrow(
+      ConflictException,
+    );
   });
 });

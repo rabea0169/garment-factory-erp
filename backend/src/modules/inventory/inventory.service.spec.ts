@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
 import { createHash } from 'node:crypto';
 import {
   BadRequestException,
@@ -7,6 +8,8 @@ import {
 import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
 import { InventoryService } from './inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import {
   createEventEmitterMock,
   createPrismaMock,
@@ -106,6 +109,8 @@ describe('InventoryService — أساس المخزون القابل للتدقي
   let prisma: ExtendedPrismaMock;
   let tx: ReturnType<typeof createTxMock>;
   let eventEmitter: { emitAsync: jest.Mock };
+  let postJournalEntryInTx: jest.Mock;
+  let financial: FinancialPostingService;
 
   beforeEach(() => {
     prisma = createInventoryPrismaMock();
@@ -113,6 +118,17 @@ describe('InventoryService — أساس المخزون القابل للتدقي
     eventEmitter = createEventEmitterMock() as unknown as {
       emitAsync: jest.Mock;
     };
+    postJournalEntryInTx = jest.fn().mockResolvedValue({
+      entryId: 'je-1',
+      entryCode: 'JE-TEST-1',
+      totalDebit: 0,
+      totalCredit: 0,
+      linesCount: 1,
+      createdAt: new Date(),
+    });
+    financial = {
+      postJournalEntryInTx,
+    } as unknown as FinancialPostingService;
     prisma.$transaction.mockImplementation(
       async (
         fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
@@ -129,6 +145,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
     service = new InventoryService(
       prisma as unknown as PrismaService,
       eventEmitter as never,
+      financial,
     );
   });
 
@@ -1073,5 +1090,254 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         totalFinishedGoodsTypes: 4,
       });
     });
+  });
+});
+
+/**
+ * OPS-F01 / OPS-F11 — قيد GL على هدر وتسوية المخزون.
+ *
+ * النمط: نتحقق أن InventoryService.executeMovement (عبر waste() / adjust())
+ * يستدعي FinancialPostingService.postJournalEntryInTx داخل نفس الـ tx مع
+ * الطرفين الصحيحين (debit/credit) والمبلغ = |الكمية| × متوسط التكلفة المرجح،
+ * وأن postingKey مستقر مرتبط بـ entryCode.
+ */
+describe('InventoryService — قيد GL لهدر/تسوية المخزون (OPS-F01 / OPS-F11)', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let postJournalEntryInTx: jest.Mock;
+  let financial: FinancialPostingService;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    postJournalEntryInTx = jest.fn().mockResolvedValue({
+      entryId: 'je-1',
+      entryCode: 'JE-TEST-1',
+      totalDebit: 0,
+      totalCredit: 0,
+      linesCount: 1,
+      createdAt: new Date(),
+    });
+    financial = {
+      postJournalEntryInTx,
+    } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    prisma.warehouse.findUnique.mockResolvedValue(WAREHOUSE);
+    tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER);
+    tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.stockLedgerEntry.aggregate.mockResolvedValue({
+      _sum: { quantityDelta: 200 },
+    });
+    tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('OPS-F01: waste يرحّل Dr WASTE_EXPENSE / Cr INVENTORY بمبلغ |الكمية| × currentCost', async () => {
+    tx.rawMaterial.update.mockResolvedValue({
+      currentStock: 197.5,
+      costPerUnit: 45.5, // متوسط التكلفة المرجح
+      minStockLevel: 50,
+    });
+
+    await service.waste(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 2.5,
+        reason: 'قماش مبلل تالف',
+      },
+      'user-1',
+    );
+
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const call = postJournalEntryInTx.mock.calls[0] as unknown as [
+      unknown,
+      {
+        description: string;
+        reference?: string;
+        postingKey: string;
+        isAuto: boolean;
+        lines: {
+          debitAccountId: string;
+          creditAccountId: string;
+          amount: number;
+          description?: string;
+        }[];
+        userId?: string;
+        metadata: { source: string; rawMaterialId: string };
+      },
+      string | undefined,
+    ];
+    const input = call[1];
+    expect(input.isAuto).toBe(true);
+    expect(input.postingKey).toBe('inventory-waste:' + ENTRY_CREATED.entryCode);
+    expect(input.lines[0].debitAccountId).toBe(CHART_OF_ACCOUNTS.WASTE_EXPENSE);
+    expect(input.lines[0].creditAccountId).toBe(CHART_OF_ACCOUNTS.INVENTORY);
+    // amount = 2.5 × 45.5 = 113.75
+    expect(input.lines[0].amount).toBeCloseTo(113.75, 2);
+    expect(input.metadata).toEqual(
+      expect.objectContaining({
+        source: 'inventory.waste',
+        rawMaterialId: 'rm-1',
+      }),
+    );
+    expect(call[2]).toBe('user-1');
+  });
+
+  it('OPS-F11: تسوية موجبة (delta>0) ترحّل Dr INVENTORY / Cr INVENTORY_ADJUSTMENT_INCOME', async () => {
+    tx.rawMaterial.update.mockResolvedValue({
+      currentStock: 153.5,
+      costPerUnit: 50, // متوسط التكلفة المرجح
+      minStockLevel: 50,
+    });
+
+    await service.adjust(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantityDelta: 3.5, // موجب
+        reason: 'فائض جرد',
+      },
+      'user-1',
+    );
+
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const input = postJournalEntryInTx.mock.calls[0][1] as {
+      postingKey: string;
+      lines: {
+        debitAccountId: string;
+        creditAccountId: string;
+        amount: number;
+      }[];
+      metadata: { source: string; delta: number };
+    };
+    expect(input.postingKey).toBe(
+      'inventory-adjustment:' + ENTRY_CREATED.entryCode,
+    );
+    expect(input.lines[0].debitAccountId).toBe(CHART_OF_ACCOUNTS.INVENTORY);
+    expect(input.lines[0].creditAccountId).toBe(
+      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+    );
+    // amount = 3.5 × 50 = 175
+    expect(input.lines[0].amount).toBeCloseTo(175, 2);
+    expect(input.metadata.delta).toBe(3.5);
+    expect(input.metadata.source).toBe('inventory.adjustment');
+  });
+
+  it('OPS-F11: تسوية سالبة (delta<0) ترحّل Dr INVENTORY_ADJUSTMENT_EXPENSE / Cr INVENTORY', async () => {
+    tx.rawMaterial.update.mockResolvedValue({
+      currentStock: 146.5,
+      costPerUnit: 45.5,
+      minStockLevel: 50,
+    });
+
+    await service.adjust(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantityDelta: -3.5, // سالب
+        reason: 'عجز جرد شهري',
+      },
+      'user-1',
+    );
+
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const input = postJournalEntryInTx.mock.calls[0][1] as {
+      postingKey: string;
+      lines: {
+        debitAccountId: string;
+        creditAccountId: string;
+        amount: number;
+      }[];
+      metadata: { source: string; delta: number };
+    };
+    expect(input.postingKey).toBe(
+      'inventory-adjustment:' + ENTRY_CREATED.entryCode,
+    );
+    expect(input.lines[0].debitAccountId).toBe(
+      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+    );
+    expect(input.lines[0].creditAccountId).toBe(CHART_OF_ACCOUNTS.INVENTORY);
+    // amount = |−3.5| × 45.5 = 159.25
+    expect(input.lines[0].amount).toBeCloseTo(159.25, 2);
+    expect(input.metadata.delta).toBe(-3.5);
+  });
+
+  it('لا يُرحّل قيد GL إذا كان المبلغ 0 (كمية صفرية)', async () => {
+    tx.rawMaterial.update.mockResolvedValue({
+      currentStock: 200,
+      costPerUnit: 45.5,
+      minStockLevel: 50,
+    });
+
+    await service.adjust(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantityDelta: 0, // لا أثر مالي
+        reason: 'لا حركة',
+      },
+      'user-1',
+    );
+
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('RECEIVE/ISSUE لا تستدعي FinancialPostingService (يُرحّل من المستدعي)', async () => {
+    tx.rawMaterial.update.mockResolvedValue({
+      currentStock: 250,
+      costPerUnit: 46.13,
+      minStockLevel: 50,
+    });
+
+    await service.receive(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 50,
+        unitCost: 48,
+      },
+      'user-1',
+    );
+
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('postingKey مستقر يربط القيد بـ entryCode (idempotency)', async () => {
+    tx.rawMaterial.update.mockResolvedValue({
+      currentStock: 197.5,
+      costPerUnit: 45.5,
+      minStockLevel: 50,
+    });
+
+    await service.waste(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 2.5,
+        reason: 'قماش مبلل تالف',
+      },
+      'user-1',
+    );
+
+    // نفس ENTRY_CREATED.entryCode المُعاد من الـ mock — يثبت أن postingKey
+    // يعتمد على entryCode لا على Date.now() أو Math.random().
+    const input = postJournalEntryInTx.mock.calls[0][1] as {
+      postingKey: string;
+    };
+    expect(input.postingKey).toBe('inventory-waste:' + ENTRY_CREATED.entryCode);
   });
 });

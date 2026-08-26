@@ -16,6 +16,10 @@ class ReportsLoaded extends ReportsState {
   final Map<String, dynamic> data;
 }
 
+class ReportsEmpty extends ReportsState {
+  const ReportsEmpty();
+}
+
 class ReportsError extends ReportsState {
   const ReportsError(this.message);
 

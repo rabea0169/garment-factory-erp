@@ -305,6 +305,24 @@ async function main() {
       type: AccountType.ASSET,
     },
     {
+      id: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+      code: '1310',
+      name: 'مخزون المنتج التام',
+      type: AccountType.ASSET,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.WIP,
+      code: '1320',
+      name: 'مخزون تحت التشغيل',
+      type: AccountType.ASSET,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+      code: '1330',
+      name: 'سلف العمال',
+      type: AccountType.ASSET,
+    },
+    {
       id: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
       code: '2200',
       name: 'الموردون (ذمم دائنة)',
@@ -314,6 +332,12 @@ async function main() {
       id: CHART_OF_ACCOUNTS.VAT_PAYABLE,
       code: '2300',
       name: 'ضريبة القيمة المضافة المستحقة',
+      type: AccountType.LIABILITY,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+      code: '2400',
+      name: 'رواتب مستحقة',
       type: AccountType.LIABILITY,
     },
     {
@@ -329,9 +353,39 @@ async function main() {
       type: AccountType.REVENUE,
     },
     {
+      id: CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+      code: '4200',
+      name: 'إيرادات تسوية المخزون',
+      type: AccountType.REVENUE,
+    },
+    {
       id: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
       code: '5100',
       name: 'تكلفة البضاعة المباعة',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+      code: '5200',
+      name: 'مصروف الرواتب',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+      code: '5300',
+      name: 'مصروف الهدر',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+      code: '5400',
+      name: 'مصروف تسوية المخزون',
+      type: AccountType.EXPENSE,
+    },
+    {
+      id: CHART_OF_ACCOUNTS.SHIPPING_EXPENSE,
+      code: '5600',
+      name: 'مصروف الشحن',
       type: AccountType.EXPENSE,
     },
     {

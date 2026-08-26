@@ -646,6 +646,11 @@ model QualityCheck {
 enum PayrollStatus {
   DRAFT
   APPROVED
+  // COMM-F04: حالة "مدفوع" — يضعها payPayroll بعد تنفيذ القيد المالي وصرف
+  // الراتب. تميّز هذه الحالة بين الكشف المعتمد غير المدفوع والكشف المدفوع،
+  // فلا يبقى الاعتماد والصرف يتشاركان حالة APPROVED واحدة (وهو ما كان يكسر
+  // الـ state machine قبل هذه الإضافة).
+  PAID
 }
 
 enum WorkerSpecialty {
@@ -1144,11 +1149,28 @@ model Voucher {
   // A3: ربط السند بقيد مالي حقيقي (لا قيد لا سند — لا أثر مالي خفي).
   journalEntryId   String?
   treasuryId       String?
-  // Polymorphic counterparty — لا FK (يمكن أن يكون customer/supplier/worker).
+  // SCHEMA-F02 (polymorphic counterparty design):
+  //   `counterpartyType` + `counterpartyId` is a polymorphic reference — the
+  //   counterparty can be a Customer, Supplier, Worker, Treasury, or NONE (for
+  //   vouchers without a specific counterparty).
+  //   The DB enforces the whitelist via a NOT-VALID CHECK constraint (added by
+  //   migration 20260831113000_wave2_v2_voucher_counterparty_check):
+  //     counterpartyType IS NULL OR
+  //     counterpartyType IN ('CUSTOMER','SUPPLIER','WORKER','TREASURY','NONE')
+  //   No FK is enforced at the DB level (the counterparty can live in any of
+  //   several tables). The runtime entity-existence check is the responsibility
+  //   of the VoucherService — TODO: enforce in service layer before persisting
+  //   (raise BadRequestException if counterpartyId does not resolve to a real
+  //   Customer/Supplier/Worker/Treasury row). A future refactor may replace
+  //   this polymorphic pattern with three nullable FK columns
+  //   (customerId/supplierId/workerId) + an XOR CHECK.
   counterpartyType String?
   counterpartyId   String?
 
-  createdBy    User?         @relation(fields: [createdById], references: [id])
+  // SCHEMA-F03: `createdById` is NOT NULL (init migration), so the relation
+  //   must be required and `onDelete: Restrict` (matching the init migration's
+  //   ON DELETE RESTRICT). Prevents a User with vouchers from being deleted.
+  createdBy    User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
   journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id])
   treasury     Treasury?     @relation(fields: [treasuryId], references: [id])
 

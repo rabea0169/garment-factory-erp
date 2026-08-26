@@ -8,6 +8,8 @@ import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { EVENTS } from '../../events/event-types';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
@@ -179,6 +181,7 @@ export class InventoryService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly eventEmitter: EventEmitter2,
+    private readonly financialPosting: FinancialPostingService,
   ) {}
 
   // ===================== RAW MATERIALS (reads) =====================
@@ -996,6 +999,86 @@ export class InventoryService {
         },
         select: { entryCode: true, createdAt: true },
       });
+
+      // OPS-F01 / OPS-F11: قيد GL لهدر/تسوية المخزون داخل نفس الـ transaction.
+      // postingKey مستقر على شكل '<scope>:<entryCode>' فيربط القيد بسجل الـ ledger
+      // واحد-لواحد، فيمنع الترحيل المزدوج حتى لو أُعيد تنفيذ الـ executeLogic
+      // ضمن نفس الـ tx لأي سبب. لا قيد للـ RECEIVE/ISSUE هنا — استلام الخامات
+      // يُرحَّل من المستدعي (مثلاً purchasing.createReceipt)، والصرف يُرحَّل من
+      // consumeMaterial في production-workflow عبر قيد WIP/INVENTORY مستقل.
+      const glAmount = round2(Math.abs(totalValue));
+      if (glAmount > 0 && input.type === StockMovementType.WASTE) {
+        await this.financialPosting.postJournalEntryInTx(
+          tx,
+          {
+            description: `ترحيل هدر خامات — ${input.reference ?? entry.entryCode}`,
+            reference: input.reference ?? entry.entryCode,
+            postingKey: 'inventory-waste:' + entry.entryCode,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+                creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                amount: glAmount,
+                description:
+                  input.notes ?? `هدر خامات — ${input.rawMaterialId}`,
+              },
+            ],
+            userId: input.userId,
+            metadata: {
+              source: 'inventory.waste',
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.warehouseId,
+              quantity: input.unsignedQuantity,
+              unitCost: appliedUnitCost,
+              entryCode: entry.entryCode,
+            },
+          },
+          input.userId,
+        );
+      } else if (glAmount > 0 && input.type === StockMovementType.ADJUSTMENT) {
+        const isPositiveAdjust = input.delta > 0;
+        await this.financialPosting.postJournalEntryInTx(
+          tx,
+          {
+            description: `ترحيل تسوية جرد مخزون — ${
+              input.reference ?? entry.entryCode
+            }`,
+            reference: input.reference ?? entry.entryCode,
+            postingKey: 'inventory-adjustment:' + entry.entryCode,
+            isAuto: true,
+            lines: [
+              isPositiveAdjust
+                ? {
+                    debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                    creditAccountId:
+                      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+                    amount: glAmount,
+                    description:
+                      input.notes ?? `عجز جرد موجب — ${input.rawMaterialId}`,
+                  }
+                : {
+                    debitAccountId:
+                      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+                    creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                    amount: glAmount,
+                    description:
+                      input.notes ?? `عجز جرد سالب — ${input.rawMaterialId}`,
+                  },
+            ],
+            userId: input.userId,
+            metadata: {
+              source: 'inventory.adjustment',
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.warehouseId,
+              delta: input.delta,
+              unitCost: appliedUnitCost,
+              entryCode: entry.entryCode,
+            },
+          },
+          input.userId,
+        );
+      }
 
       const response: Omit<StockMovementResult, 'replayed'> = {
         entryCode: entry.entryCode,

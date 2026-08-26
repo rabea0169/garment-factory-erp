@@ -357,6 +357,49 @@ export class HrService {
           where: { id: payrollId },
         });
         if (!approved) throw new NotFoundException('كشف الراتب غير موجود');
+
+        // COMM-F03: ترحيل قيد اعتماد الأجور (Dr Salaries Expense / Cr Salaries Payable)
+        // على المبلغ الإجمالي عند الانتقال من DRAFT إلى APPROVED. القيد ذري داخل نفس
+        // tx فأي فشل في postJournalEntryInTx يرجع تحديث الحالة كله. يُتخطى القيد
+        // عند gross === 0 (لا قيمة للاستحقاق). postingKey ثابت لمنع الترحيل المزدوج
+        // عند إعادة محاولة الطلب بنفس المفتاح (idempotency على مستوى القيد نفسه).
+        const gross = approved.grossAmount.toNumber();
+        if (Number.isFinite(gross) && gross > 0) {
+          const worker = await tx.worker.findUnique({
+            where: { id: approved.workerId },
+            select: { id: true, name: true },
+          });
+          const workerLabel = worker?.name ?? approved.workerId;
+          const periodLabel = `${approved.periodStart.toISOString().slice(0, 10)}..${approved.periodEnd.toISOString().slice(0, 10)}`;
+          await this.financial.postJournalEntryInTx(
+            tx,
+            {
+              description: `اعتماد كشف راتب ${periodLabel} - موظف ${workerLabel}`,
+              reference: `PAYROLL:${approved.id}`,
+              postingKey: `payroll-approval:${approved.id}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+                  creditAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+                  amount: gross,
+                  description: `استحقاق أجر عامل ${workerLabel}`,
+                },
+              ],
+              metadata: {
+                source: 'payroll.approval',
+                payrollId: approved.id,
+                workerId: approved.workerId,
+                period: {
+                  start: approved.periodStart.toISOString(),
+                  end: approved.periodEnd.toISOString(),
+                },
+              },
+            },
+            actorId,
+          );
+        }
+
         const response = this.toPayrollResponse(approved);
         await tx.activityLog.create({
           data: {
@@ -442,13 +485,25 @@ export class HrService {
         }
 
         await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+        // COMM-F04 (service part): move status to PAID (not just isPaid=true).
+        // Previously the payPayroll method only flipped `isPaid` and left status
+        // at APPROVED — conflating "approved" and "paid" in the same enum value.
+        // With the new PAID enum value (added by migration
+        // 20260831130000_wave2_v2_add_payroll_paid_status), the state machine
+        // is DRAFT → APPROVED → PAID. The WHERE clause still filters by
+        // APPROVED + isPaid=false so only approved-and-unpaid payrolls can be
+        // paid (concurrent-safe via updateMany's optimistic lock).
         const updated = await tx.payroll.updateMany({
           where: {
             id: payrollId,
             status: PayrollStatus.APPROVED,
             isPaid: false,
           },
-          data: { isPaid: true, paidAt: paymentDate },
+          data: {
+            status: PayrollStatus.PAID,
+            isPaid: true,
+            paidAt: paymentDate,
+          },
         });
         if (updated.count !== 1) {
           throw new ConflictException('تعذر دفع الراتب؛ حالته تغيرت بالتزامن');

@@ -36,11 +36,32 @@ export const CHART_OF_ACCOUNTS = {
   // 1300 — المخزون (الخامات + التام).
   INVENTORY: '10000000-0000-0000-0000-000000000031',
 
+  // 1310 — مخزون المنتج التام (Finished Goods Stock). يُقيد عند إكمال أمر
+  // التشغيل (ProductionWorkflowService.recordStageOutput عند PACKING) بقيمة
+  // الخامات المستهلكة فعليًا: Dr FINISHED_GOOD_STOCK / Cr WIP. ACC-F01.
+  FINISHED_GOOD_STOCK: '10000000-0000-0000-0000-000000000041',
+
+  // 1320 — مخزون تحت التشغيل (Work-in-Process). يُقيد مقابل INVENTORY عند
+  // استهلاك الخامات في الإنتاج، ثم يُحوَّل إلى FINISHED_GOOD_STOCK عند
+  // الإكمال. ACC-F01.
+  WIP: '10000000-0000-0000-0000-000000000051',
+
+  // 1330 — سلف العمال (Worker Advances) — أصل ممثل للسلف المُمنحة للعاملين
+  // قبل اكتمال كشف الراتب. يُقيد عند صرف السلفة (Dr WORKER_ADVANCES / Cr CASH)
+  // ويُعكَس عند الخصم من كشف الراتب المعتمد. COMM-F05. Wave 2 v2: استخدمنا
+  // 10000000-...061 بدلاً من المواصفة الاسمية (...051) لأن السابقة محجوزة
+  // لـ WIP من subagent سابق — قاعدة "KEEP existing UUIDs" في تعليمات الموجة 2.
+  WORKER_ADVANCES: '10000000-0000-0000-0000-000000000061',
+
   // 2200 — الموردون (A/P control account).
   ACCOUNTS_PAYABLE: '20000000-0000-0000-0000-000000000021',
 
   // 2300 — ضريبة القيمة المضافة المستحقة (VAT payable).
   VAT_PAYABLE: '20000000-0000-0000-0000-000000000031',
+
+  // 2400 — رواتب مستحقة (Salaries Payable) — التزام ناتج عند اعتماد كشف الرواتب
+  // (Dr Salaries Expense / Cr Salaries Payable) قبل الصرف الفعلي. COMM-F03.
+  SALARIES_PAYABLE: '20000000-0000-0000-0000-000000000041',
 
   // 3000 — حقوق الملكية.
   OWNERS_EQUITY: '30000000-0000-0000-0000-000000000001',
@@ -48,8 +69,31 @@ export const CHART_OF_ACCOUNTS = {
   // 4100 — إيرادات المبيعات.
   SALES_REVENUE: '40000000-0000-0000-0000-000000000011',
 
+  // 4200 — إيرادات تسوية المخزون (Inventory Adjustment Income). يُقيد عند
+  // تسوية جرد موجبة (Dr INVENTORY / Cr INVENTORY_ADJUSTMENT_INCOME).
+  // OPS-F01 / OPS-F11.
+  INVENTORY_ADJUSTMENT_INCOME: '40000000-0000-0000-0000-000000000021',
+
   // 5100 — تكلفة البضاعة المباعة.
   COST_OF_GOODS_SOLD: '50000000-0000-0000-0000-000000000021',
+
+  // 5200 — مصروف الرواتب (Salaries Expense) — يُقيد عند اعتماد كشف الرواتب
+  // (Dr Salaries Expense / Cr Salaries Payable). COMM-F03.
+  SALARIES_EXPENSE: '50000000-0000-0000-0000-000000000031',
+
+  // 5300 — مصروف الهدر (Waste Expense). يُقيد عند تسجيل هدر خامات
+  // (Dr WASTE_EXPENSE / Cr INVENTORY). OPS-F01 / OPS-F11.
+  WASTE_EXPENSE: '50000000-0000-0000-0000-000000000041',
+
+  // 5400 — مصروف تسوية المخزون (Inventory Adjustment Expense). يُقيد عند
+  // تسوية جرد سالبة (Dr INVENTORY_ADJUSTMENT_EXPENSE / Cr INVENTORY).
+  // OPS-F01 / OPS-F11.
+  INVENTORY_ADJUSTMENT_EXPENSE: '50000000-0000-0000-0000-000000000051',
+
+  // 5600 — مصروف الشحن (Shipping Expense). يُقيد عند دفع أو استحقاق مصاريف
+  // شحن الطلبات للعملاء (Dr SHIPPING_EXPENSE / Cr CASH or ACCOUNTS_PAYABLE).
+  // COMM-F07. Wave 2 v2.
+  SHIPPING_EXPENSE: '50000000-0000-0000-0000-000000000061',
 
   // 5000 — المصروفات (مصروف عام للسندات النثرية).
   GENERAL_EXPENSE: '50000000-0000-0000-0000-000000000011',
