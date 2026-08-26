@@ -101,7 +101,8 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
   beforeAll(async () => {
     prismaFns.$transaction.mockImplementation(
-      (callback: (tx: typeof prismaFns) => Promise<unknown>) => callback(prismaFns),
+      (callback: (tx: typeof prismaFns) => Promise<unknown>) =>
+        callback(prismaFns),
     );
     prismaFns.voucher.create.mockImplementation(({ data }) =>
       Promise.resolve({ id: 'voucher-mock-001', ...data }),
