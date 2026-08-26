@@ -1,9 +1,18 @@
-import { Controller, Get, Post, Body, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Patch,
+  Query,
+} from '@nestjs/common';
 import { ShippingService } from './shipping.service';
 import { ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CreateShipmentDto } from './dto/create-shipment.dto';
+import { UpdateShipmentStatusDto } from './dto/update-shipment-status.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Shipping (الشحن)')
@@ -14,6 +23,15 @@ export class ShippingController {
   @Get()
   async getShipments(@Query() pagination: PaginationDto = new PaginationDto()) {
     return this.shippingService.getShipments(pagination);
+  }
+
+  @Patch(':id/status')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  async updateStatus(
+    @Param('id') id: string,
+    @Body() body: UpdateShipmentStatusDto,
+  ) {
+    return this.shippingService.updateShipmentStatus(id, body.status);
   }
 
   @Post()

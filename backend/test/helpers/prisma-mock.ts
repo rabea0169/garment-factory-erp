@@ -171,7 +171,13 @@ export function createPrismaMock() {
       update: jest.fn(),
       count: jest.fn(),
     },
-    shipment: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
+    shipment: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      count: jest.fn(),
+    },
   };
 }
 
