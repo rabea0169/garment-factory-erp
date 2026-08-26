@@ -2,10 +2,10 @@
 
 ## Status
 
-- Branch: `phase/gf0019-shipment-idempotency`
-- Base: `main@94ca689` بعد دمج PR #35
+- Branch: `docs/post-gf0019-state`
+- Base: `main@d815831` بعد دمج PR #39
 - Phase: GF-0019 Shipping and Inventory Hardening
-- Status: تنفيذ محلي؛ ينتظر commit/PR/CI
+- Status: مكتملة ومُدمجة؛ main CI أخضر
 
 ## Completed
 
@@ -36,9 +36,9 @@
 | Format/typecheck/lint | PASS | local |
 | Shipping unit/controller | PASS | 2 suites / 10 tests |
 | Full backend build/unit/E2E | PASS | build؛ 28 suites / 169 tests؛ 3 E2E suites / 50 tests |
-| PostgreSQL integration | NOT RUN LOCALLY | 6 suites / 24 tests skipped لغياب Docker وGF_INTEGRATION_DATABASE_URL |
-| Flutter | NOT RUN LOCALLY | لا تغييرات Flutter؛ مطلوب CI |
-| Secret scan | PENDING PR CI | الفحص المحلي لا يثبت CI؛ لا secrets جديدة |
+| PostgreSQL integration | PASS | migration deploy و6 suites / 24 tests على PostgreSQL في CI |
+| Flutter | PASS | Run PR #39 وmain Run `32935090736` |
+| Secret scan | PASS | Run PR #39 وmain Run `32935090736` |
 
 ## Boundaries
 
@@ -46,7 +46,11 @@
 
 ## Next Exact Task
 
-البوابات المحلية الكاملة خضراء، مع 6 integration suites / 24 tests متخطاة محليًا لغياب Docker وGF_INTEGRATION_DATABASE_URL. الخطوة التالية مراجعة diff والمهاجرة، ثم commit/push وفتح PR GF-0019؛ يجب أن يثبت CI migration deploy، replay، صرف المخزون والـledger، وFlutter وSecret Scan قبل الدمج.
+تدقيق PR #38 الخاص بـGF-0020 المدمج خارجيًا، ومقارنة GRN/AP مع حدود GF-0016 وGF-0018، قبل أي تعديل جديد. لا تُعتبر أعمال GF-0020 مكتملة لمجرد أن main CI أخضر.
+
+## Post-merge Evidence
+
+البوابات المحلية الكاملة خضراء، مع 6 integration suites / 24 tests متخطاة محليًا لغياب Docker وGF_INTEGRATION_DATABASE_URL. فُتح PR #39، ونجح CI في إثبات migration deploy وreplay وصرف المخزون والـledger وFlutter وSecret Scan. دُمج PR #39 إلى `main@d815831`، ونجح Run `32935090736` على main.
 
 ## Rollback
 
