@@ -4,9 +4,12 @@ import {
   SalesOrderStatus,
   ShipmentStatus,
   UserRole,
+  WarehouseType,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ShippingService } from '../src/modules/shipping/shipping.service';
+import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
@@ -25,13 +28,14 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    service = new ShippingService(prisma);
+    const inventory = new InventoryService(prisma, new EventEmitter2());
+    service = new ShippingService(prisma, inventory);
   });
 
   beforeEach(async () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
-      TRUNCATE TABLE "activity_logs", "shipments", "sales_orders", "customers", "users" CASCADE
+      TRUNCATE TABLE "activity_logs", "shipments", "sales_orders", "customers", "warehouses", "users" CASCADE
     `);
     const user = await prisma.user.create({
       data: {
@@ -42,6 +46,13 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
       },
     });
     userId = user.id;
+    await prisma.warehouse.create({
+      data: {
+        code: 'WH-FG',
+        name: 'GF-0017 Finished Goods Warehouse',
+        type: WarehouseType.FINISHED_GOODS,
+      },
+    });
     const customer = await prisma.customer.create({
       data: {
         code: `CUS-GF17-${randomUUID().slice(0, 8)}`,
