@@ -10,12 +10,13 @@
 export PGPASSWORD='<database-password>'
 export GF_INTEGRATION_DATABASE_URL='postgresql://<database-user>@<database-host>:<database-port>/<database-name>'
 export DATABASE_URL="$GF_INTEGRATION_DATABASE_URL"
+export GF_REQUIRE_INTEGRATION=1
 cd backend
 npx prisma migrate deploy
-npm run test:integration
+npm run test:integration:required
 ```
 
-عند عدم وجود `GF_INTEGRATION_DATABASE_URL` تُعلَّم suite كـ skipped عمدًا، حتى لا تتصل الاختبارات بقاعدة غير معروفة أو تفشل بيئة لا تحتوي PostgreSQL. في CI يجب تشغيل PostgreSQL service وتعيين المتغير قبل `npm run test:integration`.
+عند عدم وجود `GF_INTEGRATION_DATABASE_URL` تُعلَّم suite كـ skipped في الأمر التطويري الاختياري `npm run test:integration`، حتى لا تتصل الاختبارات بقاعدة غير معروفة. أما `npm run test:integration:required` فيضبط `GF_REQUIRE_INTEGRATION=1` ويفشل صراحة برسالة واضحة إذا غاب URL؛ ويستخدمه CI بعد تشغيل PostgreSQL service، لذلك لا يُقبل نجاح متجاوز بصمت.
 
 ## السيناريوهات
 
@@ -26,6 +27,12 @@ npm run test:integration
 يضيف `inventory-warehouse.integration-spec.ts` سيناريو GF-REMAINING-002: استلام وصرف خامة في مستودعين، التحقق من أن `SUM(quantityDelta)` يعطي رصيد كل مستودع وأن الإجمالي يطابق `RawMaterial.currentStock`، ثم تنفيذ صرفين متزامنين للتأكد من نجاح واحد فقط وتراجع الآخر دون ledger زائد أو رصيد سالب.
 
 يضيف `dashboard.integration-spec.ts` سيناريو GF-REMAINING-004: إنشاء طلب بيع وإنتاج عامل في يوم محدد، ثم التحقق من أن `/dashboard/stats` service يعيد المبيعات الشهرية والإنتاج اليومي وأفضل عامل من PostgreSQL ضمن `from/to`، مع مؤشرات المخزون ورفض الفترة المعكوسة في طبقة DTO/service.
+
+يثبت `production-workflow.integration-spec.ts` أن طلبين متزامنين متطابقين لتسجيل مخرج مرحلة واحد يعيدان نتيجة أصلية وreplay، مع إكمال واحد وActivityLog واحد فقط؛ القفل الصفّي يعالج السباق الحقيقي على PostgreSQL.
+
+## GF-REMAINING-006 — بوابات PostgreSQL وRBAC
+
+يضيف الإصلاح بوابة `integration-gate.ts` مركزية مرتبطة بإعداد Jest، وأمراً صارماً `test:integration:required` في `package.json`، ويشغله workflow CI مع `GF_REQUIRE_INTEGRATION=1`. كما تغطي E2E حالات 401 لمسار Dashboard واستلام المشتريات و403 لمنع VIEWER من إنشاء إذن استلام.
 
 ## حدود التغطية
 
