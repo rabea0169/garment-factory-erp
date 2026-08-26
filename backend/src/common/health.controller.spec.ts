@@ -1,6 +1,7 @@
 import { ServiceUnavailableException } from '@nestjs/common';
 import { HealthController } from './health.controller';
 import { PrismaService } from '../prisma/prisma.service';
+import { getMethodMetadata } from '../../test/helpers/method-metadata';
 
 describe('HealthController', () => {
   let controller: HealthController;
@@ -38,5 +39,22 @@ describe('HealthController', () => {
     await expect(callReadiness()).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
+  });
+
+  it('skips the default throttler for liveness and readiness probes', () => {
+    expect(
+      getMethodMetadata<boolean>(
+        'THROTTLER:SKIPdefault',
+        HealthController.prototype,
+        'health',
+      ),
+    ).toBe(true);
+    expect(
+      getMethodMetadata<boolean>(
+        'THROTTLER:SKIPdefault',
+        HealthController.prototype,
+        'readiness',
+      ),
+    ).toBe(true);
   });
 });

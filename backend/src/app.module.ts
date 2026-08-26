@@ -29,12 +29,11 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
       isGlobal: true,
     }),
     // C1: Rate limiter عام — 100 طلب/دقيقة افتراضياً لكل IP.
-    // الباكيت الأمني (auth/login) له throttle أضيق (10/دقيقة) — يُعاد تعريفه في AuthController.
+    // يضيق /auth/login إلى 10/دقيقة عبر override لنفس named throttler.
+    // لا نضيف throttler باسم auth عالمياً، لأن كل named throttler يُطبَّق على
+    // كل المسارات ما لم يُتجاوز صراحة، وكان ذلك يخنق كل API إلى 10 طلبات.
     ThrottlerModule.forRoot({
-      throttlers: [
-        { name: 'default', ttl: 60_000, limit: 100 },
-        { name: 'auth', ttl: 60_000, limit: 10 },
-      ],
+      throttlers: [{ name: 'default', ttl: 60_000, limit: 100 }],
     }),
     // نظام الأحداث بين الموديولات
     EventEmitterModule.forRoot({

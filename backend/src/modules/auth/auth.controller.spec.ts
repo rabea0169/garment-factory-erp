@@ -34,4 +34,21 @@ describe('AuthController — الوصول العام والتفويض (GF-0003)'
     );
     expect(isPublic).toBe(true);
   });
+
+  it('يضيّق login الـdefault throttler إلى 10 محاولات/دقيقة فقط', () => {
+    expect(
+      getMethodMetadata<number>(
+        'THROTTLER:LIMITdefault',
+        AuthController.prototype,
+        'login',
+      ),
+    ).toBe(10);
+    expect(
+      getMethodMetadata<number>(
+        'THROTTLER:TTLdefault',
+        AuthController.prototype,
+        'login',
+      ),
+    ).toBe(60_000);
+  });
 });
