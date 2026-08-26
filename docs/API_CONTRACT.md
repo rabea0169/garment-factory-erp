@@ -61,12 +61,19 @@
 
 المراحل المسموحة بالترتيب هي `CUTTING`, ثم `SEWING`, ثم `IRONING`, ثم `PACKING`. لا يقبل API القفز بين المراحل، ولا تسجيل مخرج لمرحلة غير `currentStage`. يجب أن تحقق مخرجات المرحلة `inputQty = acceptedQty + rejectedQty + wasteQty` قبل إغلاقها. أما تكلفة الوحدة فتستخدم accepted output لآخر مرحلة مكتملة، وتبقى التكلفة الحالية تكلفة مواد فقط إلى أن تعتمد مكونات العمالة والمصاريف العامة.
 
-## الجودة — `/quality`
+## الجودة والهالك — `/quality` (GF-0014)
 
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
-| GET | `/quality` | سجل الفحوصات | 🔒 JWT | أي مستخدم موثّق |
-| POST | `/quality` | تسجيل فحص | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+| GET | `/quality` | سجل الفحوصات مع pagination وبيانات المرحلة والفاعل | 🔒 JWT | أي مستخدم موثّق |
+| GET | `/quality/kpis` | تجميع كميات ومعدلات الجودة للفحوصات المكتملة | 🔒 JWT | أي مستخدم موثّق |
+| POST | `/quality` | تسجيل فحص مكتمل مرتبط بـWorkOrder وProductionStageRun | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+
+يجب أن يحتوي POST على `workOrderId`, `stageRunId`, `stage`, `checkedQty`, `passedQty`, `rejectedQty`, و`wasteQty`. يفرض الخادم وقاعدة البيانات أن تكون الكميات أعدادًا صحيحة غير سالبة وأن تحقق `checkedQty = passedQty + rejectedQty + wasteQty`. يلزم `rejectionReason` عند وجود رفض، و`wasteReason` عند وجود هالك. تُحسب `unitCost` و`wasteCost` على الخادم، ويمرر actor من JWT؛ لا تُرسل هوية الفاعل أو التكلفة في body.
+
+يدعم POST رأس `Idempotency-Key` اختياريًا. تكرار المفتاح مع نفس المحتوى يعيد نفس الفحص دون إنشاء أثر جديد، أما استخدامه مع محتوى مختلف فيُرفض بـ409. لا يمكن تسجيل فحص لمرحلة غير مطابقة لـ`stageRun` أو لمرحلة غير مكتملة، ولا تُعدل نتيجة مكتملة مباشرة. يرفض النظام فحصًا ثانيًا لنفس `stageRunId` بـ409.
+
+يدعم GET `/quality/kpis` المرشحات الاختيارية `stage`, `workOrderId`, `from`, و`to`. يعيد `totals` لـ`checkedQty`, `passedQty`, `rejectedQty`, `wasteQty`, و`wasteCost`، إضافة إلى `rates` كنسب مئوية ذات منزلتين: `passRate`, `rejectionRate`, و`wasteRate`. تعتمد النتائج على السجلات ذات `status = COMPLETED` فقط، ويُرفض نطاق تاريخ يبدأ بعد نهايته بـ400.
 
 ## الموارد البشرية — `/hr`
 
@@ -168,7 +175,7 @@
 2. ~~**لا pagination** في القوائم~~ — ✅ **أُغلقت في GF-0012** بعقد موحد واختبارات حدودية.
 3. ~~**لا DTOs** في معظم مسارات الكتابة~~ — ✅ **أُغلقت في GF-0004**.
 4. ~~**لا معالج أخطاء موحد**~~ — ✅ **أُغلق في Cluster 4** عبر Global Exception Filter؛ يجب إضافة اختبارات عقدية لأي أخطاء جديدة.
-5. **قاعدة المجال المؤجلة**: `checked = passed + rejected` في فحص الجودة تُفرض في GF-0014.
+5. ~~**قاعدة المجال المؤجلة**: `checked = passed + rejected` في فحص الجودة~~ — ✅ تُفرض في GF-0014 مع فصل `wasteQty` و`wasteReason` وربط `stageRun`.
 
 ## أمثلة Payloads الصحيحة (GF-0004)
 

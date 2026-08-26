@@ -43,8 +43,9 @@ model User {
   stageTransitions       WorkOrderStageTransition[]
   productionConsumptions ProductionMaterialConsumption[]
   productionCosts        ProductionCostSnapshot[]
-
+  qualityChecksCreated   QualityCheck[] @relation("QualityCheckCreator")
   @@map("users")
+
 }
 
 model ActivityLog {
@@ -338,8 +339,9 @@ model IdempotencyKey {
   ledgerEntries         StockLedgerEntry[]
   stageTransition       WorkOrderStageTransition?
   productionConsumption ProductionMaterialConsumption?
-
+  qualityCheck          QualityCheck?
   @@index([scope, createdAt])
+
   @@index([expiresAt])
   @@map("idempotency_keys")
 }
@@ -431,6 +433,17 @@ model WorkOrderStage {
   @@map("work_order_stages")
 }
 
+enum QualityWasteReason {
+  NATURAL_LOSS
+  DEFECT_RELATED
+  HUMAN_ERROR
+  MATERIAL_DEFECT
+  OTHER
+}
+enum QualityCheckStatus {
+  COMPLETED
+  VOIDED
+}
 enum ProductionWasteReason {
   CUTTING_LOSS
   SEWING_DEFECT
@@ -462,8 +475,9 @@ model ProductionStageRun {
   materialConsumptions ProductionMaterialConsumption[]
   fromTransitions      WorkOrderStageTransition[]      @relation("StageTransitionFromRun")
   toTransitions        WorkOrderStageTransition[]      @relation("StageTransitionToRun")
-
+  qualityChecks        QualityCheck[]
   @@unique([workOrderId, stage])
+
   @@unique([workOrderId, sequence])
   @@index([workOrderId, status])
   @@map("production_stage_runs")
@@ -581,20 +595,36 @@ enum RejectionReason {
 }
 
 model QualityCheck {
-  id              String           @id @default(uuid())
+  id              String              @id @default(uuid())
   workOrderId     String
   stage           WorkOrderStatus
+  stageRunId      String?
   checkedQty      Int
   passedQty       Int
   rejectedQty     Int
+  wasteQty        Int                 @default(0)
   rejectionReason RejectionReason?
+  wasteReason     QualityWasteReason?
+  unitCost        Decimal             @default(0) @db.Decimal(14, 4)
+  wasteCost       Decimal             @default(0) @db.Decimal(14, 2)
+  status          QualityCheckStatus   @default(COMPLETED)
+  createdById     String?
+  idempotencyKeyId String?
+  closedAt        DateTime            @default(now())
   notes           String?
-  checkedAt       DateTime         @default(now())
-
-  workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
-
+  checkedAt       DateTime            @default(now())
+  workOrder       WorkOrder           @relation(fields: [workOrderId], references: [id])
+  stageRun        ProductionStageRun? @relation(fields: [stageRunId], references: [id], onDelete: SetNull)
+  createdBy       User?               @relation("QualityCheckCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  idempotencyKey  IdempotencyKey?      @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  @@unique([idempotencyKeyId])
+  @@unique([stageRunId])
+  @@index([workOrderId, stage, checkedAt])
+  @@index([stageRunId, checkedAt])
+  @@index([createdById, checkedAt])
   @@map("quality_checks")
 }
+
 
 // ===== M-07: HR & PAYROLL =====
 

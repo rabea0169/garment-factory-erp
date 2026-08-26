@@ -68,6 +68,7 @@ export function createPrismaMock() {
       findUnique: jest.fn(),
       count: jest.fn(),
     },
+    productionStageRun: { findFirst: jest.fn() },
     warehouse: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -81,8 +82,20 @@ export function createPrismaMock() {
       update: jest.fn(),
       count: jest.fn(),
     },
-    qualityCheck: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
-    bomVersion: { findFirst: jest.fn(), create: jest.fn() },
+    qualityCheck: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+      aggregate: jest.fn(),
+    },
+    productionCostSnapshot: { findFirst: jest.fn() },
+    activityLog: { create: jest.fn() },
+    bomVersion: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+    },
     bomLine: { upsert: jest.fn(), delete: jest.fn() },
     stockLedgerEntry: {
       create: jest.fn(),
