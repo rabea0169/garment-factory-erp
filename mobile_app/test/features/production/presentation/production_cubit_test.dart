@@ -2,7 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:garment_factory_erp/features/production/domain/entities/stage_transition.dart';
 import 'package:garment_factory_erp/features/production/domain/entities/work_order.dart';
-import 'package:garment_factory_erp/features/production/domain/failures/production_failure.dart';
+import 'package:garment_factory_erp/features/production/domain/failures/production_failure.dart' as failures;
 import 'package:garment_factory_erp/features/production/domain/repositories/production_repository.dart';
 import 'package:garment_factory_erp/features/production/domain/usecases/production_usecases.dart';
 import 'package:garment_factory_erp/features/production/presentation/cubit/production_cubit.dart';
@@ -41,7 +41,7 @@ void main() {
 
   test('maps a network failure to an offline state', () async {
     final repository = FakeProductionRepository(
-      failure: const ProductionNetworkFailure(),
+      failure: const failures.ProductionNetworkFailure(),
     );
     final cubit = ProductionCubit(
       getWorkOrders: GetWorkOrders(repository),
@@ -64,7 +64,7 @@ class FakeProductionRepository implements ProductionRepository {
   FakeProductionRepository({this.workOrders = const [], this.failure});
 
   final List<WorkOrder> workOrders;
-  final ProductionFailure? failure;
+  final failures.ProductionFailure? failure;
 
   @override
   Future<List<WorkOrder>> getWorkOrders({
