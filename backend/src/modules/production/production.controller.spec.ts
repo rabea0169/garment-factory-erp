@@ -33,7 +33,10 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
         transitionId: 'transition-1',
         stageRunId: 'run-1',
       }),
-      recordStageOutput: jest.fn().mockResolvedValue(undefined),
+      recordStageOutput: jest.fn().mockResolvedValue({
+        replayed: false,
+        stageRunId: 'run-1',
+      }),
       consumeMaterial: jest
         .fn()
         .mockResolvedValue({ consumptionId: 'consumption-1' }),
@@ -129,13 +132,19 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
       wasteQty: 1,
     };
 
-    await controller.recordStageOutput('wo-1', body, 'production-actor');
+    await controller.recordStageOutput(
+      'wo-1',
+      body,
+      'production-actor',
+      'stage-output-key-1',
+    );
     await controller.finalizeCost('wo-1', 'production-actor');
 
     expect(workflow.recordStageOutput).toHaveBeenCalledWith(
       {
         workOrderId: 'wo-1',
         ...body,
+        idempotencyKey: 'stage-output-key-1',
       },
       'production-actor',
     );

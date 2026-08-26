@@ -55,11 +55,11 @@
 | POST | `/production/work-orders` | إنشاء أمر تشغيل | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
 | PATCH | `/production/work-orders/:id/status` | تحديث الحالة legacy | 🔒 JWT | PRODUCTION_MANAGER |
 | POST | `/production/work-orders/:id/stage-transitions` | نقل الأمر إلى المرحلة التالية | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
-| POST | `/production/work-orders/:id/stage-output` | تسجيل مخرجات المرحلة وإغلاقها وتسجيل actor | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
+| POST | `/production/work-orders/:id/stage-output` | تسجيل مخرجات المرحلة وإغلاقها وتسجيل actor | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER؛ `:id` UUID |
 | POST | `/production/work-orders/:id/material-consumptions` | صرف خامة فعلي لمرحلة | 🔒 JWT | PRODUCTION_MANAGER, INVENTORY_MANAGER, GENERAL_MANAGER |
 | POST | `/production/work-orders/:id/cost/finalize` | تثبيت لقطة تكلفة المواد | 🔒 JWT | PRODUCTION_MANAGER, GENERAL_MANAGER |
 
-مسارات GF-0013 الجديدة تمرر هوية الفاعل من JWT إلى `ProductionWorkflowService`. يدعم `stage-transitions` و`material-consumptions` رأس `Idempotency-Key` اختياريًا؛ تكرار المفتاح مع نفس المحتوى يعيد النتيجة دون أثر إضافي، واستخدامه مع payload مختلف يرد بـ409. لا تُرسل `actorId` أو `createdById` في body.
+مسارات GF-0013 الجديدة تمرر هوية الفاعل من JWT إلى `ProductionWorkflowService`. يدعم `stage-transitions` و`stage-output` و`material-consumptions` رأس `Idempotency-Key` اختياريًا؛ تكرار المفتاح مع نفس المحتوى يعيد النتيجة دون أثر إضافي، واستخدامه مع payload مختلف أو نطاق مختلف يرد بـ409. يعيد `stage-output` الحقول الحالية `workOrderId`, `stage`, `status` مع `replayed` و`stageRunId`. لا تُرسل `actorId` أو `createdById` في body.
 
 **ملاحظة GF-0002:** `creatorId` لم يعد يُقبل من body — يُستخرج من الجلسة (`@CurrentUser('id')`).
 

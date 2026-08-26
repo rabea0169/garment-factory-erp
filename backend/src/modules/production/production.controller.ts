@@ -86,12 +86,19 @@ export class ProductionController {
     @Param('id', ParseUUIDPipe) workOrderId: string,
     @Body() body: RecordStageOutputDto,
     @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    await this.workflowService.recordStageOutput(
-      { workOrderId, ...body },
+    const result = await this.workflowService.recordStageOutput(
+      { workOrderId, ...body, idempotencyKey },
       actorId,
     );
-    return { workOrderId, stage: body.stage, status: 'COMPLETED' };
+    return {
+      workOrderId,
+      stage: body.stage,
+      status: 'COMPLETED',
+      replayed: result.replayed,
+      stageRunId: result.stageRunId,
+    };
   }
 
   @Post('work-orders/:id/material-consumptions')
