@@ -10,7 +10,7 @@
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `a3b7191` — دمج PR #48 وإغلاق GF-REMAINING-001؛ CI main أخضر |
 | فرع العمل الحالي | `fix/gf-remaining-002-inventory-ledger` — فصل رصيد المستودع عن الإجمالي |
-| آخر commit في فرع العمل | `d5c3a8e` — فصل رصيد المستودع عن الإجمالي واختبارات PostgreSQL |
+| آخر commit في فرع العمل | `1d26eb5` — فصل رصيد المستودع عن الإجمالي واختبارات PostgreSQL |
 | Pull Request الحالي | سيُفتح بعد رفع `fix/gf-remaining-002-inventory-ledger` |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
 | حالة CI على main | PASS — Run `32939638175` بعد merge PR #48؛ Backend/PostgreSQL وFlutter وSecret Scan ناجحة |

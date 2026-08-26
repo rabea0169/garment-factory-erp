@@ -15,7 +15,7 @@
 | Base branch | `origin/main` |
 | Base SHA | `a3b7191aeb56eb9472ca152642ac3fc2145578f7` |
 | Working branch | `fix/gf-remaining-002-inventory-ledger` |
-| Head SHA | implementation commit `d5c3a8e`; documentation state update is the latest commit on this branch |
+| Head SHA | implementation commit `1d26eb5`; documentation state update is the latest commit on this branch |
 | Pull Request | pending push and PR creation |
 | Merge status | not merged |
 | CI run | local backend gates pass; local PostgreSQL unavailable; remote CI pending |
