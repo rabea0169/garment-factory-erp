@@ -254,7 +254,10 @@ integrationDescribe('GF-0015 payroll integration', () => {
 
     expect(paid).toMatchObject({
       id: payroll.id,
-      status: PayrollStatus.APPROVED,
+      // WAVE2-C2 (COMM-F04): payPayroll now transitions APPROVED -> PAID
+      // (was using APPROVED for both approval and payment, which was semantically
+      // wrong — could not distinguish accrued-but-unpaid from paid).
+      status: PayrollStatus.PAID,
       isPaid: true,
     });
     expect(replay).toMatchObject({
