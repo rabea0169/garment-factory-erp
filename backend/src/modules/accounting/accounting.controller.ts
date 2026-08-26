@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Query, Param } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -41,9 +49,10 @@ export class AccountingController {
   async createVoucher(
     @CurrentUser('id') userId: string,
     @Body() body: CreateVoucherDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     // P0-04: createdById من الجلسة فقط — إرساله في body يُرفض بـ 400 (أقوى من التجاهل)
-    return this.accountingService.createVoucher(body, userId);
+    return this.accountingService.createVoucher(body, userId, idempotencyKey);
   }
 
   @Post('journal-entries/:id/reverse')

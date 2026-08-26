@@ -93,6 +93,9 @@
 | POST | `/accounting/accounts` | حساب جديد | 🔒 JWT | ACCOUNTANT |
 | GET | `/accounting/vouchers` | أوامر الصرف | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/vouchers` | أمر صرف جديد | 🔒 JWT | ACCOUNTANT, CASHIER |
+| POST | `/accounting/journal-entries/:id/reverse` | عكس قيد مالي مرة واحدة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
+
+يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
 
 **ملاحظة GF-0002:** `createdById` لم يعد يُقبل من body — من الجلسة.
 

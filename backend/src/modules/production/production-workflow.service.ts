@@ -12,7 +12,7 @@ import {
   ProductionWasteReason,
   WorkOrderStatus,
 } from '@prisma/client';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -254,7 +254,11 @@ export class ProductionWorkflowService {
             stage: input.stage,
           },
         },
-        include: { workOrder: { select: { currentStage: true } } },
+        include: {
+          workOrder: {
+            select: { currentStage: true, productVariantId: true, code: true },
+          },
+        },
       });
       if (!stageRun) throw new NotFoundException('Stage run not found');
       if (stageRun.workOrder.currentStage !== input.stage) {
@@ -279,6 +283,111 @@ export class ProductionWorkflowService {
           status: ProductionStageRunStatus.COMPLETED,
           completedAt: new Date(),
           notes: input.notes,
+        },
+      });
+
+      if (input.stage !== ProductionStage.PACKING || input.acceptedQty === 0) {
+        return;
+      }
+
+      const warehouse = await tx.warehouse.findFirst({
+        where: {
+          code: 'WH-FG',
+          type: 'FINISHED_GOODS',
+          isActive: true,
+        },
+      });
+      if (!warehouse) {
+        throw new BadRequestException('مخزن المنتج التام الافتراضي غير موجود');
+      }
+
+      const consumptions = await tx.productionMaterialConsumption.findMany({
+        where: { workOrderId: input.workOrderId },
+      });
+      if (consumptions.length === 0) {
+        throw new BadRequestException(
+          'لا يمكن ترحيل المنتج التام قبل تسجيل استهلاك خامات وتكلفة أمر التشغيل',
+        );
+      }
+      const materialCost = consumptions.reduce(
+        (sum, row) => sum.add(row.totalCost),
+        new Prisma.Decimal(0),
+      );
+      const wasteCost = consumptions.reduce(
+        (sum, row) => sum.add(row.wasteCost),
+        new Prisma.Decimal(0),
+      );
+      const unitCost = materialCost.div(input.acceptedQty).toDecimalPlaces(4);
+      await tx.productionCostSnapshot.upsert({
+        where: {
+          workOrderId_status: {
+            workOrderId: input.workOrderId,
+            status: ProductionCostStatus.FINALIZED,
+          },
+        },
+        update: {
+          materialCost,
+          wasteCost,
+          totalCost: materialCost,
+          acceptedQty: input.acceptedQty,
+          unitCost,
+          capturedAt: new Date(),
+        },
+        create: {
+          workOrderId: input.workOrderId,
+          status: ProductionCostStatus.FINALIZED,
+          materialCost,
+          wasteCost,
+          totalCost: materialCost,
+          acceptedQty: input.acceptedQty,
+          unitCost,
+        },
+      });
+
+      // Atomic weighted-average receipt into the authoritative finished-good stock.
+      await tx.$executeRaw(
+        Prisma.sql`INSERT INTO "finished_good_stocks"
+          ("id", "warehouseId", "productVariantId", "quantity", "unitCost", "createdAt", "updatedAt")
+        VALUES (${randomUUID()}, ${warehouse.id}, ${stageRun.workOrder.productVariantId}, ${input.acceptedQty}, ${unitCost}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT ("warehouseId", "productVariantId") DO UPDATE SET
+          "unitCost" = CASE
+            WHEN "finished_good_stocks"."quantity" + EXCLUDED."quantity" = 0 THEN 0
+            ELSE (("finished_good_stocks"."quantity" * "finished_good_stocks"."unitCost") + (EXCLUDED."quantity" * EXCLUDED."unitCost"))
+              / ("finished_good_stocks"."quantity" + EXCLUDED."quantity")
+          END,
+          "quantity" = "finished_good_stocks"."quantity" + EXCLUDED."quantity",
+          "updatedAt" = CURRENT_TIMESTAMP`,
+      );
+      const stock = await tx.finishedGoodStock.findUniqueOrThrow({
+        where: {
+          warehouseId_productVariantId: {
+            warehouseId: warehouse.id,
+            productVariantId: stageRun.workOrder.productVariantId,
+          },
+        },
+      });
+      await tx.stockLedgerEntry.create({
+        data: {
+          entryCode: `SLE-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomUUID().slice(0, 8).toUpperCase()}`,
+          type: 'RECEIVE',
+          warehouseId: warehouse.id,
+          productVariantId: stageRun.workOrder.productVariantId,
+          quantityDelta: input.acceptedQty,
+          balanceAfter: stock.quantity,
+          unitCost,
+          totalValue: unitCost.mul(input.acceptedQty),
+          reference: stageRun.workOrder.code,
+          notes: `إنتاج تام من التعبئة ${stageRun.workOrder.code}`,
+        },
+      });
+      await tx.workOrder.update({
+        where: { id: input.workOrderId },
+        data: {
+          status: WorkOrderStatus.COMPLETED,
+          completedQty: { increment: input.acceptedQty },
+          rejectedQty: { increment: input.rejectedQty },
+          wasteQty: { increment: input.wasteQty },
+          endDate: new Date(),
         },
       });
     });

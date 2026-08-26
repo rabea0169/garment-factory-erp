@@ -232,6 +232,7 @@ model FinishedGoodStock {
   warehouseId      String
   productVariantId String
   quantity         Int      @default(0)
+  unitCost         Decimal  @default(0) @db.Decimal(14, 4)
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -950,6 +951,11 @@ model JournalEntry {
   reversalOfId String?
   reversedById String?
   reversedAt   DateTime?
+  // A9: payload of linked side effects used for atomic reversal.
+  metadata     Json?
+  // Financial posting idempotency: same key + same hash replays; different hash conflicts.
+  postingKey  String?
+  postingHash String?
   // E5: multi-currency — العملة التي أُنشئ بها القيد + سعر الصرف مقابل عملة النظام.
   // NULL = system default (EGP). exchangeRate defaults to 1.0 when currencyId is NULL.
   currencyId    String?
@@ -972,6 +978,8 @@ model JournalEntry {
   // E5: فهرس على currencyId لتقارير العملات الأجنبية.
   @@index([date])
   @@index([createdById, createdAt])
+  @@unique([reversalOfId])
+  @@unique([postingKey])
   @@index([reversalOfId])
   @@index([isReversed])
   @@index([currencyId])

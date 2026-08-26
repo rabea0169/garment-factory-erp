@@ -24,7 +24,8 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
     expect(prisma.product.findMany).toHaveBeenCalledWith({
       skip: 0,
       take: 20,
-      include: { season: true, variants: true },
+      where: { deletedAt: null },
+      include: { season: true, variants: { where: { isActive: true } } },
       orderBy: { name: 'asc' },
     });
   });
@@ -36,18 +37,18 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
       variants: [],
       bomItems: [{ rawMaterialId: 'rm-1', quantity: 1.2 }],
     };
-    prisma.product.findUnique.mockResolvedValue(product);
+    prisma.product.findFirst.mockResolvedValue(product);
 
     const result = await service.getProductDetails('p-1');
 
     expect(result).toEqual(product);
-    expect(prisma.product.findUnique).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: 'p-1' } }),
+    expect(prisma.product.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 'p-1', deletedAt: null } }),
     );
   });
 
   it('يرمي 404 لمنتج غير موجود', async () => {
-    prisma.product.findUnique.mockResolvedValue(null);
+    prisma.product.findFirst.mockResolvedValue(null);
     await expect(service.getProductDetails('ghost')).rejects.toThrow(
       NotFoundException,
     );
@@ -70,6 +71,7 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
   });
 
   it('ينشئ variant بمنتج ومقاس ولون محددين', async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: 'p-1' });
     prisma.productVariant.create.mockResolvedValue({
       id: 'v-9',
       productId: 'p-1',

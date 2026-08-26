@@ -18,7 +18,9 @@ export function createPrismaMock() {
       findMany: jest.fn(),
       create: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       update: jest.fn(),
+      updateMany: jest.fn(),
       count: jest.fn(),
     },
     rawMaterial: {
@@ -28,6 +30,13 @@ export function createPrismaMock() {
       count: jest.fn(),
     },
     rawMaterialTransaction: { create: jest.fn() },
+    finishedGoodStock: {
+      findUnique: jest.fn(),
+      updateMany: jest.fn(),
+      upsert: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+    },
     finishedGood: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -40,6 +49,7 @@ export function createPrismaMock() {
     },
     product: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       count: jest.fn(),
@@ -108,6 +118,7 @@ export function createPrismaMock() {
     },
     voucher: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       create: jest.fn(),
       count: jest.fn(),
       findUnique: jest.fn(),
@@ -122,11 +133,14 @@ export function createPrismaMock() {
     journalEntry: {
       findUnique: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
       count: jest.fn(),
     },
     journalLine: { create: jest.fn() },
     customer: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
@@ -134,6 +148,7 @@ export function createPrismaMock() {
     },
     supplier: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),

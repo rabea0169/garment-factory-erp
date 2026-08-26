@@ -34,18 +34,19 @@ export class ProductsService {
       this.prisma.product.findMany({
         skip,
         take: limit,
-        include: { season: true, variants: true },
+        where: { deletedAt: null },
+        include: { season: true, variants: { where: { isActive: true } } },
         orderBy: { name: 'asc' },
       }),
-      this.prisma.product.count(),
+      this.prisma.product.count({ where: { deletedAt: null } }),
     ]);
 
     return new PaginatedResult(data, total, page, limit);
   }
 
   async getProductDetails(id: string) {
-    const product = await this.prisma.product.findUnique({
-      where: { id },
+    const product = await this.prisma.product.findFirst({
+      where: { id, deletedAt: null },
       include: {
         season: true,
         variants: true,
@@ -71,6 +72,11 @@ export class ProductsService {
   }
 
   async createVariant(productId: string, size: string, color: string) {
+    const product = await this.prisma.product.findFirst({
+      where: { id: productId, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!product) throw new NotFoundException('المنتج غير موجود أو غير نشط');
     return this.prisma.productVariant.create({
       data: { productId, size, color },
     });
@@ -83,8 +89,12 @@ export class ProductsService {
     unit: string,
   ) {
     const [product, rawMaterial] = await Promise.all([
-      this.prisma.product.findUnique({ where: { id: productId } }),
-      this.prisma.rawMaterial.findUnique({ where: { id: rawMaterialId } }),
+      this.prisma.product.findFirst({
+        where: { id: productId, isActive: true, deletedAt: null },
+      }),
+      this.prisma.rawMaterial.findFirst({
+        where: { id: rawMaterialId, isActive: true },
+      }),
     ]);
 
     if (!product) throw new NotFoundException('المنتج غير موجود');

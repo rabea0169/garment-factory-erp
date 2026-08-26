@@ -9,14 +9,14 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
   let service: AccountingService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let financial: {
-    postJournalEntry: jest.Mock;
+    postJournalEntryInTx: jest.Mock;
     reverseJournalEntry?: jest.Mock;
   };
 
   beforeEach(() => {
     prisma = createPrismaMock();
     financial = {
-      postJournalEntry: jest.fn().mockResolvedValue({
+      postJournalEntryInTx: jest.fn().mockResolvedValue({
         entryId: 'je-001',
         entryCode: 'JE-20260827-ABCD1234',
         totalDebit: 500,
@@ -25,6 +25,9 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
         createdAt: new Date('2026-08-27T00:00:00Z'),
       }),
     };
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
     service = new AccountingService(
       prisma as unknown as PrismaService,
       financial as unknown as FinancialPostingService,
@@ -126,7 +129,8 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       customerUpdates: [{ customerId: 'cust-001', delta: -500 }],
       userId: 'user-from-session',
     };
-    expect(financial.postJournalEntry).toHaveBeenCalledWith(
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
       expect.objectContaining(expectedCall),
       'user-from-session',
     );
@@ -181,7 +185,8 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       supplierUpdates: [{ supplierId: 'sup-001', delta: -300 }],
       userId: 'user-from-session',
     };
-    expect(financial.postJournalEntry).toHaveBeenCalledWith(
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
       expect.objectContaining(expectedPaymentCall),
       'user-from-session',
     );

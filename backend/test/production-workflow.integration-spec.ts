@@ -430,3 +430,220 @@ integrationDescribe('GF-0013 production workflow integration', () => {
     ).toBe(1); // initial RECEIVE only
   });
 });
+
+// Corrective Cluster 5 coverage: PACKING must post accepted output exactly once.
+// This test intentionally runs only when GF_INTEGRATION_DATABASE_URL is configured.
+integrationDescribe('Cluster 5 finished-good posting', () => {
+  let prisma: PrismaService;
+  let inventoryService: InventoryService;
+  let workflowService: ProductionWorkflowService;
+  let scenario: Scenario;
+
+  beforeAll(async () => {
+    const databaseUrl = process.env.GF_INTEGRATION_DATABASE_URL;
+    if (!databaseUrl) return;
+    process.env.DATABASE_URL = databaseUrl;
+    prisma = new PrismaService();
+    await prisma.$connect();
+    inventoryService = new InventoryService(prisma, new EventEmitter2());
+    workflowService = new ProductionWorkflowService(prisma, inventoryService);
+  });
+
+  beforeEach(async () => {
+    if (!prisma) return;
+    await prisma.$executeRawUnsafe(`TRUNCATE TABLE
+      "production_cost_snapshots", "production_material_consumptions",
+      "work_order_stage_transitions", "production_stage_runs",
+      "stock_ledger_entries", "idempotency_keys", "work_orders",
+      "bom_lines", "bom_versions", "finished_good_stocks", "finished_goods",
+      "product_variants", "products", "raw_materials", "warehouses", "users"
+      CASCADE`);
+    scenario = await createScenarioForPosting(prisma, inventoryService);
+  });
+
+  afterAll(async () => {
+    if (prisma) await prisma.$disconnect();
+  });
+
+  async function createScenarioForPosting(
+    db: PrismaService,
+    inventory: InventoryService,
+  ): Promise<Scenario> {
+    const user = await db.user.create({
+      data: {
+        name: 'Cluster 5 Posting User',
+        email: `cluster5-${randomUUID()}@example.test`,
+        password: 'integration-only-hash',
+        role: UserRole.PRODUCTION_MANAGER,
+      },
+    });
+    const rawWarehouse = await db.warehouse.create({
+      data: {
+        code: `C5-RAW-${randomUUID().slice(0, 8)}`,
+        name: 'Cluster 5 Raw Warehouse',
+        type: WarehouseType.RAW_MATERIAL,
+      },
+    });
+    await db.warehouse.create({
+      data: {
+        code: 'WH-FG',
+        name: 'Cluster 5 Finished Goods',
+        type: WarehouseType.FINISHED_GOODS,
+      },
+    });
+    const rawMaterial = await db.rawMaterial.create({
+      data: {
+        code: `C5-RM-${randomUUID().slice(0, 8)}`,
+        name: 'Cluster 5 Fabric',
+        unit: 'METER',
+        currentStock: 0,
+        costPerUnit: 5,
+      },
+    });
+    const product = await db.product.create({
+      data: {
+        code: `C5-PR-${randomUUID().slice(0, 8)}`,
+        name: 'Cluster 5 Shirt',
+        retailPrice: 100,
+        wholesalePrice: 80,
+      },
+    });
+    const variant = await db.productVariant.create({
+      data: { productId: product.id, size: 'M', color: 'BLUE' },
+    });
+    const bomVersion = await db.bomVersion.create({
+      data: {
+        productId: product.id,
+        versionName: 'Cluster 5 v1',
+        isActive: true,
+        lines: {
+          create: { rawMaterialId: rawMaterial.id, quantity: 1, unit: 'METER' },
+        },
+      },
+    });
+    const workOrder = await db.workOrder.create({
+      data: {
+        code: `C5-WO-${randomUUID().slice(0, 8)}`,
+        productVariantId: variant.id,
+        bomVersionId: bomVersion.id,
+        quantity: 10,
+        status: WorkOrderStatus.PLANNED,
+        createdById: user.id,
+      },
+    });
+    await inventory.receive(
+      {
+        rawMaterialId: rawMaterial.id,
+        warehouseId: rawWarehouse.id,
+        quantity: 10,
+        unitCost: 5,
+        reference: workOrder.code,
+        idempotencyKey: `c5-receive-${randomUUID()}`,
+      },
+      user.id,
+    );
+    return {
+      userId: user.id,
+      rawWarehouseId: rawWarehouse.id,
+      rawMaterialId: rawMaterial.id,
+      productVariantId: variant.id,
+      bomVersionId: bomVersion.id,
+      workOrderId: workOrder.id,
+    };
+  }
+
+  it('posts accepted PACKING output to authoritative stock and ledger once', async () => {
+    const cutting = await workflowService.transitionStage(
+      { workOrderId: scenario.workOrderId, toStage: ProductionStage.CUTTING },
+      scenario.userId,
+    );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+    });
+    await workflowService.consumeMaterial(
+      {
+        workOrderId: scenario.workOrderId,
+        stageRunId: cutting.stageRunId,
+        rawMaterialId: scenario.rawMaterialId,
+        warehouseId: scenario.rawWarehouseId,
+        plannedQuantity: 3,
+        actualQuantity: 4,
+        wasteQuantity: 1,
+        unit: 'METER',
+        idempotencyKey: `c5-consume-${randomUUID()}`,
+      },
+      scenario.userId,
+    );
+    await workflowService.transitionStage(
+      { workOrderId: scenario.workOrderId, toStage: ProductionStage.SEWING },
+      scenario.userId,
+    );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.SEWING,
+      inputQty: 8,
+      acceptedQty: 7,
+      rejectedQty: 1,
+      wasteQty: 0,
+    });
+    await workflowService.transitionStage(
+      { workOrderId: scenario.workOrderId, toStage: ProductionStage.IRONING },
+      scenario.userId,
+    );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.IRONING,
+      inputQty: 7,
+      acceptedQty: 7,
+      rejectedQty: 0,
+      wasteQty: 0,
+    });
+    await workflowService.transitionStage(
+      { workOrderId: scenario.workOrderId, toStage: ProductionStage.PACKING },
+      scenario.userId,
+    );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.PACKING,
+      inputQty: 7,
+      acceptedQty: 7,
+      rejectedQty: 0,
+      wasteQty: 0,
+    });
+
+    const stock = await prisma.finishedGoodStock.findUnique({
+      where: {
+        warehouseId_productVariantId: {
+          warehouseId: (
+            await prisma.warehouse.findUniqueOrThrow({
+              where: { code: 'WH-FG' },
+            })
+          ).id,
+          productVariantId: scenario.productVariantId,
+        },
+      },
+    });
+    expect(stock?.quantity).toBe(7);
+    expect(Number(stock?.unitCost)).toBeCloseTo(20 / 7, 4);
+    expect(
+      await prisma.stockLedgerEntry.count({
+        where: {
+          productVariantId: scenario.productVariantId,
+          type: StockMovementType.RECEIVE,
+        },
+      }),
+    ).toBe(1);
+    expect(
+      (
+        await prisma.workOrder.findUnique({
+          where: { id: scenario.workOrderId },
+        })
+      )?.status,
+    ).toBe(WorkOrderStatus.COMPLETED);
+  });
+});
