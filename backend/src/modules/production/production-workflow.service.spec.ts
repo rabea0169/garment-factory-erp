@@ -34,8 +34,9 @@ function createTxMock(prisma: ReturnType<typeof createPrismaMock>) {
 function makeService() {
   const prisma = createPrismaMock();
   const eventEmitter = createEventEmitterMock();
+  const issue = jest.fn();
   const inventory = {
-    issue: jest.fn(),
+    issue,
     receiveFinishedGood: jest.fn(),
     issueFinishedGood: jest.fn(),
   } as unknown as InventoryService;
@@ -65,6 +66,7 @@ function makeService() {
   return {
     prisma: prisma,
     inventory,
+    issue,
     postJournalEntryInTx,
     service,
   };
@@ -495,4 +497,70 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
  * ProductionCostStatus.FINALIZED — نُمرره في الـ mock بشكل غير ضروري لأن
  * الـ service يستدعيه بنفس الشكل.
  */
+describe('ProductionWorkflowService — material consumption guards', () => {
+  it('rejects consumption for a non-current stage', async () => {
+    const { prisma, issue, service } = makeService();
+    prisma.productionStageRun.findUnique.mockResolvedValue({
+      id: 'srun-cutting',
+      workOrderId: 'wo-1',
+      stage: ProductionStage.CUTTING,
+      status: ProductionStageRunStatus.IN_PROGRESS,
+      workOrder: {
+        id: 'wo-1',
+        currentStage: ProductionStage.SEWING,
+        status: WorkOrderStatus.IN_PROGRESS,
+      },
+    });
+
+    await expect(
+      service.consumeMaterial(
+        {
+          workOrderId: 'wo-1',
+          stageRunId: 'srun-cutting',
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-raw',
+          plannedQuantity: 10,
+          actualQuantity: 10,
+          wasteQuantity: 0,
+          unit: 'METER',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow('current IN_PROGRESS stage');
+    expect(issue).not.toHaveBeenCalled();
+  });
+
+  it('rejects consumption after the stage run is completed', async () => {
+    const { prisma, issue, service } = makeService();
+    prisma.productionStageRun.findUnique.mockResolvedValue({
+      id: 'srun-sewing',
+      workOrderId: 'wo-1',
+      stage: ProductionStage.SEWING,
+      status: ProductionStageRunStatus.COMPLETED,
+      workOrder: {
+        id: 'wo-1',
+        currentStage: ProductionStage.SEWING,
+        status: WorkOrderStatus.IN_PROGRESS,
+      },
+    });
+
+    await expect(
+      service.consumeMaterial(
+        {
+          workOrderId: 'wo-1',
+          stageRunId: 'srun-sewing',
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-raw',
+          plannedQuantity: 10,
+          actualQuantity: 10,
+          wasteQuantity: 0,
+          unit: 'METER',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow('current IN_PROGRESS stage');
+    expect(issue).not.toHaveBeenCalled();
+  });
+});
+
 void ProductionCostStatus;

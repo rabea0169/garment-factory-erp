@@ -650,12 +650,26 @@ export class ProductionWorkflowService {
       return await this.prisma.$transaction(async (tx) => {
         const stageRun = await tx.productionStageRun.findUnique({
           where: { id: input.stageRunId },
+          include: {
+            workOrder: {
+              select: { id: true, currentStage: true, status: true },
+            },
+          },
         });
         if (!stageRun || stageRun.workOrderId !== input.workOrderId) {
           throw new NotFoundException('Stage run not found for work order');
         }
         if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
           throw new BadRequestException('Stage run is cancelled');
+        }
+        if (
+          stageRun.status !== ProductionStageRunStatus.IN_PROGRESS ||
+          stageRun.workOrder.status !== WorkOrderStatus.IN_PROGRESS ||
+          stageRun.workOrder.currentStage !== stageRun.stage
+        ) {
+          throw new BadRequestException(
+            'Material can only be consumed for the current IN_PROGRESS stage',
+          );
         }
 
         let idempotencyKeyId: string | undefined;

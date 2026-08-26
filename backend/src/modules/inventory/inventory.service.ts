@@ -77,6 +77,16 @@ export interface WasteStockInput {
   idempotencyKey?: string;
 }
 
+export interface TransferStockInput {
+  rawMaterialId: string;
+  fromWarehouseId: string;
+  toWarehouseId: string;
+  quantity: number;
+  reference?: string;
+  notes?: string;
+  idempotencyKey?: string;
+}
+
 export interface StockMovementResult {
   replayed: boolean;
   entryCode: string;
@@ -104,6 +114,7 @@ export interface LedgerFilter {
 const IDEMPOTENCY_SCOPES: Record<StockMovementType, string> = {
   [StockMovementType.RECEIVE]: 'inventory.receive',
   [StockMovementType.ISSUE]: 'inventory.issue',
+  [StockMovementType.TRANSFER]: 'inventory.transfer',
   [StockMovementType.ADJUSTMENT]: 'inventory.adjustment',
   [StockMovementType.WASTE]: 'inventory.waste',
   // RETURN محجوز — يُفعّل مع مرتجعات المشتريات في GF-0009
@@ -433,6 +444,160 @@ export class InventoryService {
       idempotencyKey: input.idempotencyKey,
       userId,
     });
+  }
+
+  async transfer(input: TransferStockInput, userId?: string) {
+    if (!Number.isFinite(input.quantity) || input.quantity <= 0) {
+      throw new BadRequestException('كمية التحويل يجب أن تكون موجبة وصالحة');
+    }
+    if (input.fromWarehouseId === input.toWarehouseId) {
+      throw new BadRequestException('مخزن المصدر والوجهة يجب أن يختلفا');
+    }
+
+    const scope = 'inventory.transfer';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      rawMaterialId: input.rawMaterialId,
+      fromWarehouseId: input.fromWarehouseId,
+      toWarehouseId: input.toWarehouseId,
+      quantity: input.quantity,
+      reference: input.reference ?? null,
+      notes: input.notes ?? null,
+    });
+    if (input.idempotencyKey) {
+      const replay = await this.tryReplay(
+        input.idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay) return replay;
+    }
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        if (input.idempotencyKey) {
+          await tx.idempotencyKey.create({
+            data: { key: input.idempotencyKey, scope, requestHash },
+            select: { id: true },
+          });
+        }
+
+        await tx.$queryRaw`
+          SELECT id FROM raw_materials WHERE id = ${input.rawMaterialId} FOR UPDATE
+        `;
+        const [material, fromWarehouse, toWarehouse] = await Promise.all([
+          tx.rawMaterial.findUnique({
+            where: { id: input.rawMaterialId },
+            select: { id: true, costPerUnit: true },
+          }),
+          tx.warehouse.findUnique({ where: { id: input.fromWarehouseId } }),
+          tx.warehouse.findUnique({ where: { id: input.toWarehouseId } }),
+        ]);
+        if (!material) throw new NotFoundException('المادة الخام غير موجودة');
+        if (!fromWarehouse || !toWarehouse) {
+          throw new NotFoundException('مخزن المصدر أو الوجهة غير موجود');
+        }
+        for (const warehouse of [fromWarehouse, toWarehouse]) {
+          if (
+            !warehouse.isActive ||
+            (warehouse.type !== WarehouseType.RAW_MATERIAL &&
+              warehouse.type !== WarehouseType.GENERAL)
+          ) {
+            throw new BadRequestException(
+              'تحويل الخامات يتطلب مخزنين نشطين من نوع خامات أو عام',
+            );
+          }
+        }
+
+        const [fromAggregate, toAggregate] = await Promise.all([
+          tx.stockLedgerEntry.aggregate({
+            where: {
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.fromWarehouseId,
+            },
+            _sum: { quantityDelta: true },
+          }),
+          tx.stockLedgerEntry.aggregate({
+            where: {
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.toWarehouseId,
+            },
+            _sum: { quantityDelta: true },
+          }),
+        ]);
+        const fromBefore = Number(fromAggregate._sum.quantityDelta ?? 0);
+        if (fromBefore < input.quantity) {
+          throw new ConflictException('رصيد مخزن المصدر غير كافٍ للتحويل');
+        }
+        const toBefore = Number(toAggregate._sum.quantityDelta ?? 0);
+        const totalValue = round2(
+          input.quantity * Number(material.costPerUnit),
+        );
+        const reference = input.reference ?? `TRANSFER:${input.rawMaterialId}`;
+        const fromEntry = await tx.stockLedgerEntry.create({
+          data: {
+            entryCode: generateEntryCode(),
+            type: StockMovementType.TRANSFER,
+            warehouseId: input.fromWarehouseId,
+            rawMaterialId: input.rawMaterialId,
+            quantityDelta: -input.quantity,
+            balanceAfter: round4(fromBefore - input.quantity),
+            unitCost: material.costPerUnit,
+            totalValue,
+            reference,
+            notes: input.notes ?? 'تحويل خامات — خروج من المصدر',
+            createdById: userId,
+          },
+          select: { entryCode: true, createdAt: true },
+        });
+        const toEntry = await tx.stockLedgerEntry.create({
+          data: {
+            entryCode: generateEntryCode(),
+            type: StockMovementType.TRANSFER,
+            warehouseId: input.toWarehouseId,
+            rawMaterialId: input.rawMaterialId,
+            quantityDelta: input.quantity,
+            balanceAfter: round4(toBefore + input.quantity),
+            unitCost: material.costPerUnit,
+            totalValue,
+            reference,
+            notes: input.notes ?? 'تحويل خامات — دخول إلى الوجهة',
+            createdById: userId,
+          },
+          select: { entryCode: true, createdAt: true },
+        });
+        const response = {
+          replayed: false,
+          rawMaterialId: input.rawMaterialId,
+          fromWarehouseId: input.fromWarehouseId,
+          toWarehouseId: input.toWarehouseId,
+          quantity: input.quantity,
+          fromBalanceAfter: round4(fromBefore - input.quantity),
+          toBalanceAfter: round4(toBefore + input.quantity),
+          totalValue,
+          fromEntryCode: fromEntry.entryCode,
+          toEntryCode: toEntry.entryCode,
+          createdAt: toEntry.createdAt.toISOString(),
+        };
+        if (input.idempotencyKey) {
+          await tx.idempotencyKey.update({
+            where: { key: input.idempotencyKey },
+            data: { response },
+          });
+        }
+        return response;
+      });
+    } catch (error) {
+      if (input.idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replay = await this.tryReplay(
+          input.idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
   }
 
   /**

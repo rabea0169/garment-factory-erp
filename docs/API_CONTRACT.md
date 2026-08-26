@@ -42,10 +42,13 @@
 | GET | `/inventory/raw-materials/low-stock` | تنبيه النقص | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/inventory/raw-materials/:id/add-stock` | إضافة رصيد | 🔒 JWT | INVENTORY_MANAGER |
 | GET | `/inventory/raw-materials/:id/balance-by-warehouse` | رصيد الخامة موزعاً على المستودعات | 🔒 JWT | أي مستخدم موثّق؛ `:id` UUID |
+| POST | `/inventory/movements/transfer` | تحويل خامات بين مخزنين | 🔒 JWT | INVENTORY_MANAGER |
 | GET | `/inventory/finished-goods` | المنتج التام | 🔒 JWT | أي مستخدم موثّق |
 | GET | `/inventory/summary` | ملخص المخزون | 🔒 JWT | أي مستخدم موثّق |
 
 يعيد `/inventory/raw-materials/:id/balance-by-warehouse` رصيد كل مستودع من `SUM(stock_ledger_entries.quantityDelta)`، وليس من آخر `balanceAfter`. وفي استجابة حركات المخزون، يمثل `balanceAfter` الرصيد بعد الحركة داخل `warehouseId` المحدد؛ أما `RawMaterial.currentStock` فيبقى الإجمالي عبر المستودعات. معرف غير صالح يرد `400`.
+
+يستقبل `POST /inventory/movements/transfer` body بالشكل `{ "rawMaterialId": "uuid", "fromWarehouseId": "uuid", "toWarehouseId": "uuid", "quantity": 12.5, "reference": "اختياري", "notes": "اختياري" }`. ينشئ الخادم قيدي `TRANSFER` متعاكسين داخل transaction واحدة، ينقص رصيد المصدر ويزيد رصيد الوجهة دون تغيير الإجمالي، ويقفل صف الخامة قبل حساب الأرصدة لمنع التحويل المتزامن الذي يتجاوز المصدر. يدعم الرأس `Idempotency-Key` وإعادة التشغيل المطابق دون قيدين إضافيين.
 
 ## Dashboard — `/dashboard`
 
@@ -251,6 +254,8 @@
 // POST /production/work-orders/:uuid/cost/finalize
 // Body: {}
 // POST /inventory/raw-materials/:uuid/add-stock  { "quantity": 50, "costPerUnit": 45.5 }
+// POST /inventory/movements/transfer
+// Body: { "rawMaterialId": "uuid", "fromWarehouseId": "uuid", "toWarehouseId": "uuid", "quantity": 12.5, "reference": "TRF-001" }
 // POST /hr/production  { "workerId": "uuid", "workOrderId": "uuid?", "date": "2026-08-25T00:00:00.000Z", "piecesCount": 100 }
 // POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
 // POST /hr/payrolls  { "workerId": "uuid", "periodStart": "2026-08-01", "periodEnd": "2026-08-31", "notes": "اختياري" }

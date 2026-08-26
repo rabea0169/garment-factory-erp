@@ -86,3 +86,159 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
     });
   });
 });
+
+describe('ProductsService — versioned BOM', () => {
+  let prisma: ReturnType<typeof createPrismaMock>;
+  let service: ProductsService;
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    service = new ProductsService(prisma as unknown as PrismaService);
+  });
+
+  it('creates the first active BOM version without mutating a line in place', async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: 'product-1' });
+    prisma.rawMaterial.findFirst.mockResolvedValue({ id: 'material-1' });
+    prisma.bomVersion.findFirst.mockResolvedValue(null);
+    prisma.bomVersion.create.mockResolvedValue({
+      id: 'bom-1',
+      versionName: 'v1.0',
+      isActive: true,
+      lines: [{ rawMaterialId: 'material-1', quantity: 2, unit: 'METER' }],
+    });
+
+    const result = await service.addBomItem(
+      'product-1',
+      'material-1',
+      2,
+      'METER',
+    );
+
+    expect(result).toMatchObject({ id: 'bom-1', versionName: 'v1.0' });
+    expect(prisma.bomVersion.create).toHaveBeenCalledWith({
+      data: {
+        productId: 'product-1',
+        versionName: 'v1.0',
+        isActive: true,
+        lines: {
+          create: [{ rawMaterialId: 'material-1', quantity: 2, unit: 'METER' }],
+        },
+      },
+      include: { lines: { include: { rawMaterial: true } } },
+    });
+    expect(prisma.bomLine.upsert).not.toHaveBeenCalled();
+  });
+
+  it('creates a new active BOM version when changing an existing component', async () => {
+    prisma.product.findFirst.mockResolvedValue({ id: 'product-1' });
+    prisma.rawMaterial.findFirst.mockResolvedValue({ id: 'material-2' });
+    prisma.bomVersion.findFirst.mockResolvedValue({
+      id: 'bom-1',
+      productId: 'product-1',
+      versionName: 'v1.0',
+      isActive: true,
+      lines: [
+        {
+          id: 'line-1',
+          rawMaterialId: 'material-1',
+          quantity: 1,
+          unit: 'METER',
+        },
+      ],
+    });
+    prisma.bomVersion.update.mockResolvedValue({
+      id: 'bom-1',
+      isActive: false,
+    });
+    prisma.bomVersion.create.mockResolvedValue({
+      id: 'bom-2',
+      versionName: 'v2.0',
+      isActive: true,
+      lines: [],
+    });
+
+    await service.addBomItem('product-1', 'material-2', 3, 'PIECE');
+
+    expect(prisma.bomVersion.update).toHaveBeenCalledWith({
+      where: { id: 'bom-1' },
+      data: { isActive: false },
+    });
+    expect(prisma.bomVersion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          versionName: 'v2.0',
+          isActive: true,
+          lines: {
+            create: [
+              { rawMaterialId: 'material-1', quantity: 1, unit: 'METER' },
+              { rawMaterialId: 'material-2', quantity: 3, unit: 'PIECE' },
+            ],
+          },
+        }) as Record<string, unknown>,
+      }),
+    );
+  });
+
+  it('creates a replacement BOM version instead of deleting a historical line', async () => {
+    prisma.bomLine.findUnique.mockResolvedValue({
+      id: 'line-1',
+      bomVersion: {
+        id: 'bom-1',
+        productId: 'product-1',
+        versionName: 'v3.0',
+        isActive: true,
+        lines: [
+          {
+            id: 'line-1',
+            rawMaterialId: 'material-1',
+            quantity: 1,
+            unit: 'METER',
+          },
+          {
+            id: 'line-2',
+            rawMaterialId: 'material-2',
+            quantity: 2,
+            unit: 'PIECE',
+          },
+        ],
+      },
+    });
+    prisma.bomVersion.update.mockResolvedValue({
+      id: 'bom-1',
+      isActive: false,
+    });
+    prisma.bomVersion.create.mockResolvedValue({
+      id: 'bom-4',
+      versionName: 'v4.0',
+      isActive: true,
+      lines: [{ rawMaterialId: 'material-2', quantity: 2, unit: 'PIECE' }],
+    });
+
+    const result = await service.deleteBomItem('line-1');
+
+    expect(result).toMatchObject({ deletedLineId: 'line-1' });
+    expect(prisma.bomLine.delete).not.toHaveBeenCalled();
+    expect(prisma.bomVersion.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          versionName: 'v4.0',
+          lines: {
+            create: [
+              { rawMaterialId: 'material-2', quantity: 2, unit: 'PIECE' },
+            ],
+          },
+        }) as Record<string, unknown>,
+      }),
+    );
+  });
+
+  it('rejects non-positive BOM quantities before opening a transaction', async () => {
+    await expect(
+      service.addBomItem('product-1', 'material-1', 0, 'METER'),
+    ).rejects.toThrow('كمية BOM');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
