@@ -327,7 +327,12 @@ export class PurchasingService {
     };
 
     // Use a deterministic idempotency key for legacy full receive
-    const idempotencyKey = `legacy-receive-${order.id}`;
+    // We include a short hash of items to avoid conflict if the remaining balance changes
+    const itemsHash = computeRequestHash({ items: itemsToReceive }).substring(
+      0,
+      10,
+    );
+    const idempotencyKey = `legacy-receive-${order.id}-${itemsHash}`;
 
     return this.createReceipt(orderId, dto, userId, idempotencyKey);
   }
