@@ -20,13 +20,15 @@ import { PaginatedResult } from '../../common/dto/paginated-result.dto';
  * StockLedgerEntry واحدة داخل prisma.$transaction واحدة:
  *
  *   1. (اختياري) إنشاء سجل IdempotencyKey — نقطة التسلسل ضد التكرار.
- *   2. UPDATE ذري واحد للرصيد { increment: delta } — القيمة الراجعة منه هي
- *      الرصيد الجديد (balanceAfter) وهو نقطة التسلسل ضد السباقات: أي عمليتين
- *      متزامنتين على نفس الخامة تُطبقان واحدة بعد الأخرى، والثانية تقرأ أثر الأولى.
- *   3. فحص الرصيد السالب (ADR-0007): لو ظهر الرصيد سالبًا → استثناء → rollback.
- *   4. (RECEIVE فقط) إعادة احتساب التكلفة بمتوسط مرجح (ADR-0008).
- *   5. إنشاء سطر الـ ledger بلقطة الرصيد بعد الحركة.
- *   6. (اختياري) تخزين الاستجابة في سجل الـ idempotency لإعادة تشغيلها لاحقًا.
+ *   2. UPDATE ذري واحد للرصيد الإجمالي { increment: delta } — وهو نقطة التسلسل
+ *      ضد السباقات على نفس الخامة.
+ *   3. تجميع ledger داخل نفس المعاملة لحساب رصيد المستودع بعد الحركة؛ وبذلك
+ *      لا يسمح الصرف بتجاوز رصيد مستودع بعينه حتى لو كان الإجمالي موجبًا.
+ *   4. فحص الرصيد السالب الإجمالي ورصيد المستودع (ADR-0007): الاستثناء يعيد
+ *      المعاملة كلها.
+ *   5. (RECEIVE فقط) إعادة احتساب التكلفة بمتوسط مرجح (ADR-0008).
+ *   6. إنشاء سطر الـ ledger بلقطة رصيد المستودع بعد الحركة.
+ *   7. (اختياري) تخزين الاستجابة في سجل الـ idempotency لإعادة تشغيلها لاحقًا.
  *
  * الأحداث (STOCK_ADDED/STOCK_DEDUCTED/STOCK_LOW) إشعارات in-process غير مالية
  * تُطلق بعد نجاح الـ transaction فقط (وفق اتجاه ADR-0003-ج) — لا اعتماد
@@ -80,6 +82,7 @@ export interface StockMovementResult {
   rawMaterialId: string;
   warehouseId: string;
   quantityDelta: number;
+  /** الرصيد بعد الحركة في المستودع المحدد، وليس الإجمالي عبر كل المستودعات. */
   balanceAfter: number;
   unitCost: number | null;
   totalValue: number | null;
@@ -147,6 +150,10 @@ function isRecordNotFound(err: unknown): boolean {
 
 function round2(value: number): number {
   return Math.round(value * 100) / 100;
+}
+
+function round4(value: number): number {
+  return Math.round(value * 10000) / 10000;
 }
 
 /** كود حركة فريد قابل للقراءة: SLE-YYYYMMDD-XXXXXXXX (تاريخ UTC + عشوائية). */
@@ -246,17 +253,17 @@ export class InventoryService {
   }
 
   /**
-   * A6: يجلب رصيد المادة الخام لكل مستودع عبر aggregate من StockLedgerEntry.
+   * GF-REMAINING-002: يجلب رصيد المادة الخام لكل مستودع من مجموع الحركات.
    *
-   * RawMaterial.currentStock هو الإجمالي الكلي (موجود كـ snapshot للقراءة السريعة)،
-   * لكن قد يحتاج المستخدم لمعرفة التوزيع لكل مستودع. هذه الدالة تجمع
-   * الـ balanceAfter الأخير لكل (warehouse, rawMaterial) من الـ ledger.
+   * RawMaterial.currentStock هو الإجمالي الكلي (snapshot للقراءة السريعة)،
+   * أما الرصيد التشغيلي لكل مستودع فيُستخرج من SUM(quantityDelta) في الـ ledger.
+   * لا نستخدم balanceAfter هنا لأنه لقطة تدقيق لا مصدر تجميع، وقد تكون قديمة
+   * أو كُتبت في إصدار سابق بدلالة إجمالي الخامة.
    *
    * @param rawMaterialId المادة الخام المطلوبة
    * @returns مصفوفة لكل مستودع يحوي الكمية الحالية + آخر تحديث
    */
   async getMaterialBalanceByWarehouse(rawMaterialId: string) {
-    // Prisma لا يدعم DISTINCT ON نatively — نستخدم $queryRaw لـ PostgreSQL.
     const rows = await this.prisma.$queryRaw<
       Array<{
         warehouseId: string;
@@ -266,17 +273,17 @@ export class InventoryService {
         lastUpdate: Date;
       }>
     >`
-      SELECT DISTINCT ON (sle."warehouseId")
+      SELECT
         sle."warehouseId",
-        w.code  AS "warehouseCode",
-        w.name  AS "warehouseName",
-        sle."balanceAfter" AS balance,
-        sle."createdAt"    AS "lastUpdate"
+        w.code AS "warehouseCode",
+        w.name AS "warehouseName",
+        COALESCE(SUM(sle."quantityDelta"), 0) AS balance,
+        MAX(sle."createdAt") AS "lastUpdate"
       FROM stock_ledger_entries sle
       JOIN warehouses w ON w.id = sle."warehouseId"
       WHERE sle."rawMaterialId" = ${rawMaterialId}
-        AND sle."rawMaterialId" IS NOT NULL
-      ORDER BY sle."warehouseId", sle."createdAt" DESC
+      GROUP BY sle."warehouseId", w.code, w.name
+      ORDER BY w.code ASC
     `;
 
     return rows.map((r) => ({
@@ -915,12 +922,32 @@ export class InventoryService {
       const newBalance = Number(material.currentStock);
       const currentCost = Number(material.costPerUnit);
       const minStockLevel = Number(material.minStockLevel);
+      const warehouseAggregate = await tx.stockLedgerEntry.aggregate({
+        where: {
+          rawMaterialId: input.rawMaterialId,
+          warehouseId: input.warehouseId,
+        },
+        _sum: { quantityDelta: true },
+      });
+      const warehouseBalanceBefore = Number(
+        warehouseAggregate._sum.quantityDelta ?? 0,
+      );
+      const warehouseBalanceAfter = round4(
+        warehouseBalanceBefore + input.delta,
+      );
 
-      // ADR-0007: الرصيد السالب ممنوع — الاستثناء يُرجع الـ transaction كلها.
+      // ADR-0007: الرصيد السالب ممنوع — الإجمالي والمستودع كلاهما يُفحصان،
+      // والاستثناء يُرجع الـ transaction كلها.
       if (newBalance < 0) {
         throw new BadRequestException(
           `العملية تُظهر رصيد الخامة إلى ${newBalance} — الرصيد السالب ممنوع (ADR-0007). ` +
             'تحقق من الكمية أو سجّل تسوية جرد أولًا.',
+        );
+      }
+      if (warehouseBalanceAfter < 0) {
+        throw new BadRequestException(
+          `العملية تُظهر رصيد المستودع إلى ${warehouseBalanceAfter} — الرصيد السالب ممنوع (ADR-0007). ` +
+            'تحقق من المستودع أو سجّل تسوية جرد أولًا.',
         );
       }
 
@@ -959,7 +986,7 @@ export class InventoryService {
           warehouseId: input.warehouseId,
           rawMaterialId: input.rawMaterialId,
           quantityDelta: input.delta,
-          balanceAfter: newBalance,
+          balanceAfter: warehouseBalanceAfter,
           unitCost: appliedUnitCost,
           totalValue,
           reference: input.reference,
@@ -976,7 +1003,7 @@ export class InventoryService {
         rawMaterialId: input.rawMaterialId,
         warehouseId: input.warehouseId,
         quantityDelta: input.delta,
-        balanceAfter: newBalance,
+        balanceAfter: warehouseBalanceAfter,
         unitCost: appliedUnitCost,
         totalValue,
         costPerUnitAfter,
@@ -994,7 +1021,7 @@ export class InventoryService {
         materialId: input.rawMaterialId,
         warehouseId: input.warehouseId,
         quantity: input.unsignedQuantity,
-        newBalance,
+        newBalance: warehouseBalanceAfter,
         minStockLevel,
       };
 
@@ -1026,6 +1053,7 @@ export class InventoryService {
         ) {
           void this.eventEmitter.emitAsync(EVENTS.STOCK_LOW, {
             materialId: eventContext.materialId,
+            warehouseId: eventContext.warehouseId,
             currentStock: eventContext.newBalance,
             minStockLevel: eventContext.minStockLevel,
           });

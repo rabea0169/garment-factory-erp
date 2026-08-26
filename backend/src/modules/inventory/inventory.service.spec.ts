@@ -29,7 +29,11 @@ type ExtendedPrismaMock = ReturnType<typeof createPrismaMock> & {
     findFirst: jest.Mock;
     findUnique: jest.Mock;
   };
-  stockLedgerEntry: { create: jest.Mock; findMany: jest.Mock };
+  stockLedgerEntry: {
+    create: jest.Mock;
+    findMany: jest.Mock;
+    aggregate: jest.Mock;
+  };
   idempotencyKey: {
     findUnique: jest.Mock;
     create: jest.Mock;
@@ -45,7 +49,7 @@ function createTxMock() {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
     },
-    stockLedgerEntry: { create: jest.fn() },
+    stockLedgerEntry: { create: jest.fn(), aggregate: jest.fn() },
     idempotencyKey: { create: jest.fn(), update: jest.fn() },
   };
 }
@@ -63,6 +67,7 @@ function createInventoryPrismaMock(): ExtendedPrismaMock {
       create: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
+      aggregate: jest.fn(),
     },
     idempotencyKey: {
       findUnique: jest.fn(),
@@ -117,6 +122,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
     prisma.warehouse.findUnique.mockResolvedValue(WAREHOUSE);
     tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER);
     tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.stockLedgerEntry.aggregate.mockResolvedValue({
+      _sum: { quantityDelta: 150 },
+    });
     tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
     service = new InventoryService(
       prisma as unknown as PrismaService,
@@ -217,6 +225,36 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       expect(prisma.stockLedgerEntry.create).not.toHaveBeenCalled();
     });
 
+    it('يحسب balanceAfter للمستودع المحدد لا للإجمالي العام', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 160,
+        costPerUnit: 45.5,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 20 },
+      });
+
+      const result = await service.receive(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-2',
+          quantity: 10,
+          unitCost: 48,
+        },
+        'user-1',
+      );
+
+      expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          warehouseId: 'wh-2',
+          balanceAfter: 30,
+        }) as Record<string, unknown>,
+        select: { entryCode: true, createdAt: true },
+      });
+      expect(result.balanceAfter).toBe(30);
+    });
+
     it('يعيد احتساب التكلفة بمتوسط مرجح: 150@45.5 + 50@48 → 46.13 (ADR-0008)', async () => {
       const result = await service.receive(
         {
@@ -290,6 +328,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         costPerUnit: 45.5,
         minStockLevel: 50,
       });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
+      });
 
       const result = await service.issue(
         { rawMaterialId: 'rm-1', warehouseId: 'wh-1', quantity: 20 },
@@ -338,6 +379,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         costPerUnit: 45.5,
         minStockLevel: 50,
       });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 50 },
+      });
 
       await service.issue(
         { rawMaterialId: 'rm-1', warehouseId: 'wh-1', quantity: 10 },
@@ -355,6 +399,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       );
       expect(eventEmitter.emitAsync).toHaveBeenCalledWith(EVENTS.STOCK_LOW, {
         materialId: 'rm-1',
+        warehouseId: 'wh-1',
         currentStock: 40,
         minStockLevel: 50,
       });
@@ -369,6 +414,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         currentStock: 146.5,
         costPerUnit: 45.5,
         minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 150 },
       });
 
       const result = await service.adjust(
@@ -426,6 +474,9 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         currentStock: 197.5,
         costPerUnit: 45.5,
         minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 200 },
       });
 
       const result = await service.waste(
@@ -751,6 +802,40 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         where: { isActive: true },
         orderBy: { code: 'asc' },
       });
+    });
+  });
+
+  describe('الرصيد متعدد المستودعات (GF-REMAINING-002)', () => {
+    it('يُرجع SUM(quantityDelta) لكل مستودع بدلاً من آخر balanceAfter', async () => {
+      prisma.$queryRaw.mockResolvedValue([
+        {
+          warehouseId: 'wh-1',
+          warehouseCode: 'WH-RAW',
+          warehouseName: 'مخزن الخامات الرئيسي',
+          balance: new Prisma.Decimal('130.5000'),
+          lastUpdate: new Date('2026-08-26T10:00:00.000Z'),
+        },
+        {
+          warehouseId: 'wh-2',
+          warehouseCode: 'WH-RAW-2',
+          warehouseName: 'مخزن خامات ثانٍ',
+          balance: new Prisma.Decimal('20.0000'),
+          lastUpdate: new Date('2026-08-26T11:00:00.000Z'),
+        },
+      ]);
+
+      const result = await service.getMaterialBalanceByWarehouse('rm-1');
+
+      expect(result).toEqual([
+        expect.objectContaining({ warehouseId: 'wh-1', balance: 130.5 }),
+        expect.objectContaining({ warehouseId: 'wh-2', balance: 20 }),
+      ]);
+      expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+      const [template] = prisma.$queryRaw.mock.calls[0] as [
+        TemplateStringsArray,
+      ];
+      expect(template.join('')).toContain('SUM(sle."quantityDelta")');
+      expect(template.join('')).toContain('GROUP BY');
     });
   });
 
