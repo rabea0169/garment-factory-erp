@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayNotEmpty,
+  IsArray,
   IsInt,
   IsNotEmpty,
   IsOptional,
@@ -25,6 +27,10 @@ export class PurchaseReceiptItemDto {
 
 export class CreatePurchaseReceiptDto {
   @ApiProperty({ type: [PurchaseReceiptItemDto] })
+  @IsArray()
+  @ArrayNotEmpty({
+    message: 'يجب أن يحتوي إذن الاستلام على بند واحد على الأقل',
+  })
   @ValidateNested({ each: true })
   @Type(() => PurchaseReceiptItemDto)
   items: PurchaseReceiptItemDto[];

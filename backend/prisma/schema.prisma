@@ -343,6 +343,7 @@ model IdempotencyKey {
   stageTransition       WorkOrderStageTransition?
   productionConsumption ProductionMaterialConsumption?
   qualityCheck          QualityCheck?
+  purchaseReceipt       PurchaseReceipt?
 
   payroll               Payroll?
   @@index([scope, createdAt])
@@ -909,12 +910,13 @@ model PurchaseReceipt {
   code            String   @unique
   purchaseOrderId String
   userId          String
-  receivedAt      DateTime @default(now())
-  notes           String?
-
-  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
-  user          User                  @relation(fields: [userId], references: [id])
-  items         PurchaseReceiptItem[]
+  receivedAt       DateTime          @default(now())
+  notes            String?
+  idempotencyKeyId String?           @unique
+  purchaseOrder    PurchaseOrder     @relation(fields: [purchaseOrderId], references: [id])
+  user             User              @relation(fields: [userId], references: [id])
+  idempotencyKey   IdempotencyKey?   @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  items            PurchaseReceiptItem[]
 
   @@index([purchaseOrderId, receivedAt])
   @@map("purchase_receipts")

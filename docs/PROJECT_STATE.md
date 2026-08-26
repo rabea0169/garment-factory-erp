@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `eae3f7e` — دمج PR #28 التوثيقي فوق GF-0016 الجزئي PR #27 |
-| فرع العمل الحالي | `phase5/gf0015-payroll` — تنفيذ payroll MVP |
-| آخر commit في فرع العمل | `eae3f7e` — base verified؛ تغييرات GF-0015 غير ملتزمة بعد |
-| Pull Request الحالي | لا يوجد؛ فرع GF-0015 قيد الإعداد قبل الرفع |
-| آخر مرحلة مكتملة بالكامل على main | GF-0014؛ GF-0015 بدأ جزئيًا فقط عبر attendance endpoint في PR #24 |
-| حالة CI على main | PASS — Run `32928522342` على `eae3f7e`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
-| حالة قاعدة البيانات | migration `20260830000000_gf0014_quality_waste` نجحت على PostgreSQL 16 disposable في CI؛ لا توجد production/shared DB بعد |
-| إصدار API | `1.0`؛ أضيف `GET /quality/kpis` ووثّق POST الجودة في GF-0014 |
+| آخر commit على main | `19076b4` — دمج PR #30 الخاص بـGF-0015 بعد PR #29 الخاص بـGF-0017 وPR #27 الجزئي |
+| فرع العمل الحالي | `phase6/gf0016-purchasing-complete` — تدقيق وإكمال receipt idempotency |
+| آخر commit في فرع العمل | `19076b4` — base verified؛ تغييرات GF-0016 غير ملتزمة بعد |
+| Pull Request الحالي | لا يوجد؛ فرع GF-0016 قيد الإعداد قبل الرفع |
+| آخر مرحلة مكتملة بالكامل على main | GF-0015 payroll MVP؛ GF-0016 وGF-0017 ما زالا بحاجة تدقيق/إكمال رغم وجود أجزاء مدمجة |
+| حالة CI على main | PASS — Run `32930054490` على `19076b4`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة قاعدة البيانات | migrations GF-0014 وGF-0015 نجحت على PostgreSQL 16 في CI؛ migration GF-0016 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
+| إصدار API | `1.0`؛ أضيف payroll draft/approval في GF-0015 وتوثيق receipt idempotency قيد PR GF-0016 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0015-IMPL`: التحقق النهائي ورفع PR payroll |
-| المرحلة النشطة | GF-0015 — HR/Payroll implementation |
+| المهمة النشطة | `GF-0016-IMPL`: إكمال receipt idempotency والتحقق من PostgreSQL CI |
+| المرحلة النشطة | GF-0016 — Purchasing receipt hardening |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
-| حالة GF-0015 | attendance مدمج عبر PR #24؛ payroll MVP منفذ محليًا وينتظر PR/CI، وبطاقة HANDOFF-015-IMPL مضافة |
+| حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-015-IMPL.md` |
-| Next exact action | مراجعة diff/GF-0015 migration، commit ورفع PR مستقل، ثم انتظار CI migration/integration وFlutter وSecret Scan |
+| Last handoff | `docs/handoffs/HANDOFF-016.md` |
+| Next exact action | تشغيل diff check، commit/push وفتح PR GF-0016، ثم انتظار migration deploy وPostgreSQL receipt/ledger integration في CI |
 
 ## المهام المكتملة على main
 
@@ -82,4 +82,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `phase5/gf0015-payroll` فوق `main@eae3f7e` بعد تنفيذ payroll MVP وفق ADR-0015. البوابات المحلية Backend خضراء، والتكامل الحقيقي ينتظر CI؛ المهمة التالية هي رفع PR والتحقق منه.
+تم تحديث هذا الملف على فرع `phase6/gf0016-purchasing-complete` فوق `main@19076b4` بعد تدقيق PR #27 وإضافة receipt idempotency وPostgreSQL integration. البوابات المحلية خضراء، والتكامل الحقيقي ينتظر PR CI؛ لا يُعلن GF-0016 مكتملًا قبل ذلك.

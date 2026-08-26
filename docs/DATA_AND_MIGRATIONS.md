@@ -83,7 +83,15 @@
 
 يجب تشغيل `npx prisma migrate deploy` على PostgreSQL نظيفة وعلى نسخة بيانات تحتوي صفوف Payroll legacy، ثم تشغيل unit وHTTP وPostgreSQL integration. يجب اختبار uniqueness والتزامن وreplay والحساب والاعتماد وعدم التعديل. للتراجع البرمجي استخدم `git revert`، وللقاعدة استخدم backup/restore أو migration عكسية معتمدة بعد إيقاف endpoints الجديدة؛ لا تسقط أعمدة أو تحذف سجلات payroll يدويًا.
 
-## 7. نقاط الاسترجاع (Rollback hooks)
+## 7. Migration GF-0016 — Purchase Receipt Idempotency
+
+**الاسم:** `20260830020000_gf0016_receipt_idempotency`
+
+تضيف migration العمود nullable `purchase_receipts.idempotencyKeyId` مع FK إلى `idempotency_keys` وunique/index. لا تغيّر receipts القديمة ولا تحذف أي حركة مخزون. يمر إنشاء receipt الجديد عبر transaction واحدة تنشئ idempotency record، receipt، حركات `RECEIVE` في ledger، وتحديث حالة PurchaseOrder، ثم تخزن استجابة replay القابلة للتسلسل. إعادة الطلب بالمفتاح نفسه والمحتوى نفسه لا تنشئ receipt أو ledger إضافيًا؛ المحتوى المختلف يُرفض بـ409.
+
+قبل التطبيق على بيئة مشتركة يجب تشغيل `npx prisma migrate deploy` على PostgreSQL وفحص اختبار receipt/ledger والتزامن. rollback يكون بـbackup/restore أو migration عكسية معتمدة بعد إيقاف endpoint؛ لا تُحذف receipts أو ledger يدويًا.
+
+## 8. نقاط الاسترجاع (Rollback hooks)
 
 - المستودع: `git revert` لأي commit — لا migration بعد عكس schema إلا بmigration عكسية.
 - قاعدة البيانات محليًا: إعادة `docker-compose down -v` ثم `migrate dev` + seed (بيانات تطوير فقط — لا بيانات إنتاج موجودة بعد).

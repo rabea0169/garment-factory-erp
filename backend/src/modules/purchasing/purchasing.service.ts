@@ -14,6 +14,13 @@ import {
   generateDocumentCode,
   DocumentCodePrefix,
 } from '../../core/common/codes.util';
+import {
+  computeRequestHash,
+  createIdempotencyKey,
+  isIdempotencyUniqueViolation,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
 
 @Injectable()
 export class PurchasingService {
@@ -85,12 +92,28 @@ export class PurchasingService {
     orderId: string,
     dto: CreatePurchaseReceiptDto,
     userId: string,
+    idempotencyKey?: string,
   ) {
     if (!dto.items.length) {
       throw new BadRequestException(
         'يجب أن يحتوي إذن الاستلام على بند واحد على الأقل',
       );
     }
+
+    const requestHash = computeRequestHash({
+      orderId,
+      items: dto.items,
+      notes: dto.notes ?? null,
+      userId,
+    });
+    const scope = 'purchasing-receipt-create';
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      scope,
+      requestHash,
+    );
+    if (replay) return replay;
 
     const itemIds = dto.items.map((item) => item.purchaseOrderItemId);
     if (new Set(itemIds).size !== itemIds.length) {
@@ -140,58 +163,87 @@ export class PurchasingService {
       throw new BadRequestException('Default RAW warehouse not found');
     }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const receipt = await tx.purchaseReceipt.create({
-        data: {
-          code: generateDocumentCode(DocumentCodePrefix.PURCHASE_RECEIPT),
-          purchaseOrderId: orderId,
-          userId,
-          notes: dto.notes,
-          items: {
-            create: dto.items.map((item) => ({
-              purchaseOrderItemId: item.purchaseOrderItemId,
-              quantity: item.quantity,
-            })),
-          },
-        },
-        include: { items: true },
-      });
+    try {
+      return await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          const receiptIdempotencyKeyId = await createIdempotencyKey(
+            tx,
+            idempotencyKey,
+            scope,
+            requestHash,
+          );
+          const receipt = await tx.purchaseReceipt.create({
+            data: {
+              code: generateDocumentCode(DocumentCodePrefix.PURCHASE_RECEIPT),
+              purchaseOrderId: orderId,
+              userId,
+              notes: dto.notes,
+              idempotencyKeyId: receiptIdempotencyKeyId,
+              items: {
+                create: dto.items.map((item) => ({
+                  purchaseOrderItemId: item.purchaseOrderItemId,
+                  quantity: item.quantity,
+                })),
+              },
+            },
+            include: { items: true },
+          });
 
-      for (const item of dto.items) {
-        const orderItem = orderItems.get(item.purchaseOrderItemId)!;
-        await this.inventoryService.receive(
-          {
-            rawMaterialId: orderItem.rawMaterialId,
-            warehouseId: rawWarehouse.id,
-            quantity: item.quantity,
-            unitCost: Number(orderItem.unitCost),
-            reference: receipt.code,
-            notes: `استلام ${receipt.code} من أمر الشراء ${order.code}`,
-          },
-          userId,
-          tx,
+          for (const item of dto.items) {
+            const orderItem = orderItems.get(item.purchaseOrderItemId);
+            if (!orderItem) {
+              throw new NotFoundException('Item not found in order');
+            }
+            await this.inventoryService.receive(
+              {
+                rawMaterialId: orderItem.rawMaterialId,
+                warehouseId: rawWarehouse.id,
+                quantity: item.quantity,
+                unitCost: Number(orderItem.unitCost),
+                reference: receipt.code,
+                notes: `استلام ${receipt.code} من أمر الشراء ${order.code}`,
+              },
+              userId,
+              tx,
+            );
+          }
+
+          const allReceived = order.items.every((item) => {
+            const previous = receivedByItem.get(item.id) ?? 0;
+            const current =
+              dto.items.find(
+                (receiptItem) => receiptItem.purchaseOrderItemId === item.id,
+              )?.quantity ?? 0;
+            return previous + current >= Number(item.quantity);
+          });
+          await tx.purchaseOrder.update({
+            where: { id: orderId },
+            data: {
+              status: allReceived
+                ? PurchaseOrderStatus.RECEIVED
+                : PurchaseOrderStatus.PENDING,
+            },
+          });
+
+          await storeIdempotencyResponse(tx, idempotencyKey, {
+            id: receipt.id,
+            code: receipt.code,
+          });
+          return receipt;
+        },
+      );
+    } catch (error) {
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
         );
+        if (replayed) return replayed;
       }
-
-      const allReceived = order.items.every((item) => {
-        const previous = receivedByItem.get(item.id) ?? 0;
-        const current =
-          dto.items.find(
-            (receiptItem) => receiptItem.purchaseOrderItemId === item.id,
-          )?.quantity ?? 0;
-        return previous + current >= Number(item.quantity);
-      });
-      await tx.purchaseOrder.update({
-        where: { id: orderId },
-        data: {
-          status: allReceived
-            ? PurchaseOrderStatus.RECEIVED
-            : PurchaseOrderStatus.PENDING,
-        },
-      });
-
-      return receipt;
-    });
+      throw error;
+    }
   }
 
   async receiveOrder(orderId: string, userId: string) {
