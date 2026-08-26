@@ -123,7 +123,11 @@ export function createPrismaMock() {
       create: jest.fn(),
       count: jest.fn(),
     },
-    dailyProduction: { create: jest.fn(), aggregate: jest.fn() },
+    dailyProduction: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      aggregate: jest.fn(),
+    },
     attendance: { create: jest.fn() },
     workerAdvance: { create: jest.fn(), aggregate: jest.fn() },
     payroll: {

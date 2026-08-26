@@ -1,4 +1,5 @@
 import {
+  AccountType,
   PayrollStatus,
   Prisma,
   UserRole,
@@ -6,7 +7,9 @@ import {
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { HrService } from '../src/modules/hr/hr.service';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -17,6 +20,7 @@ integrationDescribe('GF-0015 payroll integration', () => {
   let hrService: HrService;
   let actorId: string;
   let workerId: string;
+  let treasuryId: string;
   const periodStart = new Date('2026-08-01T00:00:00.000Z');
   const periodEnd = new Date('2026-08-31T00:00:00.000Z');
 
@@ -26,13 +30,17 @@ integrationDescribe('GF-0015 payroll integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    hrService = new HrService(prisma);
+    hrService = new HrService(prisma, new FinancialPostingService(prisma));
   });
 
   beforeEach(async () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
       TRUNCATE TABLE
+        "journal_lines",
+        "journal_entries",
+        "accounts",
+        "treasuries",
         "payrolls",
         "activity_logs",
         "idempotency_keys",
@@ -52,6 +60,28 @@ integrationDescribe('GF-0015 payroll integration', () => {
       },
     });
     actorId = actor.id;
+    await prisma.account.createMany({
+      data: [
+        {
+          id: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+          code: `5100-GF15-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0015 Payroll Expense',
+          type: AccountType.EXPENSE,
+          balance: 0,
+        },
+        {
+          id: CHART_OF_ACCOUNTS.CASH,
+          code: `1100-GF15-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0015 Cash',
+          type: AccountType.ASSET,
+          balance: 1000,
+        },
+      ],
+    });
+    const treasury = await prisma.treasury.create({
+      data: { name: 'GF-0015 Payroll Treasury', type: 'CASH', balance: 1000 },
+    });
+    treasuryId = treasury.id;
     const worker = await prisma.worker.create({
       data: {
         code: `WR-GF15-${randomUUID().slice(0, 8)}`,
@@ -168,6 +198,57 @@ integrationDescribe('GF-0015 payroll integration', () => {
     expect(
       await prisma.activityLog.count({ where: { action: 'PAYROLL_APPROVED' } }),
     ).toBe(1);
+  });
+
+  it('pays an approved payroll once with cash posting and idempotent replay', async () => {
+    const payroll = await hrService.createPayroll(
+      { workerId, periodStart, periodEnd },
+      actorId,
+      `gf0015-pay-create-${randomUUID()}`,
+    );
+    await hrService.approvePayroll(
+      payroll.id,
+      actorId,
+      `gf0015-pay-approve-${randomUUID()}`,
+    );
+    const paymentKey = `gf0015-pay-${randomUUID()}`;
+
+    const paid = await hrService.payPayroll(
+      payroll.id,
+      { treasuryId, paymentDate: periodEnd, notes: 'صرف راتب أغسطس' },
+      actorId,
+      paymentKey,
+    );
+    const replay = await hrService.payPayroll(
+      payroll.id,
+      { treasuryId, paymentDate: periodEnd, notes: 'صرف راتب أغسطس' },
+      actorId,
+      paymentKey,
+    );
+
+    expect(paid).toMatchObject({
+      id: payroll.id,
+      status: PayrollStatus.APPROVED,
+      isPaid: true,
+    });
+    expect(replay).toMatchObject({
+      id: payroll.id,
+      isPaid: true,
+      replayed: true,
+    });
+    expect(
+      await prisma.journalEntry.count({
+        where: { reference: `PAYROLL:${payroll.id}` },
+      }),
+    ).toBe(1);
+    const treasury = await prisma.treasury.findUnique({
+      where: { id: treasuryId },
+    });
+    expect(treasury?.balance.toNumber()).toBe(590);
+    const cash = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.CASH },
+    });
+    expect(cash?.balance.toNumber()).toBe(590);
   });
 
   it('does not allow concurrent requests to create two payrolls for one worker period', async () => {

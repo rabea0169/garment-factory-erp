@@ -15,11 +15,19 @@ import {
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 export interface PayrollInput {
   workerId: string;
   periodStart: Date;
   periodEnd: Date;
+  notes?: string;
+}
+
+export interface PayrollPaymentInput {
+  treasuryId: string;
+  paymentDate?: Date;
   notes?: string;
 }
 
@@ -62,7 +70,10 @@ function isPayrollPeriodUniqueViolation(error: unknown): boolean {
 
 @Injectable()
 export class HrService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financial: FinancialPostingService,
+  ) {}
 
   async getAllWorkers(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -353,6 +364,139 @@ export class HrService {
             action: 'PAYROLL_APPROVED',
             module: 'HR',
             details: { payrollId: response.id, approvedById: actorId },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+        return response;
+      });
+    } catch (error) {
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replay = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay as PayrollResponse & { replayed: true };
+      }
+      throw error;
+    }
+  }
+
+  async payPayroll(
+    payrollId: string,
+    input: PayrollPaymentInput,
+    actorId: string,
+    idempotencyKey?: string,
+  ): Promise<PayrollResponse | (PayrollResponse & { replayed: true })> {
+    const paymentDate = input.paymentDate ?? new Date();
+    if (!Number.isFinite(paymentDate.getTime())) {
+      throw new BadRequestException('تاريخ دفع الراتب غير صالح');
+    }
+
+    const requestHash = computeRequestHash({
+      payrollId,
+      treasuryId: input.treasuryId,
+      paymentDate: paymentDate.toISOString(),
+      notes: input.notes ?? null,
+      actorId,
+    });
+    const scope = 'hr-payroll-pay';
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) {
+          return replay as PayrollResponse & { replayed: true };
+        }
+
+        const payroll = await tx.payroll.findUnique({
+          where: { id: payrollId },
+        });
+        if (!payroll) throw new NotFoundException('كشف الراتب غير موجود');
+        if (payroll.status !== PayrollStatus.APPROVED) {
+          throw new ConflictException('لا يمكن دفع كشف راتب غير معتمد');
+        }
+        if (payroll.isPaid) {
+          throw new ConflictException('كشف الراتب مدفوع بالفعل');
+        }
+
+        const amount = payroll.netAmount.toNumber();
+        if (!Number.isFinite(amount) || amount <= 0) {
+          throw new BadRequestException(
+            'لا يمكن دفع كشف راتب بصافي مبلغ غير موجب',
+          );
+        }
+
+        const treasury = await tx.treasury.findUnique({
+          where: { id: input.treasuryId },
+          select: { id: true, isActive: true },
+        });
+        if (!treasury || !treasury.isActive) {
+          throw new NotFoundException('الخزينة غير موجودة أو غير نشطة');
+        }
+
+        await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+        const updated = await tx.payroll.updateMany({
+          where: {
+            id: payrollId,
+            status: PayrollStatus.APPROVED,
+            isPaid: false,
+          },
+          data: { isPaid: true, paidAt: paymentDate },
+        });
+        if (updated.count !== 1) {
+          throw new ConflictException('تعذر دفع الراتب؛ حالته تغيرت بالتزامن');
+        }
+
+        await this.financial.postJournalEntryInTx(
+          tx,
+          {
+            description: `دفع راتب ${payrollId}`,
+            reference: `PAYROLL:${payrollId}`,
+            postingKey: `hr-payroll-pay:${payrollId}`,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+                creditAccountId: CHART_OF_ACCOUNTS.CASH,
+                amount,
+                description:
+                  input.notes ?? `دفع صافي راتب العامل ${payroll.workerId}`,
+              },
+            ],
+            treasuryUpdates: [{ treasuryId: input.treasuryId, delta: -amount }],
+            metadata: {
+              source: 'HR_PAYROLL_PAYMENT',
+              payrollId,
+              workerId: payroll.workerId,
+              treasuryId: input.treasuryId,
+              paymentDate: paymentDate.toISOString(),
+            },
+            date: paymentDate,
+          },
+          actorId,
+        );
+
+        const paid = await tx.payroll.findUnique({ where: { id: payrollId } });
+        if (!paid) throw new NotFoundException('كشف الراتب غير موجود');
+        const response = this.toPayrollResponse(paid);
+        await tx.activityLog.create({
+          data: {
+            userId: actorId,
+            action: 'PAYROLL_PAID',
+            module: 'HR',
+            details: {
+              payrollId,
+              workerId: payroll.workerId,
+              amount,
+              treasuryId: input.treasuryId,
+            },
           },
         });
         await storeIdempotencyResponse(tx, idempotencyKey, response);

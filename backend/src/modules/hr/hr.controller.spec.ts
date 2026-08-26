@@ -15,6 +15,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     recordAdvance: jest.Mock;
     createPayroll: jest.Mock;
     approvePayroll: jest.Mock;
+    payPayroll: jest.Mock;
   };
 
   beforeEach(() => {
@@ -26,6 +27,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       recordAdvance: jest.fn().mockResolvedValue({ id: 'adv-1' }),
       createPayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
       approvePayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
+      payPayroll: jest.fn().mockResolvedValue({ id: 'pay-1', isPaid: true }),
     };
     controller = new HrController(service as unknown as HrService);
   });
@@ -131,6 +133,34 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       ROLES_KEY,
       HrController.prototype,
       'approvePayroll',
+    );
+    expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
+  });
+
+  it('دفع payroll يمرر الخزينة والتاريخ وactor وIdempotency-Key', async () => {
+    const body = {
+      treasuryId: 'treasury-1',
+      paymentDate: '2026-08-31',
+      notes: 'صرف أغسطس',
+    };
+    await controller.payPayroll('pay-1', body, 'manager-1', 'pay-key');
+    expect(service.payPayroll).toHaveBeenCalledWith(
+      'pay-1',
+      {
+        treasuryId: body.treasuryId,
+        paymentDate: new Date(body.paymentDate),
+        notes: body.notes,
+      },
+      'manager-1',
+      'pay-key',
+    );
+  });
+
+  it('دفع payroll محمي بدوري HR_MANAGER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      HrController.prototype,
+      'payPayroll',
     );
     expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
   });
