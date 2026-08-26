@@ -12,6 +12,7 @@ import {
 import { PurchasingService } from './purchasing.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
+import { ReturnToSupplierDto } from './dto/return-to-supplier.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
@@ -71,14 +72,15 @@ export class PurchasingController {
   @ApiOperation({ summary: 'Return purchase order item to supplier' })
   async returnItem(
     @Param('id') id: string,
-    @Body() body: { itemId: string; quantity: number },
+    @Body() dto: ReturnToSupplierDto,
     @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.purchasingService.returnToSupplier(
       id,
-      body.itemId,
-      body.quantity,
+      dto,
       userId,
+      idempotencyKey,
     );
   }
 }

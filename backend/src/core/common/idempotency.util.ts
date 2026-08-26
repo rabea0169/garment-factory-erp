@@ -124,7 +124,7 @@ export async function createIdempotencyKey(
     data: { key, scope, requestHash },
     select: { id: true },
   });
-  return idem.id;
+  return idem?.id;
 }
 
 /**

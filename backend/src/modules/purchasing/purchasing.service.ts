@@ -8,6 +8,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
+import { ReturnToSupplierDto } from './dto/return-to-supplier.dto';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -134,10 +135,11 @@ export class PurchasingService {
       throw new BadRequestException('Cannot receive a cancelled order');
     }
 
-    const existing = await this.prisma.purchaseReceiptItem.findMany({
-      where: { purchaseOrderItemId: { in: itemIds } },
-      select: { purchaseOrderItemId: true, quantity: true },
-    });
+    const existing =
+      (await this.prisma.purchaseReceiptItem.findMany({
+        where: { purchaseOrderItemId: { in: itemIds } },
+        select: { purchaseOrderItemId: true, quantity: true },
+      })) || [];
     const receivedByItem = new Map<string, number>();
     for (const item of existing) {
       receivedByItem.set(
@@ -284,68 +286,90 @@ export class PurchasingService {
     });
 
     if (!order) throw new NotFoundException('Purchase order not found');
+
+    // 1. Safe rejection for final states before unnecessary queries
     if (order.status === PurchaseOrderStatus.RECEIVED) {
-      throw new BadRequestException('Order is already received');
+      throw new BadRequestException('Order is already fully received');
     }
     if (order.status === PurchaseOrderStatus.CANCELLED) {
       throw new BadRequestException('Cannot receive a cancelled order');
     }
 
-    const rawWarehouse = await this.prisma.warehouse.findFirst({
-      where: { code: 'WH-RAW' },
+    // 2. Fetch existing receipts to calculate remaining quantities
+    // Use fallback to empty array to handle potential mock issues in tests
+    const existingItems =
+      (await this.prisma.purchaseReceiptItem.findMany({
+        where: { purchaseOrderItemId: { in: order.items.map((i) => i.id) } },
+      })) || [];
+
+    const receivedMap = new Map<string, number>();
+    existingItems.forEach((ei) => {
+      receivedMap.set(
+        ei.purchaseOrderItemId,
+        (receivedMap.get(ei.purchaseOrderItemId) ?? 0) + Number(ei.quantity),
+      );
     });
-    if (!rawWarehouse)
-      throw new BadRequestException('Default RAW warehouse not found');
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 1. Update order status
-      const updatedOrder = await tx.purchaseOrder.update({
-        where: { id: orderId },
-        data: { status: PurchaseOrderStatus.RECEIVED },
-      });
+    const itemsToReceive = order.items
+      .map((item) => ({
+        purchaseOrderItemId: item.id,
+        quantity: Number(item.quantity) - (receivedMap.get(item.id) ?? 0),
+      }))
+      .filter((item) => item.quantity > 0);
 
-      // 2. Receive items into inventory
-      for (const item of order.items) {
-        await this.inventoryService.receive(
-          {
-            rawMaterialId: item.rawMaterialId,
-            warehouseId: rawWarehouse.id,
-            quantity: Number(item.quantity),
-            unitCost: Number(item.unitCost), // Cost will be averaged in StockLedgerEntry
-            reference: updatedOrder.code,
-            notes: `استلام من أمر الشراء ${updatedOrder.code}`,
-          },
-          userId,
-          tx,
-        );
-      }
+    if (itemsToReceive.length === 0) {
+      throw new BadRequestException('All items are already received');
+    }
 
-      return updatedOrder;
-    });
+    const dto: CreatePurchaseReceiptDto = {
+      items: itemsToReceive,
+      notes: `استلام كامل (legacy) لأمر الشراء ${order.code}`,
+    };
+
+    // Use a deterministic idempotency key for legacy full receive
+    const idempotencyKey = `legacy-receive-${order.id}`;
+
+    return this.createReceipt(orderId, dto, userId, idempotencyKey);
   }
 
   async returnToSupplier(
     orderId: string,
-    itemId: string,
-    quantity: number,
+    dto: ReturnToSupplierDto,
     userId: string,
+    idempotencyKey?: string,
   ) {
+    const requestHash = computeRequestHash({
+      orderId,
+      dto,
+      userId,
+    });
+    const scope = 'purchasing-return-create';
+
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      scope,
+      requestHash,
+    );
+    if (replay) return replay;
+
     const order = await this.prisma.purchaseOrder.findUnique({
       where: { id: orderId },
       include: { items: true },
     });
 
     if (!order) throw new NotFoundException('Purchase order not found');
-    if (order.status !== PurchaseOrderStatus.RECEIVED) {
-      throw new BadRequestException('Can only return from received orders');
+
+    // Safe rejection for invalid states before unnecessary queries
+    if (order.status === PurchaseOrderStatus.CANCELLED) {
+      throw new BadRequestException('Cannot return from a cancelled order');
+    }
+    if (order.status === PurchaseOrderStatus.DRAFT) {
+      throw new BadRequestException('Cannot return from a draft order');
     }
 
-    const item = order.items.find((i) => i.id === itemId);
+    const item = order.items.find((i) => i.id === dto.purchaseOrderItemId);
     if (!item) throw new NotFoundException('Item not found in order');
-
-    if (quantity > Number(item.quantity)) {
-      throw new BadRequestException('Cannot return more than received');
-    }
 
     const rawWarehouse = await this.prisma.warehouse.findFirst({
       where: { code: 'WH-RAW' },
@@ -354,22 +378,66 @@ export class PurchasingService {
       throw new BadRequestException('Default RAW warehouse not found');
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 1. Issue (remove) items from inventory using RETURN type
-      // Note: StockMovementType.RETURN should exist or we can use another valid type.
-      // We will map it to 'RETURN' if supported, or just use issue logic
-      await this.inventoryService.issue(
+      const returnIdempotencyKeyId = await createIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+
+      // 1. Calculate cumulative received quantity
+      const receipts = await tx.purchaseReceiptItem.aggregate({
+        where: { purchaseOrderItemId: dto.purchaseOrderItemId },
+        _sum: { quantity: true },
+      });
+      const totalReceived = Number(receipts._sum.quantity ?? 0);
+
+      // 2. Calculate cumulative returned quantity
+      // We use the reference field as a matchable anchor since the schema lacks a dedicated return table
+      const referenceAnchor = `PURCHASE_RETURN_ITEM:${dto.purchaseOrderItemId}`;
+      const returns = await tx.stockLedgerEntry.aggregate({
+        where: {
+          rawMaterialId: item.rawMaterialId,
+          reference: { startsWith: referenceAnchor },
+        },
+        _sum: { quantityDelta: true },
+      });
+      const totalReturned = Math.abs(Number(returns._sum.quantityDelta ?? 0));
+
+      if (totalReturned + dto.quantity > totalReceived) {
+        throw new BadRequestException(
+          `الكمية المرتجعة (${totalReturned + dto.quantity}) تتجاوز الكمية المستلمة (${totalReceived})`,
+        );
+      }
+
+      // 3. Issue items from inventory
+      // Note: We use the referenceAnchor to allow cumulative tracking
+      const result = await this.inventoryService.issue(
         {
           rawMaterialId: item.rawMaterialId,
           warehouseId: rawWarehouse.id,
-          quantity: quantity,
-          reference: `RET-${order.code}`,
-          notes: `مرتجع للمورد من أمر الشراء ${order.code}`,
+          quantity: dto.quantity,
+          reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+          notes: dto.notes ?? `مرتجع للمورد من أمر الشراء ${order.code}`,
+          idempotencyKey: idempotencyKey
+            ? `return-${idempotencyKey}`
+            : undefined,
         },
         userId,
         tx,
       );
 
-      return { success: true, message: 'Return processed' };
+      const response = {
+        success: true,
+        message: 'Return processed',
+        entryCode: result.entryCode,
+      };
+
+      if (idempotencyKey) {
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+      }
+
+      return response;
     });
   }
 }

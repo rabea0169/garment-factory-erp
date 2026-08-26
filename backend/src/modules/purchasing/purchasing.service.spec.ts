@@ -203,9 +203,18 @@ describe('PurchasingService (GF-0009)', () => {
         id: 'po-1',
         code: 'PO-100',
         status: PurchaseOrderStatus.PENDING,
-        items: [{ rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 }],
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
       });
       prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+      prisma.purchaseReceipt.create.mockResolvedValue({
+        id: 'grn-1',
+        code: 'GRN-100',
+        items: [],
+      });
       prisma.$transaction.mockImplementation(async (cb) => {
         return cb(prisma); // Pass mocked prisma as tx
       });
@@ -223,7 +232,7 @@ describe('PurchasingService (GF-0009)', () => {
           warehouseId: 'wh-raw',
           quantity: 10,
           unitCost: 5,
-          reference: 'PO-100',
+          reference: 'GRN-100',
           notes: expect.any(String),
         },
         'user-1',
