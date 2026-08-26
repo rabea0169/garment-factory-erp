@@ -158,6 +158,7 @@ class ApiClient {
       final status = error.response?.statusCode;
       if (status == 401) return 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى';
       if (status == 403) return 'ليس لديك صلاحية لتنفيذ هذا الإجراء';
+      if (status == 404) return 'الخدمة المطلوبة غير متاحة حاليًا';
       if (status == 429) return 'تجاوزت عدد الطلبات المسموح، انتظر قليلاً';
       if (error.type == DioExceptionType.connectionError ||
           error.type == DioExceptionType.connectionTimeout ||

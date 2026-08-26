@@ -11,6 +11,7 @@ import {
   InventoryService,
   StockMovementResult,
 } from '../src/modules/inventory/inventory.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
@@ -28,7 +29,11 @@ describe('GF-REMAINING-002 inventory warehouse balances', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    service = new InventoryService(prisma, new EventEmitter2());
+    service = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
     const user = await prisma.user.create({
       data: {
         name: 'GF-REMAINING-002 Integration User',

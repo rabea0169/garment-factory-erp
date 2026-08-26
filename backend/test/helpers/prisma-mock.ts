@@ -13,6 +13,10 @@ export function createPrismaMock() {
     // B2: $queryRaw mock — default returns empty array. Override per-test with
     // prisma.$queryRaw = jest.fn().mockResolvedValue([...])
     $queryRaw: jest.fn().mockResolvedValue([]),
+    // $executeRaw — used by InventoryService.receiveFinishedGood and
+    // ProductionWorkflowService.recordStageOutput for atomic upserts on
+    // finished_good_stocks via raw INSERT ... ON CONFLICT.
+    $executeRaw: jest.fn().mockResolvedValue(1),
     user: { findUnique: jest.fn() },
     salesOrder: {
       findMany: jest.fn(),
@@ -33,6 +37,7 @@ export function createPrismaMock() {
     finishedGoodStock: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       updateMany: jest.fn(),
       upsert: jest.fn(),
       create: jest.fn(),
@@ -68,7 +73,25 @@ export function createPrismaMock() {
       findUnique: jest.fn(),
       count: jest.fn(),
     },
-    productionStageRun: { findFirst: jest.fn() },
+    productionStageRun: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    productionMaterialConsumption: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      aggregate: jest.fn(),
+    },
+    productionCostSnapshot: {
+      findFirst: jest.fn(),
+      upsert: jest.fn(),
+    },
+    workOrderStageTransition: {
+      create: jest.fn(),
+      findUnique: jest.fn(),
+    },
     warehouse: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -91,7 +114,6 @@ export function createPrismaMock() {
       count: jest.fn(),
       aggregate: jest.fn(),
     },
-    productionCostSnapshot: { findFirst: jest.fn() },
     activityLog: { create: jest.fn() },
     bomVersion: {
       findFirst: jest.fn(),

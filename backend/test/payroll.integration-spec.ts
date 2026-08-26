@@ -76,6 +76,32 @@ integrationDescribe('GF-0015 payroll integration', () => {
           type: AccountType.ASSET,
           balance: 1000,
         },
+        // WAVE2-C2 (COMM-F03): approvePayroll posts Dr SALARIES_EXPENSE / Cr
+        // SALARIES_PAYABLE. Seed both so the GL posting can resolve the
+        // accounts after the beforeEach TRUNCATE wiped the migration-seeded rows.
+        {
+          id: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+          code: `5200-GF15-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0015 Salaries Expense',
+          type: AccountType.EXPENSE,
+          balance: 0,
+        },
+        {
+          id: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+          code: `2400-GF15-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0015 Salaries Payable',
+          type: AccountType.LIABILITY,
+          balance: 0,
+        },
+        // WAVE2-C (COMM-F04): payPayroll posts Dr SALARIES_PAYABLE / Cr CASH
+        // + advance clearing Dr SALARIES_PAYABLE / Cr WORKER_ADVANCES.
+        {
+          id: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+          code: `1330-GF15-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0015 Worker Advances',
+          type: AccountType.ASSET,
+          balance: 0,
+        },
       ],
     });
     const treasury = await prisma.treasury.create({
@@ -228,7 +254,10 @@ integrationDescribe('GF-0015 payroll integration', () => {
 
     expect(paid).toMatchObject({
       id: payroll.id,
-      status: PayrollStatus.APPROVED,
+      // WAVE2-C2 (COMM-F04): payPayroll now transitions APPROVED -> PAID
+      // (was using APPROVED for both approval and payment, which was semantically
+      // wrong — could not distinguish accrued-but-unpaid from paid).
+      status: PayrollStatus.PAID,
       isPaid: true,
     });
     expect(replay).toMatchObject({
@@ -240,7 +269,7 @@ integrationDescribe('GF-0015 payroll integration', () => {
       await prisma.journalEntry.count({
         where: { reference: `PAYROLL:${payroll.id}` },
       }),
-    ).toBe(1);
+    ).toBe(2); // WAVE2-C2 (COMM-F03): one approval entry + one payment entry
     const treasury = await prisma.treasury.findUnique({
       where: { id: treasuryId },
     });

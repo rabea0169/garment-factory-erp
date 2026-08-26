@@ -21,6 +21,13 @@ class ReportsScreen extends StatelessWidget {
             if (state is ReportsLoading) {
               return const Center(child: CircularProgressIndicator());
             }
+            if (state is ReportsEmpty) {
+              return _buildEmptyState(
+                context,
+                onRetry: () =>
+                    context.read<ReportsCubit>().fetchDashboardStats(),
+              );
+            }
             if (state is ReportsLoaded) {
               final data = state.data;
               final sales = List<dynamic>.from(data['sales'] as List);
@@ -49,29 +56,42 @@ class ReportsScreen extends StatelessWidget {
               );
             }
             if (state is ReportsError) {
-              return Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(24),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.cloud_off,
-                          size: 48, color: AppColors.error),
-                      const SizedBox(height: 12),
-                      Text(
-                        state.message,
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(fontFamily: 'Cairo'),
+              // MOBILE-F04: pull-to-refresh على شاشة الخطأ + رسالة عربية ودودة
+              // (تتضمن 404 المُعالَج عبر api_client.messageFor).
+              return RefreshIndicator(
+                onRefresh: () =>
+                    context.read<ReportsCubit>().fetchDashboardStats(),
+                child: ListView(
+                  children: [
+                    const SizedBox(height: 80),
+                    Center(
+                      child: Padding(
+                        padding: const EdgeInsets.all(24),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(Icons.cloud_off,
+                                size: 48, color: AppColors.error),
+                            const SizedBox(height: 12),
+                            Text(
+                              state.message,
+                              textAlign: TextAlign.center,
+                              style:
+                                  const TextStyle(fontFamily: 'Cairo'),
+                            ),
+                            const SizedBox(height: 16),
+                            OutlinedButton.icon(
+                              onPressed: () => context
+                                  .read<ReportsCubit>()
+                                  .fetchDashboardStats(),
+                              icon: const Icon(Icons.refresh),
+                              label: const Text('إعادة المحاولة'),
+                            ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 16),
-                      OutlinedButton.icon(
-                        onPressed: () =>
-                            context.read<ReportsCubit>().fetchDashboardStats(),
-                        icon: const Icon(Icons.refresh),
-                        label: const Text('إعادة المحاولة'),
-                      ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               );
             }
@@ -307,6 +327,47 @@ class ReportsScreen extends StatelessWidget {
           textAlign: TextAlign.center,
           style: const TextStyle(fontFamily: 'Cairo'),
         ),
+      ),
+    );
+  }
+
+  /// شاشة "لا توجد بيانات" — تظهر عندما تستجيب الـ API بصيغة صالحة لكن
+  /// لا توجد أي سجلات في الفترة الحالية. تدعم pull-to-refresh عبر
+  /// RefreshIndicator.
+  Widget _buildEmptyState(
+    BuildContext context, {
+    required VoidCallback onRetry,
+  }) {
+    return RefreshIndicator(
+      onRefresh: () => context.read<ReportsCubit>().fetchDashboardStats(),
+      child: ListView(
+        children: [
+          const SizedBox(height: 80),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(Icons.inbox_outlined,
+                      size: 48, color: AppColors.textSecondary),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'لا توجد بيانات لعرضها في الفترة الحالية',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontFamily: 'Cairo'),
+                  ),
+                  const SizedBox(height: 16),
+                  OutlinedButton.icon(
+                    onPressed: onRetry,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('إعادة التحميل'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
       ),
     );
   }

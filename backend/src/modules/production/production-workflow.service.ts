@@ -15,6 +15,8 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 export interface TransitionStageInput {
   workOrderId: string;
@@ -109,6 +111,7 @@ export class ProductionWorkflowService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
+    private readonly financialPosting: FinancialPostingService,
   ) {}
 
   async transitionStage(
@@ -262,6 +265,26 @@ export class ProductionWorkflowService {
     const replay = await this.findStageOutputReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
+    // OPS-F03: Prevent production workflow bypass — load the work order first and
+    // reject any non-active status. CANCELLED/COMPLETED orders must not accept new
+    // stage output. Done outside the transaction so idempotency replay (above)
+    // wins, but bypass rejection still triggers for callers without a key.
+    const workOrderStatus = await this.prisma.workOrder.findUnique({
+      where: { id: input.workOrderId },
+      select: { status: true },
+    });
+    if (!workOrderStatus) {
+      throw new NotFoundException('Work order not found');
+    }
+    if (
+      workOrderStatus.status === WorkOrderStatus.CANCELLED ||
+      workOrderStatus.status === WorkOrderStatus.COMPLETED
+    ) {
+      throw new BadRequestException(
+        'لا يمكن تسجيل إنتاج على أمر تشغيل بحالة ' + workOrderStatus.status,
+      );
+    }
+
     try {
       return await this.prisma.$transaction(async (tx) => {
         let stageRun = await tx.productionStageRun.findUnique({
@@ -277,12 +300,12 @@ export class ProductionWorkflowService {
                 currentStage: true,
                 productVariantId: true,
                 code: true,
+                status: true,
               },
             },
           },
         });
         if (!stageRun) throw new NotFoundException('Stage run not found');
-
         // Serialize completions for the same stage. A pre-check outside the
         // transaction cannot distinguish two requests that arrive together.
         // Re-read after the row lock so the loser observes the committed key or
@@ -298,11 +321,23 @@ export class ProductionWorkflowService {
                 currentStage: true,
                 productVariantId: true,
                 code: true,
+                status: true,
               },
             },
           },
         });
         if (!stageRun) throw new NotFoundException('Stage run not found');
+
+        // OPS-F03 (defense-in-depth inside tx): re-check after acquiring locks.
+        if (
+          stageRun.workOrder.status === WorkOrderStatus.CANCELLED ||
+          stageRun.workOrder.status === WorkOrderStatus.COMPLETED
+        ) {
+          throw new BadRequestException(
+            'لا يمكن تسجيل إنتاج على أمر تشغيل بحالة ' +
+              stageRun.workOrder.status,
+          );
+        }
 
         if (input.idempotencyKey) {
           const existingKey = await tx.idempotencyKey.findUnique({
@@ -421,6 +456,17 @@ export class ProductionWorkflowService {
           return result;
         }
 
+        // OPS-F05: لا يمكن إكمال أمر تشغيل دون فحص جودة موثَّق. التحقق داخل
+        // الـ tx قبل نقل الحالة إلى COMPLETED حتى يبقى ذريًا مع باقي الكتابات.
+        const qcCount = await tx.qualityCheck.count({
+          where: { workOrderId: input.workOrderId },
+        });
+        if (qcCount === 0) {
+          throw new BadRequestException(
+            'لا يمكن إكمال أمر تشغيل دون فحص جودة موثَّق',
+          );
+        }
+
         const warehouse = await tx.warehouse.findFirst({
           where: {
             code: 'WH-FG',
@@ -523,6 +569,42 @@ export class ProductionWorkflowService {
             endDate: new Date(),
           },
         });
+
+        // ACC-F01 / OPS-F01: قيد GL لترحيل تكلفة الخامات المستهلكة من WIP
+        // إلى مخزون المنتج التام. يُستخدم postingKey مستقر (مرتبط بمعرّف أمر
+        // التشغيل) فيمنع الترحيل المزدوج عبر الـ unique constraint على
+        // JournalEntry.postingKey. الكمية المُرحَّلة = إجمالي totalCost لكل
+        // سجلات ProductionMaterialConsumption على هذا الـ WorkOrder.
+        const glAmount = materialCost.toNumber();
+        if (glAmount > 0) {
+          await this.financialPosting.postJournalEntryInTx(
+            tx,
+            {
+              description:
+                'ترحيل إنتاج تام من أمر تشغيل #' + stageRun.workOrder.code,
+              reference: stageRun.workOrder.code,
+              postingKey: 'production-completion:' + input.workOrderId,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+                  creditAccountId: CHART_OF_ACCOUNTS.WIP,
+                  amount: glAmount,
+                  description:
+                    'ترحيل تكلفة خامات إلى مخزون المنتج التام — أمر تشغيل ' +
+                    stageRun.workOrder.code,
+                },
+              ],
+              userId: actorId,
+              metadata: {
+                source: 'production.completion',
+                workOrderId: input.workOrderId,
+                acceptedQty: input.acceptedQty,
+              },
+            },
+            actorId,
+          );
+        }
         return result;
       });
     } catch (error) {

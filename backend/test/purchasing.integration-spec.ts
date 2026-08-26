@@ -36,7 +36,11 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     await prisma.$connect();
     service = new PurchasingService(
       prisma,
-      new InventoryService(prisma, new EventEmitter2()),
+      new InventoryService(
+        prisma,
+        new EventEmitter2(),
+        new FinancialPostingService(prisma),
+      ),
       new FinancialPostingService(prisma),
     );
   });

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'app.dart';
 import 'core/network/api_client.dart';
 import 'core/router/app_router.dart';
@@ -7,7 +8,10 @@ import 'core/storage/auth_storage.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
+  // MOBILE-F03: تهيئة بيانات صيغ التاريخ العربية لـ intl (DateFormat.yMMMd('ar')).
+  await initializeDateFormatting('ar', null);
+
   // تهيئة عميل API
   ApiClient.instance.init(onUnauthorized: AppRouter.goToLogin);
   String? token;

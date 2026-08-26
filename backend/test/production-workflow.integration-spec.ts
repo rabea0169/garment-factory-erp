@@ -1,6 +1,8 @@
 import {
+  Prisma,
   ProductionStage,
   ProductionStageRunStatus,
+  QualityCheckStatus,
   StockMovementType,
   ProductionWasteReason,
   UserRole,
@@ -11,6 +13,7 @@ import { EventEmitter2 } from 'eventemitter2';
 import { randomUUID } from 'node:crypto';
 import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { ProductionWorkflowService } from '../src/modules/production/production-workflow.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
@@ -39,8 +42,16 @@ integrationDescribe('GF-0013 production workflow integration', () => {
 
     prisma = new PrismaService();
     await prisma.$connect();
-    inventoryService = new InventoryService(prisma, new EventEmitter2());
-    workflowService = new ProductionWorkflowService(prisma, inventoryService);
+    inventoryService = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
+    workflowService = new ProductionWorkflowService(
+      prisma,
+      inventoryService,
+      new FinancialPostingService(prisma),
+    );
   });
 
   beforeEach(async () => {
@@ -646,8 +657,16 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    inventoryService = new InventoryService(prisma, new EventEmitter2());
-    workflowService = new ProductionWorkflowService(prisma, inventoryService);
+    inventoryService = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
+    workflowService = new ProductionWorkflowService(
+      prisma,
+      inventoryService,
+      new FinancialPostingService(prisma),
+    );
   });
 
   beforeEach(async () => {
@@ -808,6 +827,23 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       { workOrderId: scenario.workOrderId, toStage: ProductionStage.PACKING },
       scenario.userId,
     );
+    // OPS-F05:PACKING requires a QualityCheck before the work order can
+    // transition to COMPLETED via recordStageOutput. Seed one to satisfy
+    // the guard introduced in WAVE2-B2.
+    await prisma.qualityCheck.create({
+      data: {
+        workOrderId: scenario.workOrderId,
+        stage: WorkOrderStatus.PACKAGING,
+        checkedQty: 7,
+        passedQty: 7,
+        rejectedQty: 0,
+        wasteQty: 0,
+        unitCost: new Prisma.Decimal('2.86'),
+        wasteCost: new Prisma.Decimal('0'),
+        status: QualityCheckStatus.COMPLETED,
+        checkedAt: new Date(),
+      },
+    });
     await workflowService.recordStageOutput({
       workOrderId: scenario.workOrderId,
       stage: ProductionStage.PACKING,
