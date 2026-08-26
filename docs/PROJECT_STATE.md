@@ -10,10 +10,10 @@
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `2b530f9` — خط أساس origin/main بعد آخر الدمجات؛ لا يحتوي إصلاحات PR #52/#54 |
 | فرع العمل الحالي | `direct/gf-audit-002d-payroll-payment` — إصلاحات المشتريات، دفع الرواتب، Dashboard، وحماية الترحيل |
-| آخر commit في فرع العمل | `4fe6975` — قفل أرصدة الخزينة والموردين ومنع الرصيد السالب؛ CI اليدوي أخضر |
+| آخر commit في فرع العمل | `8a439c6` — توثيق الحالة والـbacklog والhandoff؛ CI اليدوي على هذا الخط الأخضر |
 | Pull Requests الحالية | [PR #52](https://github.com/rabea0169/garment-factory-erp/pull/52) للمشتريات + [PR #54](https://github.com/rabea0169/garment-factory-erp/pull/54) للتوسعة؛ كلاهما ينتظر المراجعة والدمج |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ الإصلاحات المباشرة GF-AUDIT-001C/001D وما بعدها ما زالت على PRs |
-| حالة CI على main | `origin/main@2b530f9`؛ CI اليدوي على `4fe6975` أخضر لكل Backend/Integration/Flutter/Secret Scan، بينما Prisma Compute Deploy الخارجي فاشل |
+| حالة CI على main | `origin/main@2b530f9`؛ CI اليدوي على `8a439c6` في Run `32949589191` أخضر: Backend/Integration/Flutter/Secret Scan، بينما Prisma Compute Deploy الخارجي فاشل |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
 | إصدار API | `1.1-draft`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` على فرع الإصلاح، ولم يُعتمد الإصدار قبل الدمج |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
@@ -87,4 +87,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `docs/post-gf0019-state` فوق `main@d815831` بعد دمج PR #39. Run `32935090736` أخضر وحقق migration deploy وPostgreSQL integration وBackend وFlutter وSecret Scan. GF-0019 مكتملة ضمن هذا النطاق، بينما PR #38 الخاص بـGF-0020 مدمج خارجيًا ويحتاج تدقيقًا مستقلاً.
+تم تحديث هذا الملف على فرع `direct/gf-audit-002d-payroll-payment` فوق `origin/main@2b530f9`. الإصلاحات الحالية في PR #54 تشمل المشتريات ودفع الرواتب وDashboard وحماية الأرصدة. Run `32949589191` أخضر لجميع بوابات CI الداخلية، بينما Prisma Compute Deploy الخارجي ما زال فاشلًا؛ الإصدار Production يبقى No-Go حتى حل الفحص الخارجي واعتماد المحاسبة وRestore/UAT.
