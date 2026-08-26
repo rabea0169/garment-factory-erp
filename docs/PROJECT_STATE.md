@@ -9,23 +9,24 @@
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `e32f745` — دمج PR #58 وتوثيق دفع الرواتب بعد PR #57؛ CI main run `32950963418` أخضر |
-| فرع العمل الحالي | `docs/post-merge-release-state` — تحديث الحالة بعد الدمج |
-| آخر commit في فرع العمل | `e32f745` — الحالة الحالية مطابقة لـorigin/main |
-| Pull Requests الأخيرة | PR #55 للمشتريات، PR #57 لدفع الرواتب وحماية الأرصدة، PR #58 لتوثيق API؛ كلها مدمجة |
+| فرع العمل الحالي | `fix/gf-remaining-006-test-gates` — بوابة integration الصارمة وتوسيع RBAC فوق main الأحدث |
+| آخر commit في فرع العمل | قيد إعادة التأسيس فوق `origin/main@e32f745`؛ GF6 يحتاج CI جديد بعد حل التعارض |
+| Pull Requests الأخيرة | PR #55 للمشتريات، PR #57 لدفع الرواتب وحماية الأرصدة، PR #58 لتوثيق API مدمجة؛ PR #56 لـGF6 مفتوحة |
 | آخر مرحلة مكتملة بالكامل على main | GF-REMAINING-005 + payroll payment؛ CI النهائي أخضر |
 | حالة CI على main | `main@e32f745` بعد دمج PR #58؛ CI run `32950963418` أخضر |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ PR #57 لا يضيف migration جديدة |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ PR #57 لا يضيف migration جديدة؛ GF6 لا يضيف migration |
 | إصدار API | `1.1`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` وreceipt/AP idempotency وPOD وfiscal periods/journal entries |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-006 — توسيع اختبارات PostgreSQL وUAT وRelease Readiness |
-| المرحلة النشطة | GF-REMAINING-006 بعد دمج PR #57/#58؛ لا يزال Production No-Go حتى حل Prisma Compute/npm audit وBackup/Restore/UAT |
+| المهمة النشطة | GF-REMAINING-006 — توسيع اختبارات PostgreSQL وRBAC وfail-closed gates |
+| المرحلة النشطة | GF-REMAINING-006 قيد إعادة التأسيس فوق main الأحدث؛ لا يزال Production No-Go حتى حل Prisma Compute/npm audit وBackup/Restore/UAT |
+| سبب عدم بدء GF-REMAINING-007 | يجب أولاً دمج GF6 بعد نجاح CI على main الأحدث وتفويض صريح |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 أمني جديد في الإصلاحات المدمجة؛ Secret Scan وCI PASS، لكن Prisma Compute الخارجي وnpm audit وRelease gates ما زالت مفتوحة |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-005.md`؛ PR #57/#58 مدمجان ودمجتهما موثق في GitHub |
-| Next exact action | حل Prisma Compute/npm audit، ثم تنفيذ Backup/Restore Drill وUAT وGo/No-Go قبل Production |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-006.md` — محدث بعد حل تعارض main؛ CI جديد مطلوب |
+| Next exact action | إكمال rebase على `origin/main@e32f745`، تشغيل full gates وrequired PostgreSQL، ثم متابعة PR #56؛ بعد الدمج تُستكمل Backup/Restore Drill وUAT وGo/No-Go قبل Production |
 
 ## المهام المكتملة على main
 
