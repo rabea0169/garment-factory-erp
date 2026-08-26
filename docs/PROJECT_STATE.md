@@ -8,24 +8,25 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `dd200c5` — دمج PR #51 وإغلاق GF-REMAINING-004؛ CI main run `32946638174` أخضر |
-| فرع العمل الحالي | `fix/gf-remaining-005-purchasing-financial` — ربط الاستلام بالترحيل المالي الذري |
-| آخر commit في فرع العمل | `8a1bf02` — ربط الاستلام بالقيد المالي الذري واختبارات PostgreSQL؛ CI أخضر |
-| Pull Request الحالي | [PR #55](https://github.com/rabea0169/garment-factory-erp/pull/55) — CI كامل أخضر؛ ينتظر الدمج |
-| آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
-| حالة CI على main | `main@dd200c5` بعد دمج PR #51؛ CI main run `32946638174` أخضر |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ GF5 لا يضيف migration |
-| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
+| آخر commit على main | `620cbaf` — دمج PR #60 لتوثيق حالة ما بعد الإصلاحات؛ مبني فوق PR #57/#58 |
+| فرع العمل الحالي | `fix/gf-remaining-006-test-gates` — بوابة integration الصارمة وتوسيع RBAC فوق main الأحدث |
+| آخر commit في فرع العمل | `e46a0a8` بعد rebase فوق `origin/main@620cbaf`؛ GF6 يحتاج CI جديد على الرأس النهائي |
+| Pull Requests الأخيرة | PR #55 للمشتريات، PR #57 لدفع الرواتب، PR #58 و#60 للتوثيق والحالة مدمجة؛ PR #56 لـGF6 مفتوحة |
+| آخر مرحلة مكتملة بالكامل على main | GF-REMAINING-005 + payroll payment؛ CI النهائي أخضر |
+| حالة CI على main | `main@620cbaf` بعد دمج PR #60؛ يلزم التحقق من CI الحالي قبل release decision |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ PR #57 لا يضيف migration جديدة؛ GF6 لا يضيف migration |
+| إصدار API | `1.1`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` وreceipt/AP idempotency وPOD وfiscal periods/journal entries |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-005 — ربط استلام المشتريات بالترحيل المالي |
-| المرحلة النشطة | GF-REMAINING-005 مكتملة على فرع مستقل؛ PR #55 وCI أخضران؛ الدمج فقط بتفويض صريح |
+| المهمة النشطة | GF-REMAINING-006 — توسيع اختبارات PostgreSQL وRBAC وfail-closed gates |
+| المرحلة النشطة | GF-REMAINING-006 قيد إعادة التأسيس فوق main الأحدث؛ لا يزال Production No-Go حتى حل Prisma Compute/npm audit وBackup/Restore/UAT |
+| سبب عدم بدء GF-REMAINING-007 | يجب أولاً دمج GF6 بعد نجاح CI على main الأحدث وتفويض صريح |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
-| Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
+| Security blockers | لا P0/P1 أمني جديد في الإصلاحات المدمجة؛ Secret Scan وCI PASS، لكن Prisma Compute الخارجي وnpm audit وRelease gates ما زالت مفتوحة |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-005.md` |
-| Next exact action | دمج PR #55 بتفويض صريح ثم التحقق من main CI؛ بعدها يبدأ GF-REMAINING-006 |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-006.md` — محدث بعد rebase وrace fix؛ CI جديد مطلوب |
+| Next exact action | force-push آمن للرأس المعاد تأسيسه، تشغيل full gates وrequired PostgreSQL على PR #56، ثم طلب الدمج؛ بعده تُستكمل Backup/Restore Drill وUAT وGo/No-Go قبل Production |
 
 ## المهام المكتملة على main
 
@@ -45,7 +46,7 @@
 | GF-0017 | shipment lifecycle وproof of delivery وactor audit | مكتملة ومُدمجة عبر PR #29 و#33؛ CI PostgreSQL أخضر |
 | GF-0018 | fiscal periods وقيود متعددة البنود ومنع الترحيل المغلق | مكتملة ومُدمجة عبر PR #32 و#36؛ CI PostgreSQL أخضر |
 | GF-0019 | صرف المنتج التام عند SHIPPED وحماية إنشاء الشحنة من التكرار | مكتملة ومُدمجة عبر PR #35 و#39؛ migration وCI PostgreSQL أخضران |
-| GF-0020 | GRN/AP — ترحيل إيصالات الشراء إلى الحسابات الدائنة | مدمجة خارجيًا عبر PR #38؛ لم تُراجع ضمن هذا التسليم |
+| GF-0020 | GRN/AP — ترحيل إيصالات الشراء إلى الحسابات الدائنة | مكتملة وموجودة على main عبر PR #55 |
 
 ## GF-0014 — الحالة التفصيلية
 
@@ -87,4 +88,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `docs/post-gf0019-state` فوق `main@d815831` بعد دمج PR #39. Run `32935090736` أخضر وحقق migration deploy وPostgreSQL integration وBackend وFlutter وSecret Scan. GF-0019 مكتملة ضمن هذا النطاق، بينما PR #38 الخاص بـGF-0020 مدمج خارجيًا ويحتاج تدقيقًا مستقلاً.
+تم تحديث هذا الملف على فرع `docs/post-merge-release-state` فوق `main@e32f745` بعد دمج PR #57 وPR #58. Run `32950963418` أخضر وحقق Backend وPostgreSQL integration وE2E وFlutter وSecret Scan. ما زال Production No-Go حتى إغلاق Prisma Compute/npm audit وBackup/Restore/UAT.

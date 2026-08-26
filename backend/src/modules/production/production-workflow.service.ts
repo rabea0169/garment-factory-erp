@@ -287,7 +287,7 @@ export class ProductionWorkflowService {
 
     try {
       return await this.prisma.$transaction(async (tx) => {
-        const stageRun = await tx.productionStageRun.findUnique({
+        let stageRun = await tx.productionStageRun.findUnique({
           where: {
             workOrderId_stage: {
               workOrderId: input.workOrderId,
@@ -306,6 +306,28 @@ export class ProductionWorkflowService {
           },
         });
         if (!stageRun) throw new NotFoundException('Stage run not found');
+        // Serialize completions for the same stage. A pre-check outside the
+        // transaction cannot distinguish two requests that arrive together.
+        // Re-read after the row lock so the loser observes the committed key or
+        // completion from the winner instead of throwing a false conflict.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM production_stage_runs WHERE id = ${stageRun.id} FOR UPDATE`,
+        );
+        stageRun = await tx.productionStageRun.findUnique({
+          where: { id: stageRun.id },
+          include: {
+            workOrder: {
+              select: {
+                currentStage: true,
+                productVariantId: true,
+                code: true,
+                status: true,
+              },
+            },
+          },
+        });
+        if (!stageRun) throw new NotFoundException('Stage run not found');
+
         // OPS-F03 (defense-in-depth inside tx): re-check after acquiring locks.
         if (
           stageRun.workOrder.status === WorkOrderStatus.CANCELLED ||
@@ -316,6 +338,45 @@ export class ProductionWorkflowService {
               stageRun.workOrder.status,
           );
         }
+
+        if (input.idempotencyKey) {
+          const existingKey = await tx.idempotencyKey.findUnique({
+            where: { key: input.idempotencyKey },
+          });
+          if (existingKey) {
+            if (
+              existingKey.scope !== 'production.stage-output' ||
+              existingKey.requestHash !== hash
+            ) {
+              throw new ConflictException('Idempotency key payload mismatch');
+            }
+            if (existingKey.response) {
+              return {
+                ...(existingKey.response as Omit<
+                  StageOutputResult,
+                  'replayed'
+                >),
+                replayed: true,
+              } satisfies StageOutputResult;
+            }
+            // Older completed stage outputs may have the relation saved but
+            // no response JSON. Treat the committed stage run as a replay too.
+            if (
+              stageRun.status === ProductionStageRunStatus.COMPLETED &&
+              stageRun.idempotencyKeyId === existingKey.id
+            ) {
+              return {
+                replayed: true,
+                workOrderId: stageRun.workOrderId,
+                stage: stageRun.stage,
+                stageRunId: stageRun.id,
+                status: stageRun.status,
+              } satisfies StageOutputResult;
+            }
+            throw new ConflictException('العملية السابقة لم تكتمل بعد');
+          }
+        }
+
         if (stageRun.workOrder.currentStage !== input.stage) {
           throw new BadRequestException(
             'Stage output must be recorded for the current production stage',
@@ -362,6 +423,13 @@ export class ProductionWorkflowService {
           stageRunId: stageRun.id,
           status: ProductionStageRunStatus.COMPLETED,
         } satisfies StageOutputResult;
+
+        if (input.idempotencyKey) {
+          await tx.idempotencyKey.update({
+            where: { key: input.idempotencyKey },
+            data: { response: result },
+          });
+        }
 
         if (actorId) {
           await tx.activityLog.create({

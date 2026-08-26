@@ -211,6 +211,25 @@ describe('Auth guard (e2e) — GF-0002', () => {
     return request(app.getHttpServer()).get('/accounting/accounts').expect(401);
   });
 
+  it('GET /dashboard/stats بلا توكن → 401', () => {
+    return request(app.getHttpServer()).get('/dashboard/stats').expect(401);
+  });
+
+  it('POST /purchasing/:id/receipts بلا توكن → 401', () => {
+    return request(app.getHttpServer())
+      .post('/purchasing/purchase-1/receipts')
+      .send({ items: [] })
+      .expect(401);
+  });
+
+  it('VIEWER لا يستطيع إنشاء إذن استلام مشتريات → 403', () => {
+    return request(app.getHttpServer())
+      .post('/purchasing/purchase-1/receipts')
+      .set('Authorization', `Bearer ${viewerToken()}`)
+      .send({ items: [] })
+      .expect(403);
+  });
+
   it('توكن غير صالح → 401', () => {
     return request(app.getHttpServer())
       .get('/sales/orders')
