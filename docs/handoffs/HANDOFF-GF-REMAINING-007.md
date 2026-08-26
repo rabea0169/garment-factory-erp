@@ -6,7 +6,7 @@
 - **Base:** `origin/main@0b34949` after merge of GF-REMAINING-006.
 - **Branch:** `phase2/gf-remaining-007-performance`
 - **Scope:** قياس الأداء على خادم backend فعلي متصل بـPostgreSQL 16، مع حمل ثابت موثق على health/readiness/dashboard، وإنتاج artifact JSON يحوي p95 وthroughput وpool saturation.
-- **Status:** initial CI exposed an incorrect production build entrypoint; `start:prod` was corrected to `dist/src/main.js`; benchmark runtime and artifact require a new CI run.
+- **Status:** initial CI exposed an incorrect production build entrypoint and the first valid benchmark load exceeded the global rate limiter; both were corrected without disabling security, and a new CI run is required for the final artifact.
 
 ## 2. Changes
 
@@ -15,6 +15,8 @@
 يختبر benchmark ثلاثة مسارات: `GET /health` كخط أساس للعملية، `GET /health/ready` كمسار قاعدة البيانات، و`GET /dashboard/stats` كمسار تقارير ERP محمي بالمصادقة. يسجل الدخول بحساب seed الإداري ولا يستخدم token أو بيانات ثابتة خارج بيئة الاختبار.
 
 أضيف `npm run test:performance`، وjob مستقل في CI ينشئ PostgreSQL 16، يطبق migrations، يشغل seed، يبني الخادم ويشغله، ينتظر readiness، ثم ينفذ benchmark ويرفع JSON كـartifact. كما صُحح `start:prod` من `dist/main` إلى مسار Nest build الفعلي `dist/src/main.js` بعد أن كشف أول تشغيل CI أن المسار القديم يفشل بـ`MODULE_NOT_FOUND`.
+
+كشف أول benchmark صالح أن 120 طلباً لكل مسار كانت تتجاوز rate limiter العام وتنتج 429، وهو رفض أمني صحيح لا فشل أداء. خُفّض الحمل الموثق إلى 30 طلباً لكل مسار و10 متزامنة وبدون warm-up، أي 90 طلباً إجمالاً، حتى يقيس الأداء الفعلي دون تعطيل الحماية أو إدخال استثناء خاص بالاختبار.
 
 لا تُفرض thresholds تخمينية. يمكن لمالك البيئة ضبط `PERF_MAX_P95_MS` أو `PERF_MIN_THROUGHPUT_RPS` أو `PERF_MAX_ERROR_RATE` صراحة؛ بدونها تكون المرحلة قياساً baseline لا قرار SLA.
 
@@ -30,7 +32,7 @@
 | Build | PASS | `npm run build` |
 | Unit tests | PASS | 32 suites / 197 tests |
 | E2E tests | PASS | 3 suites / 64 tests |
-| Runtime benchmark | PENDING CI rerun | first CI reached performance job but failed before benchmark بسبب `dist/main`؛ path corrected |
+| Runtime benchmark | PENDING CI rerun | first run failed at `dist/main`; second run reached benchmark but correctly returned 429 under documented limiter; load reduced and path fixed |
 
 ## 4. CI acceptance criteria
 

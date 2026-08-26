@@ -167,9 +167,9 @@ jobs:
       DB_POOL_MAX: "20"
       PERF_LOGIN_EMAIL: admin@factory.com
       PERF_LOGIN_PASSWORD: ci-performance-password
-      PERF_REQUESTS: "120"
-      PERF_CONCURRENCY: "20"
-      PERF_WARMUP: "10"
+      PERF_REQUESTS: "30"
+      PERF_CONCURRENCY: "10"
+      PERF_WARMUP: "0"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

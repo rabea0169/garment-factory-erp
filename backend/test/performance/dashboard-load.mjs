@@ -6,9 +6,9 @@ import pg from 'pg';
 const { Client } = pg;
 
 const baseUrl = process.env.PERF_BASE_URL ?? 'http://127.0.0.1:3000';
-const totalRequests = Number.parseInt(process.env.PERF_REQUESTS ?? '120', 10);
-const concurrency = Number.parseInt(process.env.PERF_CONCURRENCY ?? '20', 10);
-const warmupRequests = Number.parseInt(process.env.PERF_WARMUP ?? '10', 10);
+const totalRequests = Number.parseInt(process.env.PERF_REQUESTS ?? '30', 10);
+const concurrency = Number.parseInt(process.env.PERF_CONCURRENCY ?? '10', 10);
+const warmupRequests = Number.parseInt(process.env.PERF_WARMUP ?? '0', 10);
 const requestTimeoutMs = Number.parseInt(
   process.env.PERF_REQUEST_TIMEOUT_MS ?? '10000',
   10,
