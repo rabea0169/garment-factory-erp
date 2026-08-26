@@ -157,6 +157,45 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     expect(
       await prisma.stockLedgerEntry.count({ where: { reference: first.code } }),
     ).toBe(1);
+    const journal = await prisma.journalEntry.findFirst({
+      where: { reference: first.code },
+      include: { lines: true },
+    });
+    expect(journal).toMatchObject({ isAuto: true, reference: first.code });
+    expect(journal?.lines).toHaveLength(1);
+    expect(journal?.lines[0]).toMatchObject({
+      debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+      creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+    });
+    expect(journal?.lines[0].amount.toNumber()).toBe(50);
+    const accounts = await prisma.account.findMany({
+      where: {
+        id: {
+          in: [CHART_OF_ACCOUNTS.INVENTORY, CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE],
+        },
+      },
+      select: { id: true, balance: true },
+    });
+    expect(
+      accounts
+        .find((account) => account.id === CHART_OF_ACCOUNTS.INVENTORY)
+        ?.balance.toNumber(),
+    ).toBe(50);
+    expect(
+      accounts
+        .find((account) => account.id === CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE)
+        ?.balance.toNumber(),
+    ).toBe(-50);
+    const order = await prisma.purchaseOrder.findUnique({
+      where: { id: orderId },
+      select: { supplierId: true },
+    });
+    expect(order?.supplierId).toBeDefined();
+    const supplier = await prisma.supplier.findUnique({
+      where: { id: order!.supplierId },
+      select: { balance: true },
+    });
+    expect(supplier?.balance.toNumber()).toBe(50);
     const material = await prisma.rawMaterial.findUnique({
       where: { id: rawMaterialId },
     });
@@ -178,5 +217,68 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     ).rejects.toThrow('تتجاوز المتبقي');
     expect(await prisma.purchaseReceipt.count()).toBe(0);
     expect(await prisma.stockLedgerEntry.count()).toBe(0);
+  });
+
+  it('receives only the remaining quantity through legacy receiveOrder', async () => {
+    await service.createReceipt(
+      orderId,
+      { items: [{ purchaseOrderItemId: itemId, quantity: 2 }] },
+      userId,
+      `gf0016-partial-${randomUUID()}`,
+    );
+
+    await service.receiveOrder(orderId, userId);
+
+    expect(await prisma.purchaseReceipt.count()).toBe(2);
+    expect(await prisma.stockLedgerEntry.count()).toBe(2);
+    expect(
+      await prisma.purchaseOrder.count({
+        where: { id: orderId, status: PurchaseOrderStatus.RECEIVED },
+      }),
+    ).toBe(1);
+    const material = await prisma.rawMaterial.findUnique({
+      where: { id: rawMaterialId },
+    });
+    expect(material?.currentStock.toNumber()).toBe(5);
+  });
+
+  it('processes and replays a supplier return with one stock and financial effect', async () => {
+    await service.createReceipt(
+      orderId,
+      { items: [{ purchaseOrderItemId: itemId, quantity: 5 }] },
+      userId,
+      `gf0016-return-receipt-${randomUUID()}`,
+    );
+    const returnKey = `gf0016-return-${randomUUID()}`;
+
+    const first = await service.returnToSupplier(
+      orderId,
+      { purchaseOrderItemId: itemId, quantity: 2 },
+      userId,
+      returnKey,
+    );
+    const replay = await service.returnToSupplier(
+      orderId,
+      { purchaseOrderItemId: itemId, quantity: 2 },
+      userId,
+      returnKey,
+    );
+
+    expect(replay).toMatchObject({ ...first, replayed: true });
+    expect(await prisma.purchaseReceipt.count()).toBe(1);
+    expect(
+      await prisma.stockLedgerEntry.count({
+        where: { rawMaterialId: rawMaterialId },
+      }),
+    ).toBe(2);
+    expect(
+      await prisma.journalEntry.count({
+        where: { reference: { startsWith: 'PURCHASE_RETURN_ITEM:' } },
+      }),
+    ).toBe(1);
+    const material = await prisma.rawMaterial.findUnique({
+      where: { id: rawMaterialId },
+    });
+    expect(material?.currentStock.toNumber()).toBe(3);
   });
 });
