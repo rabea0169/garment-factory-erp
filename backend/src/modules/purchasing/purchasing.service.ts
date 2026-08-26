@@ -171,6 +171,60 @@ export class PurchasingService {
     try {
       return await this.prisma.$transaction(
         async (tx: Prisma.TransactionClient) => {
+          // Serialize all receipts for one purchase order. The preflight checks
+          // above are only for fast feedback; this lock is the source of truth
+          // against two concurrent receipts exceeding the ordered quantity.
+          const lockedOrder = await tx.$queryRaw<Array<{ id: string }>>(
+            Prisma.sql`SELECT id FROM purchase_orders WHERE id = ${orderId} FOR UPDATE`,
+          );
+          if (lockedOrder.length === 0) {
+            throw new NotFoundException('Purchase order not found');
+          }
+
+          const currentOrder = await tx.purchaseOrder.findUnique({
+            where: { id: orderId },
+            include: { items: true },
+          });
+          if (!currentOrder) {
+            throw new NotFoundException('Purchase order not found');
+          }
+          if (currentOrder.status === PurchaseOrderStatus.CANCELLED) {
+            throw new BadRequestException('Cannot receive a cancelled order');
+          }
+
+          const currentExisting = await tx.purchaseReceiptItem.findMany({
+            where: {
+              purchaseOrderItemId: {
+                in: currentOrder.items.map((item) => item.id),
+              },
+            },
+            select: { purchaseOrderItemId: true, quantity: true },
+          });
+          const currentReceivedByItem = new Map<string, number>();
+          for (const item of currentExisting) {
+            currentReceivedByItem.set(
+              item.purchaseOrderItemId,
+              (currentReceivedByItem.get(item.purchaseOrderItemId) ?? 0) +
+                Number(item.quantity),
+            );
+          }
+          const currentOrderItems = new Map(
+            currentOrder.items.map((item) => [item.id, item]),
+          );
+          for (const item of dto.items) {
+            const orderItem = currentOrderItems.get(item.purchaseOrderItemId);
+            if (!orderItem) {
+              throw new NotFoundException('Item not found in order');
+            }
+            const alreadyReceived =
+              currentReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
+            if (alreadyReceived + item.quantity > Number(orderItem.quantity)) {
+              throw new BadRequestException(
+                `كمية الاستلام تتجاوز المتبقي للبند ${item.purchaseOrderItemId}`,
+              );
+            }
+          }
+
           const receiptIdempotencyKeyId = await createIdempotencyKey(
             tx,
             idempotencyKey,
@@ -196,7 +250,7 @@ export class PurchasingService {
 
           let receiptTotal = 0;
           for (const item of dto.items) {
-            const orderItem = orderItems.get(item.purchaseOrderItemId);
+            const orderItem = currentOrderItems.get(item.purchaseOrderItemId);
             if (!orderItem) {
               throw new NotFoundException('Item not found in order');
             }
@@ -208,7 +262,7 @@ export class PurchasingService {
                 quantity: item.quantity,
                 unitCost: Number(orderItem.unitCost),
                 reference: receipt.code,
-                notes: `استلام ${receipt.code} من أمر الشراء ${order.code}`,
+                notes: `استلام ${receipt.code} من أمر الشراء ${currentOrder.code}`,
               },
               userId,
               tx,
@@ -226,11 +280,11 @@ export class PurchasingService {
                   debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
                   creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
                   amount: receiptTotal,
-                  description: `إثبات مخزون مقابل مورد ${order.supplierId}`,
+                  description: `إثبات مخزون مقابل مورد ${currentOrder.supplierId}`,
                 },
               ],
               supplierUpdates: [
-                { supplierId: order.supplierId, delta: receiptTotal },
+                { supplierId: currentOrder.supplierId, delta: receiptTotal },
               ],
               metadata: {
                 source: 'PURCHASE_RECEIPT',
@@ -241,8 +295,8 @@ export class PurchasingService {
             userId,
           );
 
-          const allReceived = order.items.every((item) => {
-            const previous = receivedByItem.get(item.id) ?? 0;
+          const allReceived = currentOrder.items.every((item) => {
+            const previous = currentReceivedByItem.get(item.id) ?? 0;
             const current =
               dto.items.find(
                 (receiptItem) => receiptItem.purchaseOrderItemId === item.id,
@@ -326,8 +380,14 @@ export class PurchasingService {
       notes: `استلام كامل (legacy) لأمر الشراء ${order.code}`,
     };
 
-    // Use a deterministic idempotency key for legacy full receive
-    const idempotencyKey = `legacy-receive-${order.id}`;
+    // Derive the legacy key from the remaining quantities. A key based only on
+    // orderId would replay an earlier legacy receipt after a later partial receipt.
+    const remainingHash = computeRequestHash({
+      operation: 'purchasing.legacy-receive',
+      orderId,
+      items: itemsToReceive,
+    }).slice(0, 16);
+    const idempotencyKey = `legacy-receive-${order.id}-${remainingHash}`;
 
     return this.createReceipt(orderId, dto, userId, idempotencyKey);
   }
@@ -377,67 +437,125 @@ export class PurchasingService {
     if (!rawWarehouse)
       throw new BadRequestException('Default RAW warehouse not found');
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      const returnIdempotencyKeyId = await createIdempotencyKey(
-        tx,
-        idempotencyKey,
-        scope,
-        requestHash,
-      );
+    try {
+      return await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          // Serialize returns for one purchase order before calculating the
+          // cumulative returned quantity. This prevents two distinct keys from
+          // both passing the limit check concurrently.
+          const lockedOrder = await tx.$queryRaw<Array<{ id: string }>>(
+            Prisma.sql`SELECT id FROM purchase_orders WHERE id = ${orderId} FOR UPDATE`,
+          );
+          if (lockedOrder.length === 0) {
+            throw new NotFoundException('Purchase order not found');
+          }
 
-      // 1. Calculate cumulative received quantity
-      const receipts = await tx.purchaseReceiptItem.aggregate({
-        where: { purchaseOrderItemId: dto.purchaseOrderItemId },
-        _sum: { quantity: true },
-      });
-      const totalReceived = Number(receipts._sum.quantity ?? 0);
+          const returnIdempotencyKeyId = await createIdempotencyKey(
+            tx,
+            idempotencyKey,
+            scope,
+            requestHash,
+          );
 
-      // 2. Calculate cumulative returned quantity
-      // We use the reference field as a matchable anchor since the schema lacks a dedicated return table
-      const referenceAnchor = `PURCHASE_RETURN_ITEM:${dto.purchaseOrderItemId}`;
-      const returns = await tx.stockLedgerEntry.aggregate({
-        where: {
-          rawMaterialId: item.rawMaterialId,
-          reference: { startsWith: referenceAnchor },
+          // 1. Calculate cumulative received quantity
+          const receipts = await tx.purchaseReceiptItem.aggregate({
+            where: { purchaseOrderItemId: dto.purchaseOrderItemId },
+            _sum: { quantity: true },
+          });
+          const totalReceived = Number(receipts._sum.quantity ?? 0);
+
+          // 2. Calculate cumulative returned quantity
+          // We use the reference field as a matchable anchor since the schema lacks a dedicated return table
+          const referenceAnchor = `PURCHASE_RETURN_ITEM:${dto.purchaseOrderItemId}`;
+          const returns = await tx.stockLedgerEntry.aggregate({
+            where: {
+              rawMaterialId: item.rawMaterialId,
+              reference: { startsWith: referenceAnchor },
+            },
+            _sum: { quantityDelta: true },
+          });
+          const totalReturned = Math.abs(
+            Number(returns._sum.quantityDelta ?? 0),
+          );
+
+          if (totalReturned + dto.quantity > totalReceived) {
+            throw new BadRequestException(
+              `الكمية المرتجعة (${totalReturned + dto.quantity}) تتجاوز الكمية المستلمة (${totalReceived})`,
+            );
+          }
+
+          // 3. Issue items from inventory
+          // Note: We use the referenceAnchor to allow cumulative tracking
+          const result = await this.inventoryService.issue(
+            {
+              rawMaterialId: item.rawMaterialId,
+              warehouseId: rawWarehouse.id,
+              quantity: dto.quantity,
+              reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+              notes: dto.notes ?? `مرتجع للمورد من أمر الشراء ${order.code}`,
+              idempotencyKey: idempotencyKey
+                ? `return-${idempotencyKey}`
+                : undefined,
+            },
+            userId,
+            tx,
+          );
+
+          const returnTotal = dto.quantity * Number(item.unitCost);
+          await this.financialPosting.postJournalEntryInTx(
+            tx,
+            {
+              description: `مرتجع مشتريات ${order.code}`,
+              reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+                  creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  amount: returnTotal,
+                  description: `عكس قيمة مرتجع المورد من أمر الشراء ${order.code}`,
+                },
+              ],
+              supplierUpdates: [
+                { supplierId: order.supplierId, delta: -returnTotal },
+              ],
+              metadata: {
+                source: 'PURCHASE_RETURN',
+                purchaseOrderId: orderId,
+                purchaseOrderItemId: item.id,
+                inventoryEntryCode: result.entryCode,
+              },
+              postingKey: idempotencyKey
+                ? `purchasing.return:${idempotencyKey}`
+                : undefined,
+            },
+            userId,
+          );
+
+          const response = {
+            success: true,
+            message: 'Return processed',
+            entryCode: result.entryCode,
+          };
+
+          if (idempotencyKey) {
+            await storeIdempotencyResponse(tx, idempotencyKey, response);
+          }
+
+          return response;
         },
-        _sum: { quantityDelta: true },
-      });
-      const totalReturned = Math.abs(Number(returns._sum.quantityDelta ?? 0));
-
-      if (totalReturned + dto.quantity > totalReceived) {
-        throw new BadRequestException(
-          `الكمية المرتجعة (${totalReturned + dto.quantity}) تتجاوز الكمية المستلمة (${totalReceived})`,
+      );
+    } catch (error) {
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
         );
+        if (replayed) return replayed;
       }
-
-      // 3. Issue items from inventory
-      // Note: We use the referenceAnchor to allow cumulative tracking
-      const result = await this.inventoryService.issue(
-        {
-          rawMaterialId: item.rawMaterialId,
-          warehouseId: rawWarehouse.id,
-          quantity: dto.quantity,
-          reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
-          notes: dto.notes ?? `مرتجع للمورد من أمر الشراء ${order.code}`,
-          idempotencyKey: idempotencyKey
-            ? `return-${idempotencyKey}`
-            : undefined,
-        },
-        userId,
-        tx,
-      );
-
-      const response = {
-        success: true,
-        message: 'Return processed',
-        entryCode: result.entryCode,
-      };
-
-      if (idempotencyKey) {
-        await storeIdempotencyResponse(tx, idempotencyKey, response);
-      }
-
-      return response;
-    });
+      throw error;
+    }
   }
 }

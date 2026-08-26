@@ -32,6 +32,7 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    $queryRaw: jest.fn().mockResolvedValue([{ id: 'order-1' }]),
     $transaction: jest.fn((cb) => cb(mockPrisma)),
   };
 
