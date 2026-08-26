@@ -1,4 +1,9 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
@@ -41,6 +46,40 @@ export class HrService {
     });
     if (!worker) throw new NotFoundException('العامل غير موجود');
     return worker;
+  }
+
+  async recordAttendance(data: {
+    workerId: string;
+    date: Date;
+    isPresent: boolean;
+    notes?: string;
+  }) {
+    const worker = await this.prisma.worker.findUnique({
+      where: { id: data.workerId },
+      select: { id: true },
+    });
+    if (!worker) throw new NotFoundException('العامل غير موجود');
+
+    try {
+      return await this.prisma.attendance.create({
+        data: {
+          workerId: data.workerId,
+          date: new Date(data.date),
+          isPresent: data.isPresent,
+          notes: data.notes,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException(
+          'يوجد سجل حضور للعامل في هذا التاريخ بالفعل',
+        );
+      }
+      throw error;
+    }
   }
 
   async recordDailyProduction(data: {

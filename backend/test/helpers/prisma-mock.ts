@@ -109,6 +109,7 @@ export function createPrismaMock() {
       count: jest.fn(),
     },
     dailyProduction: { create: jest.fn() },
+    attendance: { create: jest.fn() },
     workerAdvance: { create: jest.fn() },
     account: {
       findMany: jest.fn(),

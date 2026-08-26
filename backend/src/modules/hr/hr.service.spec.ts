@@ -1,4 +1,5 @@
-import { NotFoundException } from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { HrService } from './hr.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
@@ -53,6 +54,66 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
     await expect(service.getWorkerDetails('ghost')).rejects.toThrow(
       NotFoundException,
     );
+  });
+
+  it('يسجل حضور العامل ليوم محدد', async () => {
+    const date = new Date('2026-08-26');
+    prisma.worker.findUnique.mockResolvedValue({ id: 'w-1' });
+    prisma.attendance.create.mockResolvedValue({
+      id: 'att-1',
+      workerId: 'w-1',
+      date,
+      isPresent: true,
+    });
+
+    const result = await service.recordAttendance({
+      workerId: 'w-1',
+      date,
+      isPresent: true,
+      notes: 'حضور يدوي',
+    });
+
+    expect(result.id).toBe('att-1');
+    expect(prisma.attendance.create).toHaveBeenCalledWith({
+      data: {
+        workerId: 'w-1',
+        date,
+        isPresent: true,
+        notes: 'حضور يدوي',
+      },
+    });
+  });
+
+  it('يرفض تسجيل الحضور لعامل غير موجود', async () => {
+    prisma.worker.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.recordAttendance({
+        workerId: 'ghost',
+        date: new Date('2026-08-26'),
+        isPresent: true,
+      }),
+    ).rejects.toThrow(NotFoundException);
+
+    expect(prisma.attendance.create).not.toHaveBeenCalled();
+  });
+
+  it('يعيد 409 عند تكرار حضور العامل في اليوم نفسه', async () => {
+    prisma.worker.findUnique.mockResolvedValue({ id: 'w-1' });
+    prisma.attendance.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('duplicate', {
+        code: 'P2002',
+        clientVersion: '7.9.1',
+      }),
+    );
+
+    await expect(
+      service.recordAttendance({
+        workerId: 'w-1',
+        date: new Date('2026-08-26'),
+        isPresent: true,
+      }),
+    ).rejects.toThrow(ConflictException);
   });
 
   it('تسجيل إنتاج: يحسب الإجمالي في الخادم (100 قطعة × 5.5 = 550) ويحفظ snapshot للسعر', async () => {

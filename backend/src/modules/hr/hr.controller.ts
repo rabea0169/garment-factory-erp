@@ -5,6 +5,7 @@ import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { RecordProductionDto } from './dto/record-production.dto';
 import { CreateAdvanceDto } from './dto/create-advance.dto';
+import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('HR (الموارد البشرية والعمال)')
@@ -22,6 +23,16 @@ export class HrController {
   @ApiOperation({ summary: 'تفاصيل العامل مع إنتاجه وسلفه' })
   async getWorkerDetails(@Param('id') id: string) {
     return this.hrService.getWorkerDetails(id);
+  }
+
+  @Post('attendance')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تسجيل حضور عامل ليوم محدد' })
+  async recordAttendance(@Body() body: CreateAttendanceDto) {
+    return this.hrService.recordAttendance({
+      ...body,
+      date: new Date(body.date),
+    });
   }
 
   @Post('production')
