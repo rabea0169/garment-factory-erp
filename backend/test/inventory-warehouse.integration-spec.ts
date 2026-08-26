@@ -176,7 +176,11 @@ describe('GF-REMAINING-002 inventory warehouse balances', () => {
       const rawMaterial = await prisma.rawMaterial.findUnique({
         where: { id: material.id },
       });
-      expect(rawMaterial?.currentStock.toNumber()).toBe(20);
+      const finalStock = rawMaterial?.currentStock.toNumber();
+      // Either request may win the race: the accepted issue is 50 or 30.
+      // The invariant is that exactly one succeeds and no negative balance or
+      // extra ledger entry is left behind.
+      expect([20, 40]).toContain(finalStock);
       expect(
         await prisma.stockLedgerEntry.count({
           where: {
@@ -186,7 +190,7 @@ describe('GF-REMAINING-002 inventory warehouse balances', () => {
         }),
       ).toBe(1);
       const balance = await service.getMaterialBalanceByWarehouse(material.id);
-      expect(balance[0]?.balance).toBe(20);
+      expect(balance[0]?.balance).toBe(finalStock);
     });
   });
 });
