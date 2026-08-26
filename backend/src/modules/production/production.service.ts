@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkOrderStatus, Prisma } from '@prisma/client';
+import { WorkOrderStatus } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EVENTS } from '../../events/event-types';
 import { InventoryService } from '../inventory/inventory.service';
@@ -67,101 +67,77 @@ export class ProductionService {
   async updateOrderStatus(
     id: string,
     status: WorkOrderStatus,
-    userId?: string,
+    _userId?: string,
   ) {
-    if (status !== WorkOrderStatus.COMPLETED) {
-      // تحديث الحالة العادية فقط بدون صرف استثنائي
-      const order = await this.prisma.workOrder.update({
-        where: { id },
-        data: { status },
-      });
-      return order;
-    }
-
-    // إتمام الإنتاج: صرف خامات + استلام منتج تام
     const order = await this.prisma.workOrder.findUnique({
       where: { id },
-      include: {
-        bomVersion: {
-          include: {
-            lines: {
-              include: { rawMaterial: { select: { costPerUnit: true } } },
-            },
-          },
-        },
-      },
     });
 
     if (!order) throw new NotFoundException('Work order not found');
+
+    // GF-AUDIT-001C: منع تعديل المكتمل
     if (order.status === WorkOrderStatus.COMPLETED) {
       throw new BadRequestException('Work order is already completed');
     }
 
-    // المخازن الافتراضية
-    const rawWarehouse = await this.prisma.warehouse.findFirst({
-      where: { code: 'WH-RAW' },
-    });
-    const fgWarehouse = await this.prisma.warehouse.findFirst({
-      where: { code: 'WH-FG' },
-    });
-    if (!rawWarehouse || !fgWarehouse) {
-      throw new BadRequestException('Default warehouses not found');
+    // GF-AUDIT-001C: منع الإكمال المباشر بلا مراحل (تجاوز الـ workflow)
+    if (status === WorkOrderStatus.COMPLETED) {
+      throw new BadRequestException(
+        'Work orders must be completed via the production workflow (packing stage)',
+      );
     }
 
-    const updatedOrder = await this.prisma.$transaction(
-      async (tx: Prisma.TransactionClient) => {
-        // 1. تحديث الحالة
-        const updated = await tx.workOrder.update({
-          where: { id },
-          data: { status: WorkOrderStatus.COMPLETED },
-        });
+    // منع الحالات التي يجب أن تتم عبر الـ workflow
+    const workflowStatuses: WorkOrderStatus[] = [
+      WorkOrderStatus.CUTTING,
+      WorkOrderStatus.SEWING,
+      WorkOrderStatus.FINISHING,
+      WorkOrderStatus.IRONING,
+      WorkOrderStatus.PACKAGING,
+      WorkOrderStatus.IN_PROGRESS,
+    ];
 
-        // 2. صرف الخامات وفقاً لـ BOM Version (GF-0008)
-        for (const line of order.bomVersion.lines) {
-          const totalQty = Number(line.quantity) * order.quantity;
-          await this.inventoryService.issue(
-            {
-              rawMaterialId: line.rawMaterialId,
-              warehouseId: rawWarehouse.id,
-              quantity: totalQty,
-              reference: updated.code,
-              notes: `صرف خامات لأمر تشغيل ${updated.code}`,
-            },
-            userId,
-            tx,
-          );
-        }
+    if (workflowStatuses.includes(status)) {
+      throw new BadRequestException(
+        `Status ${status} is deprecated for direct updates. Use production workflow transitions.`,
+      );
+    }
 
-        // 3. استلام التام عبر مصدر الحقيقة الوحيد FinishedGoodStock + ledger.
-        const totalMaterialCost = order.bomVersion.lines.reduce(
-          (sum, line) =>
-            sum +
-            Number(line.quantity) *
-              order.quantity *
-              Number(line.rawMaterial.costPerUnit),
-          0,
-        );
-        const unitCost =
-          order.quantity > 0 ? totalMaterialCost / order.quantity : 0;
-        await this.inventoryService.receiveFinishedGood(
-          {
-            productVariantId: order.productVariantId,
-            warehouseId: fgWarehouse.id,
-            quantity: order.quantity,
-            unitCost,
-            reference: updated.code,
-            notes: `استلام تام من أمر تشغيل ${updated.code}`,
-            idempotencyKey: `production.legacy.receive:${updated.id}`,
-          },
-          userId,
-          tx,
-        );
+    // السماح فقط بالإلغاء كمسار إداري سريع
+    if (status !== WorkOrderStatus.CANCELLED) {
+      throw new BadRequestException(
+        `Direct status update to ${status} is not allowed.`,
+      );
+    }
 
-        return updated;
-      },
-    );
+    return await this.prisma.$transaction(async (tx) => {
+      // Re-fetch inside transaction for concurrency safety
+      const currentOrder = await tx.workOrder.findUnique({
+        where: { id },
+      });
 
-    void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_COMPLETED, updatedOrder);
-    return updatedOrder;
+      if (!currentOrder) throw new NotFoundException('Work order not found');
+      if (currentOrder.status === WorkOrderStatus.COMPLETED) {
+        throw new BadRequestException('Work order is already completed');
+      }
+
+      if (
+        status === WorkOrderStatus.CANCELLED &&
+        currentOrder.status === WorkOrderStatus.CANCELLED
+      ) {
+        return currentOrder;
+      }
+
+      const updated = await tx.workOrder.update({
+        where: { id },
+        data: { status },
+      });
+
+      if (status === WorkOrderStatus.CANCELLED) {
+        void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_CANCELLED, updated);
+      }
+
+      return updated;
+    });
   }
 }
