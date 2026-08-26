@@ -1,8 +1,14 @@
-import { AccountType, FiscalPeriodStatus, UserRole } from '@prisma/client';
+import {
+  AccountType,
+  FiscalPeriodStatus,
+  UserRole,
+  VoucherType,
+} from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { AccountingService } from '../src/modules/accounting/accounting.service';
 import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -15,6 +21,8 @@ integrationDescribe('GF-0018 accounting fiscal period integration', () => {
   let periodId: string;
   let debitAccountId: string;
   let creditAccountId: string;
+  let treasuryId: string;
+  let customerId: string;
 
   beforeAll(async () => {
     const databaseUrl = process.env.GF_INTEGRATION_DATABASE_URL;
@@ -68,6 +76,33 @@ integrationDescribe('GF-0018 accounting fiscal period integration', () => {
         type: AccountType.EXPENSE,
       },
     });
+    await prisma.account.createMany({
+      data: [
+        {
+          id: CHART_OF_ACCOUNTS.CASH,
+          code: 'GF18-CASH',
+          name: 'GF-0018 Cash',
+          type: AccountType.ASSET,
+        },
+        {
+          id: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+          code: 'GF18-AR',
+          name: 'GF-0018 Accounts Receivable',
+          type: AccountType.ASSET,
+        },
+      ],
+    });
+    const treasury = await prisma.treasury.create({
+      data: { name: 'GF-0018 Treasury', type: 'CASH' },
+    });
+    treasuryId = treasury.id;
+    const customer = await prisma.customer.create({
+      data: {
+        code: `GF18-CUST-${randomUUID().slice(0, 8)}`,
+        name: 'GF-0018 Customer',
+      },
+    });
+    customerId = customer.id;
     debitAccountId = debit.id;
     creditAccountId = credit.id;
   });
@@ -102,6 +137,65 @@ integrationDescribe('GF-0018 accounting fiscal period integration', () => {
       createdById: userId,
     });
     expect(entry?.date.toISOString()).toBe('2026-08-26T00:00:00.000Z');
+  });
+
+  it('reverses voucher operational balances together with the journal', async () => {
+    const voucher = await accounting.createVoucher(
+      {
+        type: VoucherType.RECEIPT,
+        amount: 50,
+        description: 'GF-0020 receipt reversal integration',
+        treasuryId,
+        counterpartyType: 'CUSTOMER',
+        counterpartyId: customerId,
+      },
+      userId,
+      `gf0020-voucher-${randomUUID()}`,
+    );
+    const journalEntryId = voucher.journalEntry?.id;
+    expect(journalEntryId).toBeTruthy();
+
+    expect(
+      (
+        await prisma.treasury.findUnique({ where: { id: treasuryId } })
+      )?.balance.toNumber(),
+    ).toBe(50);
+    expect(
+      (
+        await prisma.customer.findUnique({ where: { id: customerId } })
+      )?.balance.toNumber(),
+    ).toBe(-50);
+
+    await accounting.reverseJournalEntry(journalEntryId!, userId);
+
+    expect(
+      (
+        await prisma.treasury.findUnique({ where: { id: treasuryId } })
+      )?.balance.toNumber(),
+    ).toBe(0);
+    expect(
+      (
+        await prisma.customer.findUnique({ where: { id: customerId } })
+      )?.balance.toNumber(),
+    ).toBe(0);
+    expect(
+      (
+        await prisma.account.findUnique({
+          where: { id: CHART_OF_ACCOUNTS.CASH },
+        })
+      )?.balance.toNumber(),
+    ).toBe(0);
+    expect(
+      (
+        await prisma.account.findUnique({
+          where: { id: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE },
+        })
+      )?.balance.toNumber(),
+    ).toBe(0);
+    expect(
+      (await prisma.journalEntry.findUnique({ where: { id: journalEntryId } }))
+        ?.isReversed,
+    ).toBe(true);
   });
 
   it('rejects posting after the fiscal period is closed', async () => {

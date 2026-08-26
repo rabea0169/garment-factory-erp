@@ -61,6 +61,7 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
       'so-1',
       'user-1',
       undefined,
+      undefined,
     );
   });
 });

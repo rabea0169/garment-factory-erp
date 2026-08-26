@@ -501,33 +501,41 @@ export class PurchasingService {
             tx,
           );
 
-          const returnTotal = dto.quantity * Number(item.unitCost);
-          await this.financialPosting.postJournalEntryInTx(
+          const returnValue = Number(result.totalValue ?? 0);
+          if (!Number.isFinite(returnValue) || returnValue <= 0) {
+            throw new BadRequestException(
+              'تعذر تحديد تكلفة المرتجع من حركة المخزون',
+            );
+          }
+          const returnReference = `PURCHASE_RETURN:${order.code}:${dto.purchaseOrderItemId}:${returnIdempotencyKeyId ?? result.entryCode}`;
+          const supplierUpdates = [
+            { supplierId: order.supplierId, delta: -returnValue },
+          ];
+          const posting = await this.financialPosting.postJournalEntryInTx(
             tx,
             {
-              description: `مرتجع مشتريات ${order.code}`,
-              reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+              description: `عكس مخزون مرتجع للمورد ${order.code}`,
+              reference: returnReference,
+              postingKey: idempotencyKey
+                ? `purchasing-return:${idempotencyKey}`
+                : undefined,
               isAuto: true,
               lines: [
                 {
                   debitAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
                   creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
-                  amount: returnTotal,
-                  description: `عكس قيمة مرتجع المورد من أمر الشراء ${order.code}`,
+                  amount: returnValue,
+                  description: `تخفيض التزام المورد مقابل مرتجع ${order.code}`,
                 },
               ],
-              supplierUpdates: [
-                { supplierId: order.supplierId, delta: -returnTotal },
-              ],
+              userId,
+              supplierUpdates,
               metadata: {
                 source: 'PURCHASE_RETURN',
-                purchaseOrderId: orderId,
-                purchaseOrderItemId: item.id,
-                inventoryEntryCode: result.entryCode,
+                purchaseOrderId: order.id,
+                purchaseOrderItemId: dto.purchaseOrderItemId,
+                supplierUpdates,
               },
-              postingKey: idempotencyKey
-                ? `purchasing.return:${idempotencyKey}`
-                : undefined,
             },
             userId,
           );
@@ -536,6 +544,7 @@ export class PurchasingService {
             success: true,
             message: 'Return processed',
             entryCode: result.entryCode,
+            journalEntryCode: posting.entryCode,
           };
 
           if (idempotencyKey) {

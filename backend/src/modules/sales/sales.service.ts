@@ -213,11 +213,17 @@ export class SalesService {
     }
   }
 
-  async confirmOrder(orderId: string, userId: string, idempotencyKey?: string) {
+  async confirmOrder(
+    orderId: string,
+    userId: string,
+    idempotencyKey?: string,
+    treasuryId?: string,
+  ) {
     const requestHash = computeRequestHash({
       operation: IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM,
       orderId,
       userId,
+      treasuryId: treasuryId ?? null,
     });
     const replay = await tryReplayIdempotencyKey(
       this.prisma,
@@ -240,6 +246,14 @@ export class SalesService {
           include: { items: true, customer: true },
         });
         if (!order) throw new NotFoundException('أمر البيع غير موجود');
+        if (order.paymentType === PaymentType.CASH && !treasuryId) {
+          throw new BadRequestException(
+            'معرف الخزينة مطلوب لتأكيد البيع النقدي',
+          );
+        }
+        if (order.paymentType !== PaymentType.CASH && treasuryId) {
+          throw new BadRequestException('لا يجوز تحديد خزينة للبيع الآجل');
+        }
         if (order.status !== SalesOrderStatus.DRAFT) {
           throw new BadRequestException(
             'لا يمكن تأكيد إلا أمر بيع بحالة DRAFT',
@@ -320,6 +334,11 @@ export class SalesService {
             description: `تكلفة بضاعة مباعة ${order.code}`,
           });
         }
+        const treasuryUpdates =
+          order.paymentType === PaymentType.CASH
+            ? [{ treasuryId: treasuryId!, delta: Number(order.totalAmount) }]
+            : undefined;
+
         await this.financial.postJournalEntryInTx(
           tx,
           {
@@ -332,6 +351,7 @@ export class SalesService {
             metadata: {
               source: 'sales.confirm',
               salesOrderId: order.id,
+              ...(treasuryUpdates ? { treasuryUpdates } : {}),
               ...(order.paymentType === PaymentType.CASH
                 ? {}
                 : {
@@ -343,6 +363,7 @@ export class SalesService {
                     ],
                   }),
             },
+            treasuryUpdates,
             customerUpdates:
               order.paymentType === PaymentType.CASH
                 ? undefined
