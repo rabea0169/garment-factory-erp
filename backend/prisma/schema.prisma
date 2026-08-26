@@ -45,7 +45,6 @@ model User {
   productionCosts        ProductionCostSnapshot[]
   qualityChecksCreated   QualityCheck[] @relation("QualityCheckCreator")
   @@map("users")
-
 }
 
 model ActivityLog {
@@ -341,7 +340,6 @@ model IdempotencyKey {
   productionConsumption ProductionMaterialConsumption?
   qualityCheck          QualityCheck?
   @@index([scope, createdAt])
-
   @@index([expiresAt])
   @@map("idempotency_keys")
 }
@@ -477,7 +475,6 @@ model ProductionStageRun {
   toTransitions        WorkOrderStageTransition[]      @relation("StageTransitionToRun")
   qualityChecks        QualityCheck[]
   @@unique([workOrderId, stage])
-
   @@unique([workOrderId, sequence])
   @@index([workOrderId, status])
   @@map("production_stage_runs")

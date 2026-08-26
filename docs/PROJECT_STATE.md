@@ -7,62 +7,79 @@
 | البند | القيمة |
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
-| الفرع الأساسي المرجعي | `main` |
-| خط أساس التنفيذ | `main@d15b2ef` — دمج PR20 ثم PR19، وCI الأخضر Run [32920719412](https://github.com/rabea0169/garment-factory-erp/actions/runs/32920719412) |
-| فرع العمل الحالي | `maintenance/gf-state-reconcile` — مزامنة وثائق غير مدمجة |
+| الفرع الأساسي المرجعي | `origin/main` |
+| آخر commit على main | `90c37f6` — دمج PR #24، ويتضمن جزء attendance من GF-0015 |
+| فرع العمل الحالي | `phase4/gf0014-quality-waste-v2` |
+| آخر commit في فرع العمل | `2a56602` — GF-0014 quality/waste/KPI بعد rebase على main الأحدث |
+| Pull Request الحالي | لا يوجد بعد؛ الفرع جاهز للرفع وفتح PR مستقل |
+| آخر مرحلة مكتملة بالكامل على main | GF-0013؛ GF-0015 بدأ جزئيًا فقط عبر attendance endpoint في PR #24 |
+| حالة CI على main | يجب إعادة التحقق بعد رفع GF-0014؛ آخر main مرجعي هو `90c37f6` |
+| حالة قاعدة البيانات | migration `20260830000000_gf0014_quality_waste` غير مطبقة على بيئة مشتركة؛ التغيير additive فقط |
+| إصدار API | `1.0`؛ أضيف `GET /quality/kpis` ووثّق POST الجودة في GF-0014 |
+| قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| آخر مرحلة مكتملة على main | الأساس التشغيلي لـ GF-0013 مع إصلاحات PR20 وطبقات Flutter الإنتاجية من PR19 |
-| حالة CI على main | ناجحة على `d15b2ef`؛ لا تعني اكتمال المسارات التجارية أو الجاهزية المؤسسية |
-| حالة قاعدة البيانات | Migrations additive مدمجة حتى خط الأساس الحالي؛ لا تغيير schema بلا migration واختبار restore/rollback |
-| إصدار API | `1.0`؛ عقد المسارات الحالية موثق في `docs/API_CONTRACT.md` |
-| قاعدة البيانات المحلية | لا يوجد PostgreSQL/Docker أو Flutter SDK في بيئة الفحص الحالية؛ اختبارات التكامل وFlutter تعتمد على CI عند الحاجة |
+| المهمة النشطة | `GF-0014-CLOSE`: رفع ومراجعة ودمج PR الجودة والهالك |
+| المرحلة النشطة | Phase 5 — Quality and Waste delivery gate |
+| حالة GF-0014 | التنفيذ مكتمل محليًا، والـPR وCI ودمج main ما زالت معلقة |
+| حالة GF-0015 | يوجد جزء attendance مدمج في main؛ لا يبدأ تنفيذ HR/Payroll إضافي قبل مراجعة PR #24 مقابل MASTER_BACKLOG |
+| Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
+| Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
+| Last handoff | `docs/handoffs/HANDOFF-014.md` |
+| Next exact action | رفع الفرع وفتح PR مستقل فوق `main@90c37f6`، ثم انتظار CI PostgreSQL/Flutter قبل الدمج |
 
-## الفحوص المكررة على خط الأساس
+## المهام المكتملة على main
 
-| الفحص | النتيجة | الدليل أو القيد |
+| المهمة | الوصف | الحالة |
 |---|---|---|
-| `npm ci --no-audit --no-fund` | ناجح | ثُبتت 884 حزمة في `backend` |
-| `npx prisma validate` | ناجح | محليًا على `main@d15b2ef` |
-| `npx prisma generate` | ناجح | Prisma Client `7.9.1` |
-| `npm run format:check` | ناجح | كل الملفات مطابقة |
-| `npm run typecheck` | ناجح | لا أخطاء TypeScript |
-| `npm run lint` | ناجح | لا أخطاء ESLint |
-| `npm run build` | ناجح | Nest build ناجح |
-| `npm test -- --runInBand` | ناجح | `27 suites / 136 tests` |
-| `flutter analyze` و`flutter test` | غير متاح محليًا | Flutter SDK غير مثبت؛ آخر تحقق ناجح في CI حسب Run `32920719412` |
-| PostgreSQL integration محليًا | غير متاح | لا PostgreSQL/Docker في البيئة؛ لا تُحسب نتيجة نجاح |
+| GF-0001..GF-0006 | الحوكمة، fail-closed auth، DTOs، الاختبارات، الأسرار وCI | مكتملة وموجودة في التاريخ |
+| GF-0007 | Warehouse، Stock Ledger، idempotency، indexes ومنع الرصيد السالب | مكتملة |
+| GF-0008 | BOM versioning، ربط WorkOrder بالـSKU، واستهلاك الخامات داخل transaction | مكتملة |
+| GF-0009 | Purchasing Module، أوامر الشراء، الاستلام والمرتجعات عبر InventoryService | مكتملة ومُدمجة |
+| GF-0010 | Flutter secure storage، Authorization interceptor، 401، logout، إزالة mock، Flutter CI | مكتملة ومُدمجة |
+| GF-0011 | المبيعات: منع البيع فوق المتاح وحساب الإجماليات على الخادم وتأمين الخصم | مكتملة |
+| GF-0012 | Pagination موحد لكل القوائم مع data/meta وقيود page/limit | مكتملة |
+| GF-0013 | مراحل الإنتاج، stage runs، المخرجات، الاستهلاك، التكلفة، وposting المنتج التام | مدمجة على main؛ تحتاج متابعة UI/اختبارات تشغيلية لاحقة |
+| GF-0014 | الجودة والهالك وربط stageRun وKPI | غير مدمجة؛ جاهزة للـPR على الفرع الحالي |
+| GF-0015 | attendance endpoint | جزئية مدمجة عبر PR #24؛ لا تعتبر المرحلة مكتملة |
 
-## المنفذ فعليًا
+## GF-0014 — الحالة التفصيلية
 
-| النطاق | الحالة |
+تضيف المرحلة فحصًا نهائيًا واحدًا مرتبطًا بـ`ProductionStageRun` مكتمل. يفرض الخادم وقاعدة البيانات الكميات غير السالبة وقاعدة `checkedQty = passedQty + rejectedQty + wasteQty`، ويفصل الرفض عن الهالك المصنف، ويحسب `wasteCost` من تكلفة الخادم. تُسجل هوية actor وActivityLog ويدعم المسار `Idempotency-Key`، ولا يوجد تعديل مباشر لفحص مكتمل.
+
+يضيف `GET /quality/kpis` تجميعًا حقيقيًا من `QualityCheck` بحالات `COMPLETED` فقط، مع مرشحات المرحلة وأمر التشغيل والفترة، وإرجاع totals وpass/rejection/waste rates. لا تكتب المرحلة مخزونًا أو قيودًا محاسبية.
+
+السياسة المعتمدة في ADR-0014 هي رفض `PENDING` و`IN_PROGRESS` و`CANCELLED`، وقيد فريد على `stageRunId` غير الفارغ لمنع الفحص المكرر لنفس تنفيذ المرحلة. الصفوف التاريخية legacy تبقى قابلة للقراءة وحقول الربط الجديدة nullable.
+
+## دليل التحقق المحلي لـGF-0014
+
+| الفحص | النتيجة |
 |---|---|
-| GF-0001..GF-0006 | الحوكمة، fail-closed auth، DTOs، CI والأسرار مدمجة |
-| GF-0007..GF-0012 | المخازن وStock Ledger وBOM والمبيعات وpagination مدمجة |
-| GF-0013 | منطق مراحل الإنتاج واستهلاك الخامات والتكلفة ومخزون المنتج التام مدمج، مع إصلاحات PR20 للتحقق النهائي |
-| PR19 / GF-0020 الجزئي | طبقات Flutter للإنتاج مدمجة؛ لا يعني اكتمال UX أو barcode أو offline queue |
+| `npx prisma validate` | PASS |
+| `npx prisma generate` | PASS — Prisma Client 7.9.1 |
+| `npm run format:check` | PASS |
+| `npm run typecheck` | PASS |
+| `npm run lint` | PASS |
+| `npm run build` | PASS |
+| Unit tests | PASS — 27 suites / 144 tests |
+| E2E tests | PASS — 3 suites / 46 tests، وتشمل 401 لمسار KPI |
+| Integration محليًا | NOT RUN — 2 suites / 14 tests skipped لغياب `GF_INTEGRATION_DATABASE_URL` وDocker |
+| Migration deploy محليًا | NOT RUN — لا PostgreSQL/Docker متاح |
+| Flutter analyze/test | NOT RUN محليًا — التغيير Backend-only؛ مطلوب في CI |
+| Secret Scan | PASS — نفس patterns الخاصة بـCI |
+| `git diff --check` | PASS قبل توثيق الحالة؛ يجب إعادة تشغيله قبل push |
 
-## الفجوات المثبتة قبل التوسع
+## الفجوات والقيود المعروفة
 
-| الأولوية | الفجوة | الأثر | المهمة المقترحة |
-|---|---|---|---|
-| P0 | بعض مسارات `ProductsController` لا تحمل `@Roles()` مناسبًا | تصعيد صلاحيات لتعديل المنتجات وBOM من مستخدم موثق | GF-REMAINING-001 |
-| P0 | `getMaterialBalanceByWarehouse` يقرأ snapshot عالميًا على أنه رصيد مستودع | تقارير مخزون غير صحيحة عند تعدد المستودعات | GF-REMAINING-002 |
-| P1 | `recordStageOutput` يحتاج ضمان idempotency صريحًا | احتمال تكرار أثر مخرج المرحلة عند retry | GF-REMAINING-003 |
-| P1 | لا يوجد Backend endpoint لـ`/dashboard/stats` | شاشة التقارير/لوحة التحكم لا تعمل على بيانات حقيقية | GF-REMAINING-004 |
-| P1 | استلام المشتريات لا ينشئ قيدًا ماليًا تلقائيًا | انفصال المخزون عن الأستاذ العام والذمم | GF-REMAINING-005 |
-| P1 | اختبارات E2E الأساسية mock-backed | لا تثبت كل المسارات على PostgreSQL الحقيقي | GF-REMAINING-006 |
-| P1 | غياب اختبار أداء قابل للتكرار | لا توجد أدلة p95 أو pool saturation | GF-REMAINING-007 |
-| P2 | barcode في Flutter غير موصول بالكامل وoffline queue غير موجودة | المسارات الميدانية غير مكتملة | GF-REMAINING-008 |
-| P2 | backup/restore وpilot وGo/No-Go غير منفذة | لا جاهزية إطلاق مؤسسي | GF-REMAINING-009 |
-
-## المهمة التالية الرسمية
-
-`GF-REMAINING-001`: حماية كل مسارات ProductsController الحساسة بـ`@Roles()` واختبار `401/403/success`، ثم تحديث عقد API. لا يبدأ إصلاح الرصيد أو التقارير أو الترحيل المالي قبل اجتياز بوابة هذه المهمة ومراجعة diff.
+1. لم يُفتح أو يُدمج PR GF-0014، لذلك لا يجوز إعلان GF-0014 مكتملة مؤسسيًا.
+2. يجب أن يثبت CI تطبيق migration على PostgreSQL نظيفة وتشغيل 14 حالة integration، بما فيها one-check-per-stageRun وKPI وCHECK constraints.
+3. اختبارات E2E الحالية mock-backed، وتظل اختبارات PostgreSQL التكاملية المرجع لمسار البيانات الحقيقي.
+4. لا توجد بعد آلية adjustment/reversal لفحص مكتمل؛ أي تصحيح يجب أن يكون مهمة مستقلة مع audit trail.
+5. وجود PR #24 المدمج يعني أن GF-0015 بدأت جزئيًا على main، ولا يجوز تكرار أو استبدال attendance قبل مراجعة scope الفعلي.
 
 ## بروتوكول التسليم
 
-كل مهمة يجب أن تحتوي على migration عند الحاجة، اختبارات سلوكية، تحديثًا لهذا الملف، بطاقة handoff، ونتائج `format:check` و`typecheck` و`lint` و`build` وunit وE2E وCI. لا تُعتبر المهمة مكتملة لمجرد نجاح build أو وجود شاشة واجهة، ولا يُعتبر PR مدمجًا قبل تنفيذ الدمج بطلب صريح والتحقق من CI على `main`.
+كل مهمة يجب أن تحتوي على migration عند الحاجة، اختبارات سلوكية، تحديثًا لهذا الملف، بطاقة handoff، ونتائج `format:check` و`typecheck` و`lint` و`build` وunit وE2E وCI. لا تُعتبر المهمة مكتملة لمجرد نجاح build أو وجود شاشة واجهة، ولا يُعتبر PR مدمجًا قبل تنفيذ الدمج والتحقق من CI على `main`.
 
 ## آخر تحديث توثيقي
 
-تمت مزامنة هذا الملف على فرع `maintenance/gf-state-reconcile` بعد التحقق من `main@d15b2ef`، ودمج PR20 وPR19، وإعادة تشغيل بوابات Backend محليًا. لا تُعتبر المزامنة مدمجة حتى تُراجع وتُرفع في PR مستقل.
+تمت مزامنة هذا الملف على فرع `phase4/gf0014-quality-waste-v2` بعد rebase على `origin/main@90c37f6` وcommit التنفيذ `2a56602`. يجب إضافة رقم PR وmerge SHA ونتيجة CI بعد الرفع والدمج، وعدم اعتبار هذه الحالة نهائية قبل ذلك.
