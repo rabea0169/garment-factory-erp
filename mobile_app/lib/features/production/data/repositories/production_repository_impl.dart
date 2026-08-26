@@ -1,11 +1,13 @@
 import 'package:dio/dio.dart';
 
 import '../../../../core/network/api_client.dart';
+import '../../domain/entities/production_commands.dart';
 import '../../domain/entities/stage_transition.dart';
 import '../../domain/entities/work_order.dart';
 import '../../domain/failures/production_failure.dart';
 import '../../domain/repositories/production_repository.dart';
 import '../datasources/production_remote_data_source.dart';
+import '../models/production_models.dart';
 import '../models/work_order_model.dart';
 
 class ProductionRepositoryImpl implements ProductionRepository {
@@ -45,23 +47,13 @@ class ProductionRepositoryImpl implements ProductionRepository {
     required String idempotencyKey,
   }) async {
     try {
-      // Temporary adapter for main's PATCH status endpoint. Once the
-      // production workflow API is merged, only this datasource mapping
-      // changes; Domain and Presentation remain stable.
-      final payload = await remote.updateLegacyStatus(
+      final payload = await remote.transitionStage(
         workOrderId: workOrderId,
-        status: _legacyStatusFor(toStage),
+        toStage: toStage.apiValue,
+        reason: reason,
         idempotencyKey: idempotencyKey,
       );
-      final json = _requiredMap(payload);
-      return StageTransition(
-        transitionId: json['transitionId']?.toString() ?? json['id']?.toString() ?? workOrderId,
-        workOrderId: json['workOrderId']?.toString() ?? workOrderId,
-        fromStage: parseProductionStage(json['currentStage'] as String?),
-        toStage: toStage,
-        stageVersion: (json['stageVersion'] as num?)?.toInt() ?? 0,
-        replayed: json['replayed'] as bool? ?? false,
-      );
+      return StageTransitionModel.fromJson(_requiredMap(payload)).toEntity();
     } on DioException catch (error) {
       throw mapProductionFailure(error);
     } on FormatException catch (error) {
@@ -73,10 +65,79 @@ class ProductionRepositoryImpl implements ProductionRepository {
     }
   }
 
-  String _legacyStatusFor(ProductionStage stage) {
-    // The current main contract uses PACKAGING; the newer workflow contract
-    // uses PACKING. This translation belongs in Data, never in the screen.
-    return stage == ProductionStage.packing ? 'PACKAGING' : stage.apiValue;
+  @override
+  Future<StageOutputResult> recordStageOutput(
+    RecordStageOutputCommand command,
+  ) async {
+    try {
+      final payload = await remote.recordStageOutput(
+        workOrderId: command.workOrderId,
+        stage: command.stage.apiValue,
+        inputQty: command.inputQty,
+        acceptedQty: command.acceptedQty,
+        rejectedQty: command.rejectedQty,
+        wasteQty: command.wasteQty,
+        notes: command.notes,
+      );
+      return StageOutputResultModel.fromJson(_requiredMap(payload)).toEntity();
+    } on DioException catch (error) {
+      throw mapProductionFailure(error);
+    } on FormatException catch (error) {
+      throw ProductionMappingFailure(error.message);
+    } on ProductionFailure {
+      rethrow;
+    } catch (_) {
+      throw const ProductionServerFailure();
+    }
+  }
+
+  @override
+  Future<MaterialConsumption> consumeMaterial(
+    ConsumeMaterialCommand command,
+  ) async {
+    try {
+      final payload = await remote.consumeMaterial(
+        workOrderId: command.workOrderId,
+        stageRunId: command.stageRunId,
+        rawMaterialId: command.rawMaterialId,
+        warehouseId: command.warehouseId,
+        plannedQuantity: command.plannedQuantity,
+        actualQuantity: command.actualQuantity,
+        wasteQuantity: command.wasteQuantity,
+        unit: command.unit,
+        idempotencyKey: command.idempotencyKey,
+        wasteReason: command.wasteReason,
+        reference: command.reference,
+        notes: command.notes,
+      );
+      return MaterialConsumptionModel.fromJson(_requiredMap(payload)).toEntity();
+    } on DioException catch (error) {
+      throw mapProductionFailure(error);
+    } on FormatException catch (error) {
+      throw ProductionMappingFailure(error.message);
+    } on ProductionFailure {
+      rethrow;
+    } catch (_) {
+      throw const ProductionServerFailure();
+    }
+  }
+
+  @override
+  Future<ProductionCostSnapshot> finalizeCost({
+    required String workOrderId,
+  }) async {
+    try {
+      final payload = await remote.finalizeCost(workOrderId: workOrderId);
+      return ProductionCostSnapshotModel.fromJson(_requiredMap(payload)).toEntity();
+    } on DioException catch (error) {
+      throw mapProductionFailure(error);
+    } on FormatException catch (error) {
+      throw ProductionMappingFailure(error.message);
+    } on ProductionFailure {
+      rethrow;
+    } catch (_) {
+      throw const ProductionServerFailure();
+    }
   }
 }
 
@@ -85,7 +146,9 @@ ProductionFailure mapProductionFailure(DioException error) {
   if (status == 401) return const ProductionUnauthorizedFailure();
   if (status == 403) return const ProductionForbiddenFailure();
   if (status == 400 || status == 422) {
-    return ProductionValidationFailure(_serverMessage(error) ?? 'بيانات الإنتاج غير صالحة');
+    return ProductionValidationFailure(
+      _serverMessage(error) ?? 'بيانات الإنتاج غير صالحة',
+    );
   }
   if (error.type == DioExceptionType.connectionError ||
       error.type == DioExceptionType.connectionTimeout ||
@@ -93,7 +156,9 @@ ProductionFailure mapProductionFailure(DioException error) {
       error.type == DioExceptionType.receiveTimeout) {
     return const ProductionNetworkFailure();
   }
-  return ProductionServerFailure(_serverMessage(error) ?? 'حدث خطأ في خدمة الإنتاج');
+  return ProductionServerFailure(
+    _serverMessage(error) ?? 'حدث خطأ في خدمة الإنتاج',
+  );
 }
 
 String? _serverMessage(DioException error) {
@@ -105,5 +170,5 @@ String? _serverMessage(DioException error) {
 Map<String, dynamic> _requiredMap(Object? value) {
   if (value is Map<String, dynamic>) return value;
   if (value is Map) return Map<String, dynamic>.from(value);
-  throw const FormatException('استجابة انتقال مرحلة الإنتاج فارغة');
+  throw const FormatException('استجابة الإنتاج فارغة أو غير صالحة');
 }

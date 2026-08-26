@@ -6,6 +6,7 @@ class StageTransition {
     required this.workOrderId,
     required this.fromStage,
     required this.toStage,
+    required this.stageRunId,
     required this.stageVersion,
     required this.replayed,
   });
@@ -14,6 +15,7 @@ class StageTransition {
   final String workOrderId;
   final ProductionStage? fromStage;
   final ProductionStage toStage;
+  final String stageRunId;
   final int stageVersion;
   final bool replayed;
 }

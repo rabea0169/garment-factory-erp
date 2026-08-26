@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:garment_factory_erp/features/production/domain/entities/production_commands.dart';
 import 'package:garment_factory_erp/features/production/domain/entities/stage_transition.dart';
 import 'package:garment_factory_erp/features/production/domain/entities/work_order.dart';
 import 'package:garment_factory_erp/features/production/domain/failures/production_failure.dart' as failures;
@@ -25,6 +26,9 @@ void main() {
     final cubit = ProductionCubit(
       getWorkOrders: GetWorkOrders(repository),
       transitionStage: TransitionProductionStage(repository),
+      recordStageOutput: RecordProductionStageOutput(repository),
+      consumeMaterial: ConsumeProductionMaterial(repository),
+      finalizeCost: FinalizeProductionCost(repository),
     );
     addTearDown(cubit.close);
 
@@ -49,6 +53,9 @@ void main() {
     final cubit = ProductionCubit(
       getWorkOrders: GetWorkOrders(repository),
       transitionStage: TransitionProductionStage(repository),
+      recordStageOutput: RecordProductionStageOutput(repository),
+      consumeMaterial: ConsumeProductionMaterial(repository),
+      finalizeCost: FinalizeProductionCost(repository),
     );
     addTearDown(cubit.close);
 
@@ -93,8 +100,57 @@ class FakeProductionRepository implements ProductionRepository {
       workOrderId: workOrderId,
       fromStage: null,
       toStage: toStage,
+      stageRunId: 'stage-run-1',
       stageVersion: 1,
       replayed: false,
+    );
+  }
+
+  @override
+  Future<StageOutputResult> recordStageOutput(
+    RecordStageOutputCommand command,
+  ) async {
+    if (failure != null) throw failure!;
+    return StageOutputResult(
+      workOrderId: command.workOrderId,
+      stage: command.stage,
+      status: 'COMPLETED',
+    );
+  }
+
+  @override
+  Future<MaterialConsumption> consumeMaterial(
+    ConsumeMaterialCommand command,
+  ) async {
+    if (failure != null) throw failure!;
+    return MaterialConsumption(
+      consumptionId: 'consumption-1',
+      workOrderId: command.workOrderId,
+      stageRunId: command.stageRunId,
+      stockLedgerEntryId: 'ledger-1',
+      actualQuantity: command.actualQuantity,
+      wasteQuantity: command.wasteQuantity,
+      unitCost: 1,
+      totalCost: command.actualQuantity,
+      wasteCost: command.wasteQuantity,
+      replayed: false,
+    );
+  }
+
+  @override
+  Future<ProductionCostSnapshot> finalizeCost({
+    required String workOrderId,
+  }) async {
+    if (failure != null) throw failure!;
+    return ProductionCostSnapshot(
+      id: 'cost-1',
+      workOrderId: workOrderId,
+      status: 'FINALIZED',
+      materialCost: 100,
+      wasteCost: 5,
+      totalCost: 100,
+      acceptedQty: 10,
+      unitCost: 10,
     );
   }
 }
