@@ -10,6 +10,7 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
   let prisma: ReturnType<typeof createPrismaMock>;
   let financial: {
     postJournalEntryInTx: jest.Mock;
+    postJournalEntry?: jest.Mock;
     reverseJournalEntry?: jest.Mock;
   };
 
@@ -260,5 +261,64 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
         undefined,
       );
     });
+  });
+
+  it('ينشئ فترة مالية جديدة إذا لم تتداخل مع فترة قائمة', async () => {
+    prisma.fiscalPeriod.findFirst.mockResolvedValue(null);
+    prisma.fiscalPeriod.create.mockResolvedValue({
+      id: 'period-1',
+      name: '2026-08',
+    });
+
+    const result = await service.createFiscalPeriod(
+      {
+        name: '2026-08',
+        startDate: '2026-08-01',
+        endDate: '2026-08-31',
+      },
+      'user-1',
+    );
+
+    expect(result).toEqual({ id: 'period-1', name: '2026-08' });
+    expect(prisma.fiscalPeriod.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        createdById: 'user-1',
+      }) as Record<string, unknown>,
+    });
+  });
+
+  it('يمرر القيد متعدد البنود والفترة إلى محرك الترحيل', async () => {
+    const postJournalEntry = jest.fn().mockResolvedValue({ entryId: 'je-1' });
+    const fresh = new AccountingService(
+      prisma as unknown as PrismaService,
+      {
+        ...financial,
+        postJournalEntry,
+      } as unknown as FinancialPostingService,
+    );
+
+    await fresh.createJournalEntry(
+      {
+        description: 'قيد اختبار',
+        fiscalPeriodId: 'period-1',
+        date: '2026-08-26T00:00:00.000Z',
+        lines: [
+          {
+            debitAccountId: 'debit-1',
+            creditAccountId: 'credit-1',
+            amount: 100,
+          },
+        ],
+      },
+      'user-1',
+    );
+
+    expect(postJournalEntry).toHaveBeenCalledWith(
+      expect.objectContaining({
+        fiscalPeriodId: 'period-1',
+        date: new Date('2026-08-26T00:00:00.000Z'),
+      }),
+      'user-1',
+    );
   });
 });

@@ -13,6 +13,9 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
     createAccount: jest.Mock;
     getVouchers: jest.Mock;
     createVoucher: jest.Mock;
+    createFiscalPeriod: jest.Mock;
+    closeFiscalPeriod: jest.Mock;
+    createJournalEntry: jest.Mock;
   };
 
   beforeEach(() => {
@@ -21,6 +24,9 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
       createAccount: jest.fn().mockResolvedValue({ id: 'a-1' }),
       getVouchers: jest.fn().mockResolvedValue([]),
       createVoucher: jest.fn().mockResolvedValue({ id: 'v-1' }),
+      createFiscalPeriod: jest.fn().mockResolvedValue({ id: 'period-1' }),
+      closeFiscalPeriod: jest.fn().mockResolvedValue({ id: 'period-1' }),
+      createJournalEntry: jest.fn().mockResolvedValue({ entryId: 'je-1' }),
     };
     controller = new AccountingController(
       service as unknown as AccountingService,
@@ -41,6 +47,29 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
       expect.anything(),
       'user-from-session',
       undefined,
+    );
+  });
+
+  it('يمرر الفترة والقيد مع actor من الجلسة', async () => {
+    const period = {
+      name: '2026-08',
+      startDate: '2026-08-01',
+      endDate: '2026-08-31',
+    };
+    const journal = {
+      description: 'قيد اختبار',
+      fiscalPeriodId: 'period-1',
+      lines: [],
+    };
+    await controller.createFiscalPeriod(period, 'user-1');
+    await controller.createJournalEntry(journal, 'user-1');
+    await controller.closeFiscalPeriod('period-1', 'user-1');
+
+    expect(service.createFiscalPeriod).toHaveBeenCalledWith(period, 'user-1');
+    expect(service.createJournalEntry).toHaveBeenCalledWith(journal, 'user-1');
+    expect(service.closeFiscalPeriod).toHaveBeenCalledWith(
+      'period-1',
+      'user-1',
     );
   });
 
@@ -66,6 +95,21 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
       'createAccount',
     );
     expect(roles).toEqual([UserRole.ACCOUNTANT]);
+  });
+
+  it('إنشاء الفترة والقيد والإغلاق مقيّدة بالأدوار المحاسبية', () => {
+    for (const method of [
+      'createFiscalPeriod',
+      'closeFiscalPeriod',
+      'createJournalEntry',
+    ] as const) {
+      const roles = getMethodMetadata<UserRole[]>(
+        ROLES_KEY,
+        AccountingController.prototype,
+        method,
+      );
+      expect(roles).toEqual([UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER]);
+    }
   });
 
   it('إنشاء سند مقيّد بـ ACCOUNTANT وCASHIER', () => {

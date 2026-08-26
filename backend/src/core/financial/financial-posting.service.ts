@@ -44,6 +44,8 @@ export interface PostJournalEntryInput {
   supplierUpdates?: { supplierId: string; delta: number }[];
   metadata?: Prisma.InputJsonValue;
   postingKey?: string;
+  date?: Date;
+  fiscalPeriodId?: string;
 }
 
 export interface JournalEntryResult {
@@ -93,6 +95,8 @@ export class FinancialPostingService {
               customerUpdates: input.customerUpdates ?? [],
               supplierUpdates: input.supplierUpdates ?? [],
               metadata: input.metadata ?? null,
+              date: input.date?.toISOString() ?? null,
+              fiscalPeriodId: input.fiscalPeriodId ?? null,
             }),
           )
           .digest('hex')
@@ -157,6 +161,28 @@ export class FinancialPostingService {
     // = مجموع الدائن دائمًا هنا. هذا تأكيد دفاعي بدل قيد CHECK على مستوى DB
     // (محدود بسبب تصميم JournalLine columnar). إضافة لاحقة بمستوى الـ trigger
     // قابلة للتفعيل لاحقًا كدفاع ثانٍ على مستوى DB.
+
+    if (input.fiscalPeriodId) {
+      const period = await tx.fiscalPeriod.findUnique({
+        where: { id: input.fiscalPeriodId },
+      });
+      if (!period) {
+        throw new NotFoundException(
+          `الفترة المالية ${input.fiscalPeriodId} غير موجودة`,
+        );
+      }
+      const postingDate = input.date ?? new Date();
+      if (period.status !== 'OPEN') {
+        throw new BadRequestException('لا يمكن الترحيل في فترة مالية مغلقة');
+      }
+      if (
+        postingDate < period.startDate ||
+        postingDate >
+          new Date(period.endDate.getTime() + 24 * 60 * 60 * 1000 - 1)
+      ) {
+        throw new BadRequestException('تاريخ القيد خارج نطاق الفترة المالية');
+      }
+    }
 
     // (2) تحقق وجود كل الحسابات المُشار إليها في قاعدة البيانات.
     const accounts = await tx.account.findMany({
@@ -232,11 +258,13 @@ export class FinancialPostingService {
         code: entryCode,
         description: input.description,
         reference: input.reference ?? null,
+        date: input.date ?? undefined,
         isAuto: input.isAuto ?? false,
         metadata: input.metadata ?? undefined,
         createdById: userId ?? null,
         postingKey: input.postingKey ?? null,
         postingHash: postingHash ?? null,
+        fiscalPeriodId: input.fiscalPeriodId ?? null,
         lines: {
           create: input.lines.map((line) => ({
             debitAccountId: line.debitAccountId,

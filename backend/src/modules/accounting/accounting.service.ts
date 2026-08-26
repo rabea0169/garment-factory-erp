@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccountType, VoucherType } from '@prisma/client';
@@ -67,6 +71,88 @@ export class AccountingService {
     ]);
 
     return new PaginatedResult(data, total, page, pageSize);
+  }
+
+  async createFiscalPeriod(
+    data: { name: string; startDate: string; endDate: string },
+    createdById: string,
+  ) {
+    const startDate = new Date(data.startDate);
+    const endDate = new Date(data.endDate);
+    if (
+      !Number.isFinite(startDate.getTime()) ||
+      !Number.isFinite(endDate.getTime()) ||
+      startDate > endDate
+    ) {
+      throw new BadRequestException('نطاق الفترة المالية غير صالح');
+    }
+    const overlap = await this.prisma.fiscalPeriod.findFirst({
+      where: {
+        startDate: { lte: endDate },
+        endDate: { gte: startDate },
+      },
+    });
+    if (overlap) {
+      throw new ConflictException('الفترة المالية تتداخل مع فترة موجودة');
+    }
+    return this.prisma.fiscalPeriod.create({
+      data: { ...data, startDate, endDate, createdById },
+    });
+  }
+
+  async closeFiscalPeriod(id: string, actorId: string) {
+    return this.prisma.$transaction(async (tx) => {
+      const result = await tx.fiscalPeriod.updateMany({
+        where: { id, status: 'OPEN' },
+        data: { status: 'CLOSED' },
+      });
+      if (result.count !== 1) {
+        throw new ConflictException('الفترة غير موجودة أو مغلقة بالفعل');
+      }
+      const period = await tx.fiscalPeriod.findUnique({ where: { id } });
+      if (!period) throw new ConflictException('الفترة المالية غير موجودة');
+      await tx.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'FISCAL_PERIOD_CLOSED',
+          module: 'ACCOUNTING',
+          details: { fiscalPeriodId: id },
+        },
+      });
+      return period;
+    });
+  }
+
+  async createJournalEntry(
+    data: {
+      description: string;
+      reference?: string;
+      fiscalPeriodId: string;
+      date?: string;
+      lines: {
+        debitAccountId: string;
+        creditAccountId: string;
+        amount: number;
+        description?: string;
+      }[];
+    },
+    userId: string,
+  ) {
+    const date = data.date ? new Date(data.date) : new Date();
+    if (!Number.isFinite(date.getTime())) {
+      throw new BadRequestException('تاريخ القيد غير صالح');
+    }
+    return this.financial.postJournalEntry(
+      {
+        description: data.description,
+        reference: data.reference,
+        fiscalPeriodId: data.fiscalPeriodId,
+        date,
+        lines: data.lines,
+        userId,
+      },
+      userId,
+    );
   }
 
   /**
