@@ -51,7 +51,8 @@ export class ProductionController {
   @Patch('work-orders/:id/status')
   @Roles(UserRole.PRODUCTION_MANAGER)
   @ApiOperation({
-    summary: 'تحديث حالة أمر التشغيل (المسار القديم للتوافق)',
+    summary:
+      'تحديث حالة أمر التشغيل (مسار قديم - محدود الآن بـ CANCELLED فقط لمنع تجاوز الـ workflow)',
   })
   async updateStatus(
     @Param('id', ParseUUIDPipe) id: string,

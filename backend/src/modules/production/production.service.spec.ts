@@ -103,77 +103,89 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     );
   });
 
-  it('تحديث حالة غير مكتملة: يحدّث فقط دون لمس المنتج التام ولا أحداث إكمال', async () => {
+  it('تحديث الحالة لـ CANCELLED: يسمح به ويطلق حدث الإلغاء', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'PLANNED',
+    });
     prisma.workOrder.update.mockResolvedValue({
       id: 'wo-1',
-      status: 'SEWING',
-      productId: 'p-1',
-      quantity: 100,
-    });
-
-    await service.updateOrderStatus('wo-1', WorkOrderStatus.SEWING);
-
-    expect(prisma.workOrder.update).toHaveBeenCalledWith({
-      where: { id: 'wo-1' },
-      data: { status: 'SEWING' },
-    });
-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();
-    expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
-  });
-
-  it('الإكمال: يسحب الخامات ويستلم المنتج التام داخل transaction', async () => {
-    // Mock the updated logic for GF-0008
-    prisma.workOrder.findUnique = jest.fn().mockResolvedValue({
-      id: 'wo-1',
-      status: 'SEWING',
-      productVariantId: 'v-1',
-      quantity: 100,
-      code: 'WO-1',
-      bomVersion: { lines: [] },
-    });
-    prisma.warehouse = {
-      findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }),
-    } as unknown as typeof prisma.warehouse;
-    prisma.workOrder.update.mockResolvedValue({
-      id: 'wo-1',
-      status: 'COMPLETED',
-      productVariantId: 'v-1',
-      quantity: 100,
+      status: 'CANCELLED',
     });
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
-    inventoryService.receiveFinishedGood.mockResolvedValue({
-      replayed: false,
-      entryCode: 'SLE-1',
-      type: 'RECEIVE',
-      rawMaterialId: '',
-      warehouseId: 'wh-1',
-      quantityDelta: 100,
-      balanceAfter: 100,
-      unitCost: 0,
-      totalValue: 0,
-      costPerUnitAfter: 0,
-      createdAt: new Date().toISOString(),
-    });
 
     const result = await service.updateOrderStatus(
       'wo-1',
-      WorkOrderStatus.COMPLETED,
+      WorkOrderStatus.CANCELLED,
     );
 
-    expect(result.status).toBe('COMPLETED');
-    expect(prisma.$transaction).toHaveBeenCalled();
-    expect(inventoryService.receiveFinishedGood).toHaveBeenCalledWith(
-      expect.objectContaining({
-        productVariantId: 'v-1',
-        warehouseId: 'wh-1',
-        quantity: 100,
-      }),
-      undefined,
-      prisma,
+    expect(result.status).toBe('CANCELLED');
+    expect(prisma.workOrder.update).toHaveBeenCalledWith({
+      where: { id: 'wo-1' },
+      data: { status: 'CANCELLED' },
+    });
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
+      EVENTS.WORK_ORDER_CANCELLED,
+      expect.anything(),
     );
-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();
-    expect(prisma.finishedGood.update).not.toHaveBeenCalled();
+  });
+
+  it('idempotency: العودة بنجاح إذا كان الأمر ملغى بالفعل دون تكرار الحدث', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'CANCELLED',
+    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    const result = await service.updateOrderStatus(
+      'wo-1',
+      WorkOrderStatus.CANCELLED,
+    );
+
+    expect(result.status).toBe('CANCELLED');
+    expect(prisma.workOrder.update).not.toHaveBeenCalled();
+    expect(eventEmitter.emitAsync).not.toHaveBeenCalledWith(
+      EVENTS.WORK_ORDER_CANCELLED,
+      expect.anything(),
+    );
+  });
+
+  it('منع الإكمال المباشر: يرفض التحديث لـ COMPLETED', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'PLANNED',
+    });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.COMPLETED),
+    ).rejects.toThrow(
+      'Work orders must be completed via the production workflow',
+    );
+  });
+
+  it('منع تعديل المكتمل: يرفض أي تحديث إذا كانت الحالة الحالية COMPLETED', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'COMPLETED',
+    });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED),
+    ).rejects.toThrow('Work order is already completed');
+  });
+
+  it('منع الحالات القديمة: يرفض التحديث لحالات مثل SEWING', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: 'PLANNED',
+    });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.SEWING),
+    ).rejects.toThrow('is deprecated for direct updates');
   });
 });
