@@ -115,7 +115,7 @@
 | PUT | `/purchasing/:id/receive` | استلام legacy كامل | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
 | POST | `/purchasing/:id/return` | مرتجع إلى المورد | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
 
-يتطلب `POST /purchasing/:id/receipts` قائمة غير فارغة بلا تكرار لبند أمر الشراء. يتحقق الخادم من الكمية المتبقية، وينشئ receipt وحركات `RECEIVE` في `StockLedgerEntry`، ويرحل قيداً آلياً متوازناً (مدين مخزون / دائن حسابات دائنة) ويحدّث رصيد المورد وحالة الأمر داخل transaction واحدة؛ لا تُؤخذ الكمية أو التكلفة من حقيقة يرسلها العميل خارج عناصر أمر الشراء. يدعم الرأس الاختياري `Idempotency-Key`، وتكرار المفتاح مع نفس المحتوى يعيد الاستجابة دون receipt أو ledger أو قيد إضافي، بينما المحتوى المختلف يُرفض بـ409. مسار المرتجع يعكس المخزون والقيد والذمم داخل transaction واحدة، ويمنع سباق مرتجعين يتجاوزان الكمية المستلمة. يجب إثبات اختبارات PostgreSQL على CI قبل التشغيل المشترك.
+يتطلب `POST /purchasing/:id/receipts` قائمة غير فارغة بلا تكرار لبند أمر الشراء. يتحقق الخادم من الكمية المتبقية، وينشئ receipt وحركات `RECEIVE` في `StockLedgerEntry`، ويرحل قيداً آلياً متوازناً (مدين مخزون / دائن حسابات دائنة) ويحدّث رصيد المورد وحالة الأمر داخل transaction واحدة؛ لا تُؤخذ الكمية أو التكلفة من حقيقة يرسلها العميل خارج عناصر أمر الشراء. يدعم الرأس الاختياري `Idempotency-Key`، وتكرار المفتاح مع نفس المحتوى يعيد الاستجابة دون receipt أو ledger أو قيد إضافي، بينما المحتوى المختلف يُرفض بـ409. مسار المرتجع يخرج المخزون عبر weighted-average `totalValue`، ويرحل قيدًا مدينًا لـAP ودائنًا للمخزون ويخفض رصيد المورد بنفس transaction؛ فشل posting يلغي الأثر المخزني. يمنع سباق مرتجعين يتجاوزان الكمية المستلمة. يجب إثبات اختبارات PostgreSQL على CI قبل التشغيل المشترك.
 
 ## المبيعات — `/sales`
 
@@ -125,8 +125,9 @@
 | POST | `/sales/customers` | عميل جديد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/confirm` | تأكيد البيع وصرف المنتج التام | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409.
+يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. عند تأكيد أمر `CASH` يجب إرسال body بالشكل `{ "treasuryId": "uuid" }`. يتحقق الخادم من الخزينة النشطة، ويحسب قيمة التحصيل من `SalesOrder.totalAmount` فقط، ثم يمرر `treasuryUpdates` إلى محرك الترحيل داخل نفس transaction مع صرف المخزون وتسجيل القيد. لا يُسمح بـ`treasuryId` في البيع الآجل. يستخدم تأكيد البيع رأس `Idempotency-Key` اختياريًا، ويشمل hash قيمة الخزينة لمنع replay بخزينة مختلفة.
 
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
 
@@ -155,7 +156,7 @@
 | PATCH | `/accounting/fiscal-periods/:id/close` | إغلاق فترة مالية | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/journal-entries` | إنشاء قيد متعدد البنود داخل فترة مفتوحة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 
-يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
+يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة. تُحفظ `treasuryUpdates` و`customerUpdates` أو `supplierUpdates` داخل `JournalEntry.metadata` حتى يستطيع مسار العكس قلب الأرصدة التشغيلية بنفس الذرية.
 
 الفترات المالية لا تتداخل، ويُمنع الترحيل في فترة CLOSED أو بتاريخ خارج حدود الفترة. يقبل `POST /accounting/journal-entries` `description`, `reference`, `fiscalPeriodId`, `date` الاختياري، و`lines[]` الموجبة؛ يتحقق المحرك من الحسابات النشطة وتوازن المدين/الدائن ويأخذ `createdById` من JWT. إغلاق الفترة مشروط بحالتها الحالية ويسجل ActivityLog، ولا توجد كتابة دفع أو VAT آلية في هذا المسار.
 

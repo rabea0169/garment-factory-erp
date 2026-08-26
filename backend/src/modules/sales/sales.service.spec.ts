@@ -128,7 +128,7 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       entryId: 'je-1',
     });
 
-    await service.confirmOrder('so-1', 'u-1', 'confirm-key');
+    await service.confirmOrder('so-1', 'u-1', 'confirm-key', 'treasury-1');
 
     expect(issueFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -143,7 +143,12 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       prisma,
       expect.objectContaining({
         reference: 'SO-1',
-        metadata: { source: 'sales.confirm', salesOrderId: 'so-1' },
+        metadata: expect.objectContaining({
+          source: 'sales.confirm',
+          salesOrderId: 'so-1',
+          treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 216.6 }],
+        }) as Record<string, unknown>,
+        treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 216.6 }],
         customerUpdates: undefined,
       }),
       'u-1',
@@ -161,6 +166,30 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
     expect(updateCalls[0][0].data.response.status).toBe(
       SalesOrderStatus.CONFIRMED,
     );
+  });
+
+  it('rejects cash confirmation without treasury before changing state', async () => {
+    const { prisma, issueFinishedGood, service } = makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      code: 'SO-1',
+      status: SalesOrderStatus.DRAFT,
+      paymentType: PaymentType.CASH,
+      totalAmount: 114,
+      customerId: 'c-1',
+      items: [],
+    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    await expect(service.confirmOrder('so-1', 'u-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+    expect(issueFinishedGood).not.toHaveBeenCalled();
   });
 
   it('does not confirm twice when the order status changes concurrently', async () => {
@@ -185,9 +214,9 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
 
-    await expect(service.confirmOrder('so-1', 'u-1')).rejects.toBeInstanceOf(
-      ConflictException,
-    );
+    await expect(
+      service.confirmOrder('so-1', 'u-1', undefined, 'treasury-1'),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 });
 
@@ -196,7 +225,7 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
     const { prisma, service } = makeService();
     const storedResponse = { id: 'so-1', status: SalesOrderStatus.CONFIRMED };
 
-    // The service computes hash using: { operation: 'sales-order-confirm', orderId: 'so-1', userId: 'u-1' }
+    // The service computes hash using orderId, userId, and treasuryId (null for legacy credit confirmation).
     const requestHash = crypto
       .createHash('sha256')
       .update(
@@ -204,6 +233,7 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
           operation: 'sales-order-confirm',
           orderId: 'so-1',
           userId: 'u-1',
+          treasuryId: null,
         }),
       )
       .digest('hex');
