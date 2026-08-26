@@ -7,70 +7,62 @@
 | البند | القيمة |
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
-| الفرع الرئيسي | `main` |
-| آخر commit على main | `033ae6fd` — merge PR #17 وتصحيحات Cluster 5 الأساسية |
-| فرع الإصلاح الحالي | `maintenance/pre-gf0014-blockers` — غير مرفوع بعد |
-| Pull Request الحالي | لا يوجد بعد؛ الإصلاحات قيد التحقق محليًا |
-| آخر CI أخضر على main | [Run 32916998502](https://github.com/rabea0169/garment-factory-erp/actions/runs/32916998502) |
-| الإصدار | لا يوجد إصدار مؤسسي معتمد بعد — `pre-release` |
-| آخر مهمة مكتملة على main | Cluster 5 — foundation المحاسبي والتشغيلي الأساسي |
-| حالة GF-0013 | schema/service/integration مدمجة؛ API/RBAC وposting/Flutter مدمجة فقط في فروع مرحلية أو قيد الإغلاق |
-| حالة CI على main | أخضر عند `033ae6fd`؛ readiness والتحقق الدلالي ما زالا ضمن هذا الإصلاح |
-| حالة قاعدة البيانات على main | migrations additive حتى Cluster 5 المدمج؛ أي migration جديدة يجب أن تبقى additive |
-| API version | 1.0 — عقد GF-0013 HTTP موثق في الفرع المرحلي ويُراجع ضمن هذا الإصلاح |
+| الفرع الأساسي المرجعي | `main` |
+| خط أساس التنفيذ | `main@d15b2ef` — دمج PR20 ثم PR19، وCI الأخضر Run [32920719412](https://github.com/rabea0169/garment-factory-erp/actions/runs/32920719412) |
+| فرع العمل الحالي | `maintenance/gf-state-reconcile` — مزامنة وثائق غير مدمجة |
+| الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
+| آخر مرحلة مكتملة على main | الأساس التشغيلي لـ GF-0013 مع إصلاحات PR20 وطبقات Flutter الإنتاجية من PR19 |
+| حالة CI على main | ناجحة على `d15b2ef`؛ لا تعني اكتمال المسارات التجارية أو الجاهزية المؤسسية |
+| حالة قاعدة البيانات | Migrations additive مدمجة حتى خط الأساس الحالي؛ لا تغيير schema بلا migration واختبار restore/rollback |
+| إصدار API | `1.0`؛ عقد المسارات الحالية موثق في `docs/API_CONTRACT.md` |
+| قاعدة البيانات المحلية | لا يوجد PostgreSQL/Docker أو Flutter SDK في بيئة الفحص الحالية؛ اختبارات التكامل وFlutter تعتمد على CI عند الحاجة |
 
-## المهام المكتملة على main
+## الفحوص المكررة على خط الأساس
 
-| المهمة | الوصف | الحالة |
+| الفحص | النتيجة | الدليل أو القيد |
 |---|---|---|
-| GF-0001..GF-0006 | الحوكمة، fail-closed auth، DTOs، الاختبارات، الأسرار وCI | مكتملة وموجودة في التاريخ |
-| GF-0007 | Warehouse، Stock Ledger، idempotency، indexes ومنع الرصيد السالب | مكتملة |
-| GF-0008 | BOM versioning، ربط WorkOrder بالـ SKU، واستهلاك الخامات داخل transaction | مكتملة |
-| GF-0009 | Purchasing Module، أوامر الشراء، الاستلام والمرتجعات عبر InventoryService | مكتملة ومُدمجة في main |
-| GF-0010 | Flutter secure storage، Authorization interceptor، 401، logout، إزالة mock، Flutter CI | مكتملة ومُدمجة في main |
-| GF-0011 | المبيعات: منع البيع فوق المتاح، وحساب الإجماليات على الخادم وتأمين الخصم | مكتملة |
-| GF-0012 | Pagination موحد لكل قوائم الوحدات مع data/meta وقيود page/limit | مكتملة وموجودة في main عند `7e73cf75` |
+| `npm ci --no-audit --no-fund` | ناجح | ثُبتت 884 حزمة في `backend` |
+| `npx prisma validate` | ناجح | محليًا على `main@d15b2ef` |
+| `npx prisma generate` | ناجح | Prisma Client `7.9.1` |
+| `npm run format:check` | ناجح | كل الملفات مطابقة |
+| `npm run typecheck` | ناجح | لا أخطاء TypeScript |
+| `npm run lint` | ناجح | لا أخطاء ESLint |
+| `npm run build` | ناجح | Nest build ناجح |
+| `npm test -- --runInBand` | ناجح | `27 suites / 136 tests` |
+| `flutter analyze` و`flutter test` | غير متاح محليًا | Flutter SDK غير مثبت؛ آخر تحقق ناجح في CI حسب Run `32920719412` |
+| PostgreSQL integration محليًا | غير متاح | لا PostgreSQL/Docker في البيئة؛ لا تُحسب نتيجة نجاح |
 
-## نطاق GF-0013 المنفذ في PR #11
+## المنفذ فعليًا
 
-أضيفت مراحل ثابتة `CUTTING`, `SEWING`, `IRONING`, `PACKING`، وسجل `ProductionStageRun` واحد لكل أمر ومرحلة، وسجل انتقال append-only، وتخزين input/accepted/rejected/waste، واستهلاك فعلي للخامة حسب المرحلة والمخزن، ولقطات تكلفة، ومخزون finished goods حسب warehouse وSKU. التغيير additive ويحافظ على الحقول القديمة.
-
-تقدم `ProductionWorkflowService` انتقالات sequential، تسجيل مخرجات المرحلة مع conservation، صرفًا عبر `InventoryService.issue` داخل transaction واحدة، Weighted Average لتكلفة المواد، idempotency للانتقال والاستهلاك، ومعالجة replay عند تعارض uniqueness المتزامن. يستخدم `finalizeCost` آخر مرحلة مكتملة كمقام للتكلفة بدل جمع acceptedQty لجميع المراحل، ويرفض تسجيل output لمرحلة ليست `currentStage`.
-
-## دليل التحقق لـ PR #11
-
-| الفحص | النتيجة |
+| النطاق | الحالة |
 |---|---|
-| `npx prisma validate/generate` | ناجح محليًا وداخل CI |
-| `npm run format:check` | ناجح محليًا وداخل CI |
-| `npm run typecheck` | ناجح محليًا وداخل CI |
-| `npm run lint` | ناجح محليًا وداخل CI |
-| `npm run build` | ناجح محليًا وداخل CI |
-| Unit tests | `25 suites / 120 tests` ناجحة |
-| E2E tests | `2 suites / 36 tests` ناجحة؛ ما زالت mock-backed |
-| Flutter analyze/test | ناجحان في CI |
-| Secret Scan | ناجح في Run `32884547465` |
-| Prisma migrate deploy | ناجح على PostgreSQL 16 disposable في Run `32884547465` |
-| GF-0013 PostgreSQL integration | `1 suite / 5 tests` ناجحة في Run `32884547465` |
-| Integration محليًا | `5 tests skipped` لأن sandbox لا يحتوي Docker/PostgreSQL؛ لا تُحسب نجاحًا محليًا |
+| GF-0001..GF-0006 | الحوكمة، fail-closed auth، DTOs، CI والأسرار مدمجة |
+| GF-0007..GF-0012 | المخازن وStock Ledger وBOM والمبيعات وpagination مدمجة |
+| GF-0013 | منطق مراحل الإنتاج واستهلاك الخامات والتكلفة ومخزون المنتج التام مدمج، مع إصلاحات PR20 للتحقق النهائي |
+| PR19 / GF-0020 الجزئي | طبقات Flutter للإنتاج مدمجة؛ لا يعني اكتمال UX أو barcode أو offline queue |
 
-## الفجوات المعروفة قبل الاستخدام المؤسسي
+## الفجوات المثبتة قبل التوسع
 
-1. هذا الفرع يعالج مسار production legacy ومخزون المنتج التام، لكن لا يُعتبر الحل منشورًا حتى يُدمج PR الإصلاح ويمر CI على `main`.
-2. ما زالت اختبارات E2E الحالية تستخدم Prisma mock ولا تثبت runtime على PostgreSQL، باستثناء suites integration المخصصة التي تفعل ذلك على CI.
-3. `/dashboard/stats` غير منفذ في Backend، وبعض دورات الجودة والشحن والمالية ما زالت جزئية.
-4. `npm audit` يحتاج قرارًا واعيًا بشأن ثغرات `deepmerge-ts` ضمن سلسلة Prisma؛ لا يُنفذ `npm audit fix --force` قبل قرار وترقية متوافقة.
-5. تحذير Node.js 20 في GitHub Actions غير حاجب، لكنه يحتاج تحديث actions لاحقًا.
-6. لا توجد حتى الآن اختبارات ضغط تثبت p95 وthroughput وpool saturation في سيناريوهات البيع والإنتاج.
+| الأولوية | الفجوة | الأثر | المهمة المقترحة |
+|---|---|---|---|
+| P0 | بعض مسارات `ProductsController` لا تحمل `@Roles()` مناسبًا | تصعيد صلاحيات لتعديل المنتجات وBOM من مستخدم موثق | GF-REMAINING-001 |
+| P0 | `getMaterialBalanceByWarehouse` يقرأ snapshot عالميًا على أنه رصيد مستودع | تقارير مخزون غير صحيحة عند تعدد المستودعات | GF-REMAINING-002 |
+| P1 | `recordStageOutput` يحتاج ضمان idempotency صريحًا | احتمال تكرار أثر مخرج المرحلة عند retry | GF-REMAINING-003 |
+| P1 | لا يوجد Backend endpoint لـ`/dashboard/stats` | شاشة التقارير/لوحة التحكم لا تعمل على بيانات حقيقية | GF-REMAINING-004 |
+| P1 | استلام المشتريات لا ينشئ قيدًا ماليًا تلقائيًا | انفصال المخزون عن الأستاذ العام والذمم | GF-REMAINING-005 |
+| P1 | اختبارات E2E الأساسية mock-backed | لا تثبت كل المسارات على PostgreSQL الحقيقي | GF-REMAINING-006 |
+| P1 | غياب اختبار أداء قابل للتكرار | لا توجد أدلة p95 أو pool saturation | GF-REMAINING-007 |
+| P2 | barcode في Flutter غير موصول بالكامل وoffline queue غير موجودة | المسارات الميدانية غير مكتملة | GF-REMAINING-008 |
+| P2 | backup/restore وpilot وGo/No-Go غير منفذة | لا جاهزية إطلاق مؤسسي | GF-REMAINING-009 |
 
 ## المهمة التالية الرسمية
 
-بعد دمج هذا الإصلاح والتحقق من CI على `main`، تُراجع بوابات GF-0013 النهائية ثم يُفتح GF-0014 حسب ترتيب `MASTER_BACKLOG.md`. لا تُفتح مهمة جديدة قبل تثبيت عقد الإنتاج والمخزون والمحاسبة وتحديث Handoff.
+`GF-REMAINING-001`: حماية كل مسارات ProductsController الحساسة بـ`@Roles()` واختبار `401/403/success`، ثم تحديث عقد API. لا يبدأ إصلاح الرصيد أو التقارير أو الترحيل المالي قبل اجتياز بوابة هذه المهمة ومراجعة diff.
 
 ## بروتوكول التسليم
 
-كل مهمة يجب أن تحتوي على migration عند الحاجة، اختبارات سلوكية، تحديثًا لهذا الملف، بطاقة handoff، ونتائج `format:check` و`typecheck` و`lint` و`build` وunit وE2E وCI. لا تُعتبر المهمة مكتملة لمجرد نجاح build أو وجود شاشة واجهة، ولا يُعتبر PR مدمجًا قبل تنفيذ merge بطلب صريح والتحقق من CI على `main`.
+كل مهمة يجب أن تحتوي على migration عند الحاجة، اختبارات سلوكية، تحديثًا لهذا الملف، بطاقة handoff، ونتائج `format:check` و`typecheck` و`lint` و`build` وunit وE2E وCI. لا تُعتبر المهمة مكتملة لمجرد نجاح build أو وجود شاشة واجهة، ولا يُعتبر PR مدمجًا قبل تنفيذ الدمج بطلب صريح والتحقق من CI على `main`.
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `maintenance/pre-gf0014-blockers` بعد مراجعة `main@033ae6fd`. يجب تحديث SHA وRun CI النهائيين بعد دمج PR الإصلاح، وعدم اعتبار هذا المصدر نهائيًا قبل ذلك.
+تمت مزامنة هذا الملف على فرع `maintenance/gf-state-reconcile` بعد التحقق من `main@d15b2ef`، ودمج PR20 وPR19، وإعادة تشغيل بوابات Backend محليًا. لا تُعتبر المزامنة مدمجة حتى تُراجع وتُرفع في PR مستقل.
