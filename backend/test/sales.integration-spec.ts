@@ -32,7 +32,11 @@ integrationDescribe('P0 cash sale reconciliation integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    const inventory = new InventoryService(prisma, new EventEmitter2());
+    const inventory = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      new FinancialPostingService(prisma),
+    );
     sales = new SalesService(
       prisma,
       inventory,
