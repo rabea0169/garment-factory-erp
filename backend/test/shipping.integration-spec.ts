@@ -6,7 +6,9 @@ import {
   UserRole,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ShippingService } from '../src/modules/shipping/shipping.service';
+import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
@@ -25,7 +27,8 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    service = new ShippingService(prisma);
+    const inventory = new InventoryService(prisma, new EventEmitter2());
+    service = new ShippingService(prisma, inventory);
   });
 
   beforeEach(async () => {
