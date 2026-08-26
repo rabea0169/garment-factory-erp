@@ -4,9 +4,15 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, SalesOrderStatus, ShipmentStatus } from '@prisma/client';
+import {
+  Prisma,
+  SalesOrderStatus,
+  ShipmentStatus,
+  WarehouseType,
+} from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { InventoryService } from '../inventory/inventory.service';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
   generateDocumentCode,
@@ -15,7 +21,10 @@ import {
 
 @Injectable()
 export class ShippingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly inventoryService: InventoryService,
+  ) {}
 
   async getShipments(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -68,7 +77,10 @@ export class ShippingService {
     actorId: string,
     proofOfDelivery?: string,
   ) {
-    const shipment = await this.prisma.shipment.findUnique({ where: { id } });
+    const shipment = await this.prisma.shipment.findUnique({
+      where: { id },
+      include: { salesOrder: { include: { items: true } } },
+    });
     if (!shipment) throw new NotFoundException('Shipment not found');
 
     const allowed: Record<ShipmentStatus, ShipmentStatus[]> = {
@@ -111,6 +123,33 @@ export class ShippingService {
       });
       if (result.count !== 1) {
         throw new ConflictException('Shipment status changed concurrently');
+      }
+
+      if (status === ShipmentStatus.SHIPPED) {
+        const warehouse = await tx.warehouse.findFirst({
+          where: {
+            code: 'WH-FG',
+            type: WarehouseType.FINISHED_GOODS,
+            isActive: true,
+          },
+        });
+        if (!warehouse) {
+          throw new BadRequestException('Finished goods warehouse not found');
+        }
+        for (const item of shipment.salesOrder.items) {
+          await this.inventoryService.issueFinishedGood(
+            {
+              productVariantId: item.productVariantId,
+              warehouseId: warehouse.id,
+              quantity: item.quantity,
+              reference: shipment.code,
+              notes: `صرف شحنة ${shipment.code}`,
+              idempotencyKey: `shipment.ship:${shipment.id}:${item.id}`,
+            },
+            actorId,
+            tx,
+          );
+        }
       }
 
       const updated = await tx.shipment.findUnique({ where: { id } });
