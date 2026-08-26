@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `d815831` — دمج PR #39 لإكمال GF-0019 فوق GF-0018؛ يتضمن أيضًا PR #38 الخارجي لـGF-0020 |
-| فرع العمل الحالي | `docs/post-gf0019-state` — توثيق post-merge |
-| آخر commit في فرع العمل | `d815831` — base verified؛ تحديث post-merge للتوثيق فقط |
-| Pull Request الحالي | لا يوجد؛ فرع post-merge docs قيد الإعداد قبل الرفع |
+| آخر commit على main | `ab8f87d` — آخر main متحقق قبل GF-REMAINING-001 |
+| فرع العمل الحالي | `fix/gf-remaining-001-products-rbac` — إصلاح RBAC والتحقق لمسارات المنتجات |
+| آخر commit في فرع العمل | `eb1e393` — حماية مسارات المنتجات واختبارات RBAC/UUID |
+| Pull Request الحالي | سيُفتح بعد رفع `fix/gf-remaining-001-products-rbac` |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
 | حالة CI على main | PASS — Run `32935090736` على `d815831`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
 | إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | Post-merge verification؛ GF-0019 مكتملة، وGF-0020 الخارجي يحتاج مراجعة مستقلة |
-| المرحلة النشطة | GF-0019 مكتملة؛ GF-0020 — GRN/AP مدمجة خارجيًا وتنتظر تدقيقًا |
+| المهمة النشطة | GF-REMAINING-001 — حماية ProductsController واختبار RBAC وUUID |
+| المرحلة النشطة | GF-REMAINING-001 قيد التنفيذ على فرع مستقل؛ لا تغيير قاعدة بيانات |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-019.md` |
-| Next exact action | تحديث handoff/state post-merge في PR توثيقي مستقل، ثم تدقيق GF-0020 قبل أي توسع محاسبي أو مشتريات جديد |
+| Last handoff | `docs/handoffs/HANDOFF-SYNC-AUDIT.md`؛ handoff GF-REMAINING-001 سيُضاف مع الإصلاح |
+| Next exact action | تشغيل بوابات الجودة وفتح PR لـGF-REMAINING-001، ثم انتظار CI؛ لا يبدأ GF-REMAINING-002 قبل الدمج والتحقق |
 
 ## المهام المكتملة على main
 

@@ -20,8 +20,8 @@
 
 | ID | المهمة | الملفات الأساسية | التبعيات | معيار القبول | الحالة |
 |---|---|---|---|---|---|
-| GF-REMAINING-001 | حماية ProductsController الحساسة واختبار RBAC | `backend/src/modules/products/products.controller.ts`، الاختبارات، `docs/API_CONTRACT.md` | خط الأساس `d15b2ef` | كل مسار تعديل/حذف/BOM يحمل دورًا مناسبًا؛ `401` بلا token و`403` للدور الخطأ ونجاح للدور الصحيح، مع تحقق DTO | ⏳ التالية |
-| GF-REMAINING-002 | إصلاح رصيد المستودع في القراءة والـledger | `backend/src/modules/inventory/**`، اختبارات التكامل، `docs/DATA_AND_MIGRATIONS.md` | GF-0007 وGF-REMAINING-001 | حركات في مستودعين تعطي رصيد كل مستودع بدقة؛ لا كتابة رصيد مباشر؛ اختبار PostgreSQL على CI | 📅 مخططة |
+| GF-REMAINING-001 | حماية ProductsController الحساسة واختبار RBAC | `backend/src/modules/products/products.controller.ts`، الاختبارات، `docs/API_CONTRACT.md` | خط الأساس `ab8f87d` | كل مسار تعديل/حذف/BOM يحمل دورًا مناسبًا؛ `401` بلا token و`403` للدور الخطأ ونجاح للدور الصحيح، مع تحقق DTO | 🟡 منفذة على فرع `fix/gf-remaining-001-products-rbac`؛ تنتظر PR/CI |
+| GF-REMAINING-002 | إصلاح رصيد المستودع في القراءة والـledger | `backend/src/modules/inventory/**`، اختبارات التكامل، `docs/DATA_AND_MIGRATIONS.md` | GF-0007 وGF-REMAINING-001 بعد الدمج والتحقق | حركات في مستودعين تعطي رصيد كل مستودع بدقة؛ لا كتابة رصيد مباشر؛ اختبار PostgreSQL على CI | 📅 مخططة |
 
 ## P1 — المسار التشغيلي والـPilot
 
