@@ -8,7 +8,11 @@ import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 
 describe('PurchasingController', () => {
   let controller: PurchasingController;
-  let service: { createPurchaseOrder: jest.Mock; receiveOrder: jest.Mock };
+  let service: {
+    createPurchaseOrder: jest.Mock;
+    receiveOrder: jest.Mock;
+    returnToSupplier: jest.Mock;
+  };
 
   beforeEach(() => {
     service = {
@@ -16,6 +20,7 @@ describe('PurchasingController', () => {
       receiveOrder: jest
         .fn()
         .mockResolvedValue({ id: 'po-1', status: 'RECEIVED' }),
+      returnToSupplier: jest.fn().mockResolvedValue({ success: true }),
     };
     controller = new PurchasingController(
       service as unknown as PurchasingService,
@@ -44,8 +49,19 @@ describe('PurchasingController', () => {
     expect(service.createPurchaseOrder).toHaveBeenCalledWith(payload, 'user-1');
   });
 
-  it('receive passes id and userId to service', async () => {
-    await controller.receive('po-1', 'user-1');
-    expect(service.receiveOrder).toHaveBeenCalledWith('po-1', 'user-1');
+  it('receive passes id, userId and idempotencyKey to service', async () => {
+    await controller.receive('po-1', 'user-1', 'key-1');
+    expect(service.receiveOrder).toHaveBeenCalledWith('po-1', 'user-1', 'key-1');
+  });
+
+  it('returnItem passes id, dto, userId and idempotencyKey to service', async () => {
+    const dto = { items: [{ purchaseOrderItemId: 'poi-1', quantity: 5 }] };
+    await controller.returnItem('po-1', dto as any, 'user-1', 'key-ret');
+    expect(service.returnToSupplier).toHaveBeenCalledWith(
+      'po-1',
+      dto,
+      'user-1',
+      'key-ret',
+    );
   });
 });

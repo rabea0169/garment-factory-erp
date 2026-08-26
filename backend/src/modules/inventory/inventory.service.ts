@@ -389,6 +389,28 @@ export class InventoryService {
     );
   }
 
+  async return(
+    input: IssueStockInput,
+    userId?: string,
+    tx?: TxClient,
+  ): Promise<StockMovementResult> {
+    await this.assertMaterialWarehouse(input.warehouseId);
+    return this.executeMovement(
+      {
+        type: StockMovementType.RETURN,
+        rawMaterialId: this.requireRawMaterialId(input.rawMaterialId),
+        warehouseId: input.warehouseId,
+        delta: -input.quantity,
+        unsignedQuantity: input.quantity,
+        reference: input.reference,
+        notes: input.notes,
+        idempotencyKey: input.idempotencyKey,
+        userId,
+      },
+      tx,
+    );
+  }
+
   async adjust(
     input: AdjustStockInput,
     userId?: string,
