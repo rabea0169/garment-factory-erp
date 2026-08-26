@@ -40,6 +40,7 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
     expect(service.createVoucher).toHaveBeenCalledWith(
       expect.anything(),
       'user-from-session',
+      undefined,
     );
   });
 

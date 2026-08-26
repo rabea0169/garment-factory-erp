@@ -30,16 +30,28 @@ export class PurchasingService {
       this.prisma.purchaseOrder.findMany({
         skip,
         take: limit,
-        include: { supplier: true, items: true },
+        where: { supplier: { deletedAt: null } },
+        include: {
+          supplier: { select: { id: true, code: true, name: true } },
+          items: true,
+        },
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.purchaseOrder.count(),
+      this.prisma.purchaseOrder.count({
+        where: { supplier: { deletedAt: null } },
+      }),
     ]);
 
     return new PaginatedResult(data, total, page, limit);
   }
 
   async createPurchaseOrder(dto: CreatePurchaseOrderDto, creatorId: string) {
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id: dto.supplierId, isActive: true, deletedAt: null },
+      select: { id: true },
+    });
+    if (!supplier) throw new NotFoundException('المورد غير موجود أو غير نشط');
+
     const totalAmount = dto.items.reduce(
       (sum, item) => sum + item.quantity * item.unitCost,
       0,

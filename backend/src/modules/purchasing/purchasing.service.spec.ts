@@ -15,6 +15,7 @@ describe('PurchasingService (GF-0009)', () => {
     prisma = createPrismaMock();
 
     inventoryService = { receive: jest.fn() };
+    prisma.supplier.findFirst.mockResolvedValue({ id: 'sup-1' });
 
     service = new PurchasingService(
       prisma as unknown as PrismaService,

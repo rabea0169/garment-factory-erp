@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AccountType, VoucherType } from '@prisma/client';
@@ -92,21 +92,17 @@ export class AccountingService {
       counterpartyId?: string;
     },
     createdById: string,
+    idempotencyKey?: string,
   ) {
-    // P0-04: createdById من الجلسة — يُتجاهل أي value من body.
+    if (!Number.isFinite(data.amount) || data.amount <= 0) {
+      throw new BadRequestException('مبلغ السند يجب أن يكون موجبًا');
+    }
 
-    // بناء بنود القيد بناءً على نوع السند.
-    const cashAccount =
-      data.type === VoucherType.RECEIPT
-        ? CHART_OF_ACCOUNTS.CASH
-        : CHART_OF_ACCOUNTS.CASH;
+    const cashAccount = CHART_OF_ACCOUNTS.CASH;
     const counterpartyAccount =
       data.counterpartyType === 'SUPPLIER'
         ? CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE
         : CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE;
-
-    // RECEIPT: مدين CASH (تزيد)، دائن AR (تنقص).
-    // PAYMENT: مدين AP (تزيد)، دائن CASH (تنقص).
     const lines =
       data.type === VoucherType.RECEIPT
         ? [
@@ -125,73 +121,93 @@ export class AccountingService {
               description: data.description,
             },
           ];
-
-    // تحديث Treasury.balance ذريًّا داخل نفس الـ tx.
     const treasuryDelta =
       data.type === VoucherType.RECEIPT ? data.amount : -data.amount;
 
-    // A1/A2: قيد مزدوج ذري + تحديث Treasury.balance.
-    const entry = await this.financial.postJournalEntry(
-      {
-        description: `سند ${
-          data.type === VoucherType.RECEIPT ? 'قبض' : 'صرف'
-        }: ${data.description}`,
-        reference: data.reference,
-        isAuto: true,
-        lines,
-        userId: createdById,
-        treasuryUpdates: [
-          { treasuryId: data.treasuryId, delta: treasuryDelta },
-        ],
-        ...(data.counterpartyType === 'CUSTOMER' && data.counterpartyId
-          ? {
-              customerUpdates: [
-                {
-                  customerId: data.counterpartyId,
-                  delta:
-                    data.type === VoucherType.RECEIPT
-                      ? -data.amount
-                      : data.amount,
-                },
-              ],
-            }
-          : {}),
-        ...(data.counterpartyType === 'SUPPLIER' && data.counterpartyId
-          ? {
-              supplierUpdates: [
-                {
-                  supplierId: data.counterpartyId,
-                  delta:
-                    data.type === VoucherType.PAYMENT
-                      ? -data.amount
-                      : data.amount,
-                },
-              ],
-            }
-          : {}),
-      },
-      createdById,
-    );
-
-    // A3: السند مرتبط بـ journalEntryId — لا أثر مالي خفي.
-    const voucherCode = `VCH-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(4).toString('hex').toUpperCase()}`;
-    return this.prisma.voucher.create({
-      data: {
-        code: voucherCode,
-        type: data.type,
-        amount: data.amount,
-        description: data.description,
-        reference: data.reference,
+    return this.prisma.$transaction(async (tx) => {
+      const entry = await this.financial.postJournalEntryInTx(
+        tx,
+        {
+          description: `سند ${
+            data.type === VoucherType.RECEIPT ? 'قبض' : 'صرف'
+          }: ${data.description}`,
+          reference: data.reference,
+          postingKey: idempotencyKey ? `voucher:${idempotencyKey}` : undefined,
+          isAuto: true,
+          lines,
+          userId: createdById,
+          metadata: {
+            source: 'accounting.voucher',
+            ...(data.counterpartyType && data.counterpartyId
+              ? {
+                  counterpartyType: data.counterpartyType,
+                  counterpartyId: data.counterpartyId,
+                }
+              : {}),
+          },
+          treasuryUpdates: [
+            { treasuryId: data.treasuryId, delta: treasuryDelta },
+          ],
+          ...(data.counterpartyType === 'CUSTOMER' && data.counterpartyId
+            ? {
+                customerUpdates: [
+                  {
+                    customerId: data.counterpartyId,
+                    delta:
+                      data.type === VoucherType.RECEIPT
+                        ? -data.amount
+                        : data.amount,
+                  },
+                ],
+              }
+            : {}),
+          ...(data.counterpartyType === 'SUPPLIER' && data.counterpartyId
+            ? {
+                supplierUpdates: [
+                  {
+                    supplierId: data.counterpartyId,
+                    delta:
+                      data.type === VoucherType.PAYMENT
+                        ? -data.amount
+                        : data.amount,
+                  },
+                ],
+              }
+            : {}),
+        },
         createdById,
-        journalEntryId: entry.entryId,
-        treasuryId: data.treasuryId,
-        counterpartyType: data.counterpartyType ?? null,
-        counterpartyId: data.counterpartyId ?? null,
-      },
-      include: {
-        journalEntry: { select: { code: true, id: true } },
-        treasury: { select: { id: true, name: true } },
-      },
+      );
+
+      const existingVoucher = idempotencyKey
+        ? await tx.voucher.findFirst({
+            where: { journalEntryId: entry.entryId },
+            include: {
+              journalEntry: { select: { code: true, id: true } },
+              treasury: { select: { id: true, name: true } },
+            },
+          })
+        : null;
+      if (existingVoucher) return existingVoucher;
+
+      const voucherCode = `VCH-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(4).toString('hex').toUpperCase()}`;
+      return tx.voucher.create({
+        data: {
+          code: voucherCode,
+          type: data.type,
+          amount: data.amount,
+          description: data.description,
+          reference: data.reference,
+          createdById,
+          journalEntryId: entry.entryId,
+          treasuryId: data.treasuryId,
+          counterpartyType: data.counterpartyType ?? null,
+          counterpartyId: data.counterpartyId ?? null,
+        },
+        include: {
+          journalEntry: { select: { code: true, id: true } },
+          treasury: { select: { id: true, name: true } },
+        },
+      });
     });
   }
 

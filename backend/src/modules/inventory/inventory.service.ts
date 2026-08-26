@@ -451,6 +451,150 @@ export class InventoryService {
 
   // ===================== FINISHED GOODS =====================
 
+  async issueFinishedGood(
+    input: {
+      productVariantId: string;
+      warehouseId: string;
+      quantity: number;
+      reference?: string;
+      notes?: string;
+      idempotencyKey?: string;
+    },
+    userId?: string,
+    externalTx?: TxClient,
+  ): Promise<StockMovementResult> {
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+      throw new BadRequestException(
+        'كمية المنتج التام يجب أن تكون عددًا صحيحًا موجبًا',
+      );
+    }
+    const client = externalTx ?? this.prisma;
+    const warehouse = await client.warehouse.findUnique({
+      where: { id: input.warehouseId },
+    });
+    if (!warehouse) throw new NotFoundException('المخزن غير موجود');
+    if (
+      !warehouse.isActive ||
+      warehouse.type !== WarehouseType.FINISHED_GOODS
+    ) {
+      throw new BadRequestException('الحركة تتطلب مخزن منتج تام نشط');
+    }
+
+    const scope = 'inventory.finished_good_issue';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      productVariantId: input.productVariantId,
+      warehouseId: input.warehouseId,
+      quantity: input.quantity,
+      reference: input.reference ?? null,
+      notes: input.notes ?? null,
+    });
+    if (input.idempotencyKey) {
+      const existing = await client.idempotencyKey.findUnique({
+        where: { key: input.idempotencyKey },
+      });
+      if (existing) {
+        if (existing.scope !== scope || existing.requestHash !== requestHash) {
+          throw new ConflictException('Idempotency-Key مستخدم مع عملية مختلفة');
+        }
+        if (!existing.response)
+          throw new ConflictException('العملية السابقة لم تكتمل بعد');
+        return {
+          ...(existing.response as unknown as Omit<
+            StockMovementResult,
+            'replayed'
+          >),
+          replayed: true,
+        };
+      }
+    }
+
+    const execute = async (tx: TxClient): Promise<StockMovementResult> => {
+      const idempotencyKeyId = input.idempotencyKey
+        ? (
+            await tx.idempotencyKey.create({
+              data: { key: input.idempotencyKey, scope, requestHash },
+              select: { id: true },
+            })
+          ).id
+        : undefined;
+      const stock = await tx.finishedGoodStock.findUnique({
+        where: {
+          warehouseId_productVariantId: {
+            warehouseId: input.warehouseId,
+            productVariantId: input.productVariantId,
+          },
+        },
+        select: { id: true, quantity: true, unitCost: true },
+      });
+      if (!stock)
+        throw new NotFoundException(
+          'رصيد المنتج التام غير موجود في المخزن المحدد',
+        );
+      const updated = await tx.finishedGoodStock.updateMany({
+        where: { id: stock.id, quantity: { gte: input.quantity } },
+        data: { quantity: { decrement: input.quantity } },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException('المخزون التام غير كافٍ أو تغير بالتزامن');
+      }
+      const balanceAfter = stock.quantity - input.quantity;
+      const entry = await tx.stockLedgerEntry.create({
+        data: {
+          entryCode: generateEntryCode(),
+          type: StockMovementType.ISSUE,
+          warehouseId: input.warehouseId,
+          productVariantId: input.productVariantId,
+          quantityDelta: -input.quantity,
+          balanceAfter,
+          unitCost: stock.unitCost,
+          totalValue: stock.unitCost.mul(input.quantity),
+          reference: input.reference,
+          notes: input.notes,
+          idempotencyKeyId,
+          createdById: userId,
+        },
+        select: { entryCode: true, createdAt: true },
+      });
+      const response = {
+        replayed: false,
+        entryCode: entry.entryCode,
+        type: StockMovementType.ISSUE,
+        rawMaterialId: '',
+        warehouseId: input.warehouseId,
+        quantityDelta: -input.quantity,
+        balanceAfter,
+        unitCost: stock.unitCost.toNumber(),
+        totalValue: stock.unitCost.mul(input.quantity).toNumber(),
+        costPerUnitAfter: null,
+        createdAt: entry.createdAt.toISOString(),
+      } satisfies StockMovementResult;
+      if (input.idempotencyKey) {
+        await tx.idempotencyKey.update({
+          where: { key: input.idempotencyKey },
+          data: { response },
+        });
+      }
+      return response;
+    };
+
+    try {
+      return await (externalTx
+        ? execute(externalTx)
+        : this.prisma.$transaction(execute));
+    } catch (error) {
+      if (input.idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replay = await this.tryReplay(
+          input.idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
+  }
+
   async getAllFinishedGoods(pagination: PaginationDto) {
     const page = pagination.page || 1;
     const limit = pagination.limit || 20;

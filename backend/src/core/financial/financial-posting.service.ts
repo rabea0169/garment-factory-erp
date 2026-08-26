@@ -1,9 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
@@ -41,6 +42,8 @@ export interface PostJournalEntryInput {
   treasuryUpdates?: { treasuryId: string; delta: number }[];
   customerUpdates?: { customerId: string; delta: number }[];
   supplierUpdates?: { supplierId: string; delta: number }[];
+  metadata?: Prisma.InputJsonValue;
+  postingKey?: string;
 }
 
 export interface JournalEntryResult {
@@ -78,6 +81,49 @@ export class FinancialPostingService {
     input: PostJournalEntryInput,
     userId?: string,
   ): Promise<JournalEntryResult> {
+    const postingHash = input.postingKey
+      ? createHash('sha256')
+          .update(
+            JSON.stringify({
+              description: input.description,
+              reference: input.reference ?? null,
+              isAuto: input.isAuto ?? false,
+              lines: input.lines,
+              treasuryUpdates: input.treasuryUpdates ?? [],
+              customerUpdates: input.customerUpdates ?? [],
+              supplierUpdates: input.supplierUpdates ?? [],
+              metadata: input.metadata ?? null,
+            }),
+          )
+          .digest('hex')
+      : undefined;
+
+    if (input.postingKey) {
+      const existing = await tx.journalEntry.findUnique({
+        where: { postingKey: input.postingKey },
+        include: { lines: true },
+      });
+      if (existing) {
+        if (existing.postingHash !== postingHash) {
+          throw new ConflictException('posting key مستخدم مع محتوى مالي مختلف');
+        }
+        return {
+          entryId: existing.id,
+          entryCode: existing.code,
+          totalDebit: existing.lines.reduce(
+            (sum, line) => sum + Number(line.amount),
+            0,
+          ),
+          totalCredit: existing.lines.reduce(
+            (sum, line) => sum + Number(line.amount),
+            0,
+          ),
+          linesCount: existing.lines.length,
+          createdAt: existing.createdAt,
+        };
+      }
+    }
+
     // (1) تحققات مدخلية صارمة.
     if (!input.lines || input.lines.length === 0) {
       throw new BadRequestException(
@@ -187,7 +233,10 @@ export class FinancialPostingService {
         description: input.description,
         reference: input.reference ?? null,
         isAuto: input.isAuto ?? false,
+        metadata: input.metadata ?? undefined,
         createdById: userId ?? null,
+        postingKey: input.postingKey ?? null,
+        postingHash: postingHash ?? null,
         lines: {
           create: input.lines.map((line) => ({
             debitAccountId: line.debitAccountId,
@@ -278,70 +327,73 @@ export class FinancialPostingService {
     userId?: string,
     reversalDescription?: string,
   ): Promise<ReversalResult> {
-    // جلب القيد الأصلي + بنوده.
-    const original = await this.prisma.journalEntry.findUnique({
-      where: { id: originalEntryId },
-      include: { lines: true },
-    });
-    if (!original) {
-      throw new NotFoundException(`القيد ${originalEntryId} غير موجود`);
-    }
-    if (original.lines.length === 0) {
-      throw new BadRequestException(
-        `القيد ${originalEntryId} لا يحوي بنودًا — لا يمكن عكسه`,
-      );
-    }
-    // A9: رفض عكس قيد معكوس بالفعل — يمنع العكس المزدوج (Double reversal).
-    if (original.isReversed) {
-      throw new BadRequestException(
-        `القيد ${original.code} معكوس بالفعل — لا يمكن عكسه مرتين. ` +
-          `راجع القيد العكسي المرتبط عبر reversalOfId.`,
-      );
-    }
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const original = await tx.journalEntry.findUnique({
+        where: { id: originalEntryId },
+        include: { lines: true },
+      });
+      if (!original) {
+        throw new NotFoundException(`القيد ${originalEntryId} غير موجود`);
+      }
+      if (original.lines.length === 0) {
+        throw new BadRequestException(
+          `القيد ${originalEntryId} لا يحوي بنودًا — لا يمكن عكسه`,
+        );
+      }
+      const claim = await tx.journalEntry.updateMany({
+        where: { id: original.id, isReversed: false },
+        data: {
+          isReversed: true,
+          reversedById: userId,
+          reversedAt: new Date(),
+        },
+      });
+      if (claim.count !== 1) {
+        throw new BadRequestException(
+          `القيد ${original.code} معكوس بالفعل — لا يمكن عكسه مرتين.`,
+        );
+      }
 
-    const reversedLines: JournalLineInput[] = reverseLines(
-      original.lines.map((l) => ({
-        debitAccountId: l.debitAccountId,
-        creditAccountId: l.creditAccountId,
-        amount: Number(l.amount),
-        description: l.description ?? undefined,
-      })),
-    );
-
-    const reversalEntry = await this.postJournalEntry(
-      {
-        description: reversalDescription ?? `عكس قيد ${original.code}`,
-        reference: `REVERSAL-OF-${original.code}`,
-        isAuto: true,
-        lines: reversedLines,
+      const metadata = asPostingMetadata(original.metadata);
+      const reversedLines = reverseLines(
+        original.lines.map((l) => ({
+          debitAccountId: l.debitAccountId,
+          creditAccountId: l.creditAccountId,
+          amount: Number(l.amount),
+          description: l.description ?? undefined,
+        })),
+      );
+      const reversalEntry = await this.postJournalEntryInTx(
+        tx,
+        {
+          description: reversalDescription ?? `عكس قيد ${original.code}`,
+          reference: `REVERSAL-OF-${original.code}`,
+          isAuto: true,
+          lines: reversedLines,
+          userId,
+          metadata: {
+            source: 'accounting.reversal',
+            reversalOfId: original.id,
+            ...(metadata ?? {}),
+          },
+          treasuryUpdates: invertUpdates(metadata?.treasuryUpdates),
+          customerUpdates: invertUpdates(metadata?.customerUpdates),
+          supplierUpdates: invertUpdates(metadata?.supplierUpdates),
+        },
         userId,
-      },
-      userId,
-    );
+      );
 
-    // A9: ربط القيد العكسي بالأصلي + تعليم الأصلي كمعكوس.
-    // ملاحظة: هذه تحديثات منفصلة عن $transaction الخاص بـ postJournalEntry.
-    // فشلها يترك القيد العكسي موجودًا لكن بلا ربط — يُكتشف لاحقًا عبر
-    // journal_entries WHERE reversalOfId IS NULL AND reference LIKE 'REVERSAL-OF-%'.
-    await this.prisma.journalEntry.update({
-      where: { id: reversalEntry.entryId },
-      data: { reversalOfId: original.id },
+      await tx.journalEntry.update({
+        where: { id: reversalEntry.entryId },
+        data: { reversalOfId: original.id },
+      });
+
+      return {
+        ...reversalEntry,
+        reversedEntryId: original.id,
+        reversedEntryCode: original.code,
+      };
     });
-
-    await this.prisma.journalEntry.update({
-      where: { id: original.id },
-      data: {
-        isReversed: true,
-        reversedById: userId,
-        reversedAt: new Date(),
-      },
-    });
-
-    return {
-      ...reversalEntry,
-      reversedEntryId: original.id,
-      reversedEntryCode: original.code,
-    };
   }
 }
 
@@ -373,6 +425,26 @@ function generateJournalEntryCode(): string {
 export interface ReversalResult extends JournalEntryResult {
   reversedEntryId: string;
   reversedEntryCode: string;
+}
+
+type PostingMetadata = {
+  treasuryUpdates?: { treasuryId: string; delta: number }[];
+  customerUpdates?: { customerId: string; delta: number }[];
+  supplierUpdates?: { supplierId: string; delta: number }[];
+};
+
+function asPostingMetadata(
+  metadata: Prisma.JsonValue | null,
+): PostingMetadata | undefined {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata))
+    return undefined;
+  return metadata;
+}
+
+function invertUpdates<T extends { delta: number }>(
+  updates: T[] | undefined,
+): T[] | undefined {
+  return updates?.map((update) => ({ ...update, delta: -update.delta }));
 }
 
 // Helper: عكس بنود القيد الأصلي بقلب debit/credit.

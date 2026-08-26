@@ -70,10 +70,11 @@ describe('Auth guard (e2e) — GF-0002', () => {
   let jwtService: JwtService;
 
   const prismaFns = {
+    $transaction: jest.fn(),
     user: { findUnique: jest.fn() },
     salesOrder: { findMany: jest.fn(), count: jest.fn() },
     account: { create: jest.fn() },
-    voucher: { create: jest.fn() },
+    voucher: { create: jest.fn(), findFirst: jest.fn() },
     workerAdvance: { create: jest.fn() },
   };
 
@@ -87,11 +88,24 @@ describe('Auth guard (e2e) — GF-0002', () => {
       linesCount: 1,
       createdAt: new Date('2026-08-27T00:00:00Z'),
     }),
-    postJournalEntryInTx: jest.fn(),
+    postJournalEntryInTx: jest.fn().mockResolvedValue({
+      entryId: 'je-mock-001',
+      entryCode: 'JE-20260827-AAAAAAAA',
+      totalDebit: 100,
+      totalCredit: 100,
+      linesCount: 1,
+      createdAt: new Date('2026-08-27T00:00:00Z'),
+    }),
     reverseJournalEntry: jest.fn(),
   };
 
   beforeAll(async () => {
+    prismaFns.$transaction.mockImplementation(
+      (callback: (tx: typeof prismaFns) => Promise<unknown>) => callback(prismaFns),
+    );
+    prismaFns.voucher.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'voucher-mock-001', ...data }),
+    );
     prismaFns.user.findUnique.mockImplementation(
       ({ where }: { where: { id: string } }) =>
         Promise.resolve(users.find((u) => u.id === where.id) ?? null),

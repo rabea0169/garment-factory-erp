@@ -283,6 +283,12 @@ async function main() {
       type: AccountType.REVENUE,
     },
     {
+      id: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+      code: '5100',
+      name: 'تكلفة البضاعة المباعة',
+      type: AccountType.EXPENSE,
+    },
+    {
       id: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
       code: '5000',
       name: 'مصروف عام',
