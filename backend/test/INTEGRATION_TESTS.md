@@ -28,6 +28,8 @@ npm run test:integration:required
 
 يضيف `dashboard.integration-spec.ts` سيناريو GF-REMAINING-004: إنشاء طلب بيع وإنتاج عامل في يوم محدد، ثم التحقق من أن `/dashboard/stats` service يعيد المبيعات الشهرية والإنتاج اليومي وأفضل عامل من PostgreSQL ضمن `from/to`، مع مؤشرات المخزون ورفض الفترة المعكوسة في طبقة DTO/service.
 
+يثبت `production-workflow.integration-spec.ts` أن طلبين متزامنين متطابقين لتسجيل مخرج مرحلة واحد يعيدان نتيجة أصلية وreplay، مع إكمال واحد وActivityLog واحد فقط؛ القفل الصفّي يعالج السباق الحقيقي على PostgreSQL.
+
 ## GF-REMAINING-006 — بوابات PostgreSQL وRBAC
 
 يضيف الإصلاح بوابة `integration-gate.ts` مركزية مرتبطة بإعداد Jest، وأمراً صارماً `test:integration:required` في `package.json`، ويشغله workflow CI مع `GF_REQUIRE_INTEGRATION=1`. كما تغطي E2E حالات 401 لمسار Dashboard واستلام المشتريات و403 لمنع VIEWER من إنشاء إذن استلام.

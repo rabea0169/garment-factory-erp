@@ -5,7 +5,7 @@
 - **Task ID:** GF-REMAINING-006
 - **Base:** `origin/main@1bc1fc4` after merge of PR #55.
 - **Scope:** منع تجاوز integration tests بصمت، وإضافة تغطية RBAC للمسارات الجديدة في Dashboard واستلام المشتريات.
-- **Status:** implementation complete on branch; local gates pass; PostgreSQL CI and RBAC gates passed on PR #56.
+- **Status:** production stage-output concurrency regression fixed locally; full local gates pass; new PostgreSQL CI run required before merge.
 
 ## 2. Changes
 
@@ -14,6 +14,8 @@
 أضيف الأمر `npm run test:integration:required`، وتم تحويل workflow إلى استخدامه بعد تشغيل PostgreSQL 16 و`prisma migrate deploy`. بقي الأمر `npm run test:integration` اختيارياً للتطوير المحلي الآمن عندما لا تتوفر قاعدة بيانات.
 
 أضيفت حالات E2E لمسار `GET /dashboard/stats` ومسار إنشاء receipt للمشتريات: بلا توكن تعاد 401، وVIEWER ممنوع من إنشاء receipt وتعاد 403.
+
+أثناء أول CI للمرحلة، كشف الاختبار الحقيقي على PostgreSQL أن طلبين متزامنين متطابقين لـ`recordStageOutput` قد يقرأان المرحلة كـ`IN_PROGRESS` ثم يفشل أحدهما بـ`Stage run is already completed` بدلاً من replay. أضيف قفل صف `ProductionStageRun` وإعادة فحص مفتاح idempotency بعد القفل؛ بذلك ينتظر الطلب الخاسر ثم يعيد النتيجة المخزنة بلا إكمال أو ActivityLog إضافي.
 
 ## 3. Verification
 
@@ -24,13 +26,15 @@
 | Lint | PASS | `npm run lint` |
 | Build | PASS | `npm run build` |
 | E2E | PASS | 3 suites / 63 tests |
+| Production unit tests after concurrency fix | PASS | 3 suites / 18 tests | `recordStageOutput` behavior remains type-safe |
+| Full unit tests after concurrency fix | PASS | 32 suites / 192 tests | no regression in backend unit suite |
 | Required integration without DB | EXPECTED FAIL | explicit `GF_REQUIRE_INTEGRATION` guard message; proves no silent skip |
-| PostgreSQL integration | PASS | CI run `32950325106`; required command executed against PostgreSQL 16 |
-| Secret scan | PASS | CI run `32950325106`; no hardcoded secret detected |
+| PostgreSQL integration | FAILED then fixed locally | CI run `32950566598` exposed stage-output race; row-lock fix added; rerun required |
+| Secret scan | PASS | CI run `32950566598`; no hardcoded secret detected |
 
 ## 4. Acceptance criteria
 
-يجب أن يمر CI على PostgreSQL 16 من الصفر، بما في ذلك `prisma migrate deploy` و`npm run test:integration:required`، وأن تنجح كل اختبارات RBAC الجديدة. يجب ألا يعتمد نجاح workflow على suite متجاوزة بسبب غياب URL.
+يجب أن يمر CI على PostgreSQL 16 من الصفر، بما في ذلك `prisma migrate deploy` و`npm run test:integration:required`، وأن تنجح كل اختبارات RBAC الجديدة واختبار الطلبين المتزامنين لـ`recordStageOutput`. يجب ألا يعتمد نجاح workflow على suite متجاوزة بسبب غياب URL.
 
 ## 5. Known limitations
 
