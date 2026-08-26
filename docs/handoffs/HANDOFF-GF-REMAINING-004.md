@@ -47,10 +47,10 @@
 | Build | `npm run build` | PASS | Nest build ناجح |
 | Unit tests | `npm test -- --runInBand` | PASS | 32 suites / 191 tests |
 | E2E tests | `npm run test:e2e -- --runInBand` | PASS | 3 suites / 60 tests |
-| Integration tests | `npm run test:integration -- --runInBand` | SKIPPED LOCALLY | 8 suites / 30 tests؛ لا `GF_INTEGRATION_DATABASE_URL` |
-| Flutter pub/analyze/test | CI run `32944708223` | PASS | pub get, analyze, and test passed on CI |
+| Integration tests | `npm run test:integration -- --runInBand` | SKIPPED LOCALLY | 8 suites / 30 tests؛ لا `GF_INTEGRATION_DATABASE_URL`؛ CI يثبت suite كاملة |
+| Flutter pub/analyze/test | CI run `32944897596` | PASS | pub get, analyze, and test passed on CI |
 | Diff check | `git diff --check` | PASS | no whitespace errors |
-| Secret scan | CI run `32944708223` | PASS | no hardcoded secret detected |
+| Secret scan | CI run `32944897596` | PASS | no hardcoded secret detected |
 
 ## 6. Known limitations and risks
 

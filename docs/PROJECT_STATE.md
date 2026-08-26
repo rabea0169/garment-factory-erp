@@ -13,7 +13,7 @@
 | آخر commit في فرع العمل | `a87889a` — Dashboard حقيقي وReports mobile؛ CI كامل أخضر |
 | Pull Request الحالي | [PR #51](https://github.com/rabea0169/garment-factory-erp/pull/51) — CI كامل أخضر؛ ينتظر الدمج |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
-| حالة CI على main | `main@3d28b0f` بعد دمج PR #50؛ PR #51 CI run `32944708223` أخضر وينتظر الدمج |
+| حالة CI على main | `main@3d28b0f` بعد دمج PR #50؛ PR #51 CI run `32944897596` أخضر وينتظر الدمج |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ Dashboard لا يضيف migration |
 | إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
