@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `dd200c5` — دمج PR #51 وإغلاق GF-REMAINING-004؛ CI main run `32946638174` أخضر |
-| فرع العمل الحالي | `fix/gf-remaining-005-purchasing-financial` — ربط الاستلام بالترحيل المالي الذري |
-| آخر commit في فرع العمل | `8a1bf02` — ربط الاستلام بالقيد المالي الذري واختبارات PostgreSQL؛ CI أخضر |
-| Pull Request الحالي | [PR #55](https://github.com/rabea0169/garment-factory-erp/pull/55) — CI كامل أخضر؛ ينتظر الدمج |
-| آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
-| حالة CI على main | `main@dd200c5` بعد دمج PR #51؛ CI main run `32946638174` أخضر |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ GF5 لا يضيف migration |
-| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
+| آخر commit على main | `e32f745` — دمج PR #58 وتوثيق دفع الرواتب بعد PR #57؛ CI main run `32950963418` أخضر |
+| فرع العمل الحالي | `docs/post-merge-release-state` — تحديث الحالة بعد الدمج |
+| آخر commit في فرع العمل | `e32f745` — الحالة الحالية مطابقة لـorigin/main |
+| Pull Requests الأخيرة | PR #55 للمشتريات، PR #57 لدفع الرواتب وحماية الأرصدة، PR #58 لتوثيق API؛ كلها مدمجة |
+| آخر مرحلة مكتملة بالكامل على main | GF-REMAINING-005 + payroll payment؛ CI النهائي أخضر |
+| حالة CI على main | `main@e32f745` بعد دمج PR #58؛ CI run `32950963418` أخضر |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ PR #57 لا يضيف migration جديدة |
+| إصدار API | `1.1`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` وreceipt/AP idempotency وPOD وfiscal periods/journal entries |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-005 — ربط استلام المشتريات بالترحيل المالي |
-| المرحلة النشطة | GF-REMAINING-005 مكتملة على فرع مستقل؛ PR #55 وCI أخضران؛ الدمج فقط بتفويض صريح |
+| المهمة النشطة | GF-REMAINING-006 — توسيع اختبارات PostgreSQL وUAT وRelease Readiness |
+| المرحلة النشطة | GF-REMAINING-006 بعد دمج PR #57/#58؛ لا يزال Production No-Go حتى حل Prisma Compute/npm audit وBackup/Restore/UAT |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
-| Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
+| Security blockers | لا P0/P1 أمني جديد في الإصلاحات المدمجة؛ Secret Scan وCI PASS، لكن Prisma Compute الخارجي وnpm audit وRelease gates ما زالت مفتوحة |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-005.md` |
-| Next exact action | دمج PR #55 بتفويض صريح ثم التحقق من main CI؛ بعدها يبدأ GF-REMAINING-006 |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-005.md`؛ PR #57/#58 مدمجان ودمجتهما موثق في GitHub |
+| Next exact action | حل Prisma Compute/npm audit، ثم تنفيذ Backup/Restore Drill وUAT وGo/No-Go قبل Production |
 
 ## المهام المكتملة على main
 
@@ -45,7 +45,7 @@
 | GF-0017 | shipment lifecycle وproof of delivery وactor audit | مكتملة ومُدمجة عبر PR #29 و#33؛ CI PostgreSQL أخضر |
 | GF-0018 | fiscal periods وقيود متعددة البنود ومنع الترحيل المغلق | مكتملة ومُدمجة عبر PR #32 و#36؛ CI PostgreSQL أخضر |
 | GF-0019 | صرف المنتج التام عند SHIPPED وحماية إنشاء الشحنة من التكرار | مكتملة ومُدمجة عبر PR #35 و#39؛ migration وCI PostgreSQL أخضران |
-| GF-0020 | GRN/AP — ترحيل إيصالات الشراء إلى الحسابات الدائنة | مدمجة خارجيًا عبر PR #38؛ لم تُراجع ضمن هذا التسليم |
+| GF-0020 | GRN/AP — ترحيل إيصالات الشراء إلى الحسابات الدائنة | مكتملة وموجودة على main عبر PR #55 |
 
 ## GF-0014 — الحالة التفصيلية
 
@@ -87,4 +87,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `docs/post-gf0019-state` فوق `main@d815831` بعد دمج PR #39. Run `32935090736` أخضر وحقق migration deploy وPostgreSQL integration وBackend وFlutter وSecret Scan. GF-0019 مكتملة ضمن هذا النطاق، بينما PR #38 الخاص بـGF-0020 مدمج خارجيًا ويحتاج تدقيقًا مستقلاً.
+تم تحديث هذا الملف على فرع `docs/post-merge-release-state` فوق `main@e32f745` بعد دمج PR #57 وPR #58. Run `32950963418` أخضر وحقق Backend وPostgreSQL integration وE2E وFlutter وSecret Scan. ما زال Production No-Go حتى إغلاق Prisma Compute/npm audit وBackup/Restore/UAT.
