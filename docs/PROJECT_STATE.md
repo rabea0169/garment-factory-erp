@@ -10,7 +10,7 @@
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `90c37f6` — دمج PR #24، ويتضمن جزء attendance من GF-0015 |
 | فرع العمل الحالي | `phase4/gf0014-quality-waste-v2` |
-| آخر commit في فرع العمل | `2a56602` — GF-0014 quality/waste/KPI بعد rebase على main الأحدث |
+| آخر commit في فرع العمل | `89e7f5c` — GF-0014 implementation مع state/handoff بعد rebase على main الأحدث |
 | Pull Request الحالي | لا يوجد بعد؛ الفرع جاهز للرفع وفتح PR مستقل |
 | آخر مرحلة مكتملة بالكامل على main | GF-0013؛ GF-0015 بدأ جزئيًا فقط عبر attendance endpoint في PR #24 |
 | حالة CI على main | يجب إعادة التحقق بعد رفع GF-0014؛ آخر main مرجعي هو `90c37f6` |
@@ -82,4 +82,4 @@
 
 ## آخر تحديث توثيقي
 
-تمت مزامنة هذا الملف على فرع `phase4/gf0014-quality-waste-v2` بعد rebase على `origin/main@90c37f6` وcommit التنفيذ `2a56602`. يجب إضافة رقم PR وmerge SHA ونتيجة CI بعد الرفع والدمج، وعدم اعتبار هذه الحالة نهائية قبل ذلك.
+تمت مزامنة هذا الملف على فرع `phase4/gf0014-quality-waste-v2` بعد rebase على `origin/main@90c37f6` وcommit التنفيذ `2a56602` وcommit التوثيق `89e7f5c`. يجب إضافة رقم PR وmerge SHA ونتيجة CI بعد الرفع والدمج، وعدم اعتبار هذه الحالة نهائية قبل ذلك.
