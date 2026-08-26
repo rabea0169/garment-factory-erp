@@ -103,77 +103,64 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     );
   });
 
-  it('تحديث حالة غير مكتملة: يحدّث فقط دون لمس المنتج التام ولا أحداث إكمال', async () => {
+  it('تحديث حالة مسموحة (CANCELLED): يحدّث ويطلق حدث الإلغاء', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.PLANNED,
+    });
     prisma.workOrder.update.mockResolvedValue({
       id: 'wo-1',
-      status: 'SEWING',
-      productId: 'p-1',
-      quantity: 100,
+      status: WorkOrderStatus.CANCELLED,
     });
 
-    await service.updateOrderStatus('wo-1', WorkOrderStatus.SEWING);
+    await service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED);
 
     expect(prisma.workOrder.update).toHaveBeenCalledWith({
       where: { id: 'wo-1' },
-      data: { status: 'SEWING' },
+      data: { status: WorkOrderStatus.CANCELLED },
     });
-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();
-    expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
+      EVENTS.WORK_ORDER_CANCELLED,
+      expect.any(Object),
+    );
   });
 
-  it('الإكمال: يسحب الخامات ويستلم المنتج التام داخل transaction', async () => {
-    // Mock the updated logic for GF-0008
-    prisma.workOrder.findUnique = jest.fn().mockResolvedValue({
+  it('يمنع الانتقال المباشر إلى COMPLETED', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
       id: 'wo-1',
-      status: 'SEWING',
-      productVariantId: 'v-1',
-      quantity: 100,
-      code: 'WO-1',
-      bomVersion: { lines: [] },
-    });
-    prisma.warehouse = {
-      findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }),
-    } as unknown as typeof prisma.warehouse;
-    prisma.workOrder.update.mockResolvedValue({
-      id: 'wo-1',
-      status: 'COMPLETED',
-      productVariantId: 'v-1',
-      quantity: 100,
-    });
-    prisma.$transaction.mockImplementation(
-      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
-    );
-    inventoryService.receiveFinishedGood.mockResolvedValue({
-      replayed: false,
-      entryCode: 'SLE-1',
-      type: 'RECEIVE',
-      rawMaterialId: '',
-      warehouseId: 'wh-1',
-      quantityDelta: 100,
-      balanceAfter: 100,
-      unitCost: 0,
-      totalValue: 0,
-      costPerUnitAfter: 0,
-      createdAt: new Date().toISOString(),
+      status: WorkOrderStatus.PLANNED,
     });
 
-    const result = await service.updateOrderStatus(
-      'wo-1',
-      WorkOrderStatus.COMPLETED,
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.COMPLETED),
+    ).rejects.toThrow(
+      'Direct completion is disabled. Use ProductionWorkflowService stages (PACKING) to complete production.',
     );
+  });
 
-    expect(result.status).toBe('COMPLETED');
-    expect(prisma.$transaction).toHaveBeenCalled();
-    expect(inventoryService.receiveFinishedGood).toHaveBeenCalledWith(
-      expect.objectContaining({
-        productVariantId: 'v-1',
-        warehouseId: 'wh-1',
-        quantity: 100,
-      }),
-      undefined,
-      prisma,
+  it('يمنع الانتقال المباشر إلى حالات الـ workflow (مثل SEWING)', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.PLANNED,
+    });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.SEWING),
+    ).rejects.toThrow(
+      'Direct transition to SEWING is disabled. Use ProductionWorkflowService.transitionStage instead.',
     );
-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();
-    expect(prisma.finishedGood.update).not.toHaveBeenCalled();
+  });
+
+  it('يمنع تعديل أمر تشغيل مكتمل (Immutability)', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.COMPLETED,
+    });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED),
+    ).rejects.toThrow(
+      'Completed work orders are immutable. Use approved reversal workflows if needed.',
+    );
   });
 });

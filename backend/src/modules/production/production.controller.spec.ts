@@ -188,12 +188,15 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
     ]);
   });
 
-  it('تحديث الحالة legacy مقيّد بـ PRODUCTION_MANAGER فقط', () => {
+  it('تحديث الحالة legacy مقيّد بـ PRODUCTION_MANAGER و GENERAL_MANAGER', () => {
     const roles = getMethodMetadata<UserRole[]>(
       ROLES_KEY,
       ProductionController.prototype,
       'updateStatus',
     );
-    expect(roles).toEqual([UserRole.PRODUCTION_MANAGER]);
+    expect(roles).toEqual([
+      UserRole.PRODUCTION_MANAGER,
+      UserRole.GENERAL_MANAGER,
+    ]);
   });
 });
