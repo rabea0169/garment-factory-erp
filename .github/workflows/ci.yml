@@ -35,7 +35,7 @@ jobs:
       JWT_SECRET: ci-test-secret-value-with-at-least-32-chars
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garment_erp
       GF_INTEGRATION_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garment_erp
-      GF_REQUIRE_INTEGRATION: '1'
+      GF_REQUIRE_INTEGRATION: "1"
 
     steps:
       - name: Checkout
@@ -138,3 +138,85 @@ jobs:
       - run: flutter pub get
       - run: flutter analyze
       - run: flutter test
+
+  performance:
+    name: Performance — Dashboard baseline
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: garment_erp
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d garment_erp"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    defaults:
+      run:
+        working-directory: backend
+    env:
+      NODE_ENV: test
+      JWT_SECRET: ci-performance-secret-value-with-at-least-32-chars
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/garment_erp
+      SEED_ADMIN_PASSWORD: ci-performance-password
+      DB_POOL_MAX: "20"
+      PERF_LOGIN_EMAIL: admin@factory.com
+      PERF_LOGIN_PASSWORD: ci-performance-password
+      PERF_REQUESTS: "120"
+      PERF_CONCURRENCY: "20"
+      PERF_WARMUP: "10"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Prisma generate
+        run: npx prisma generate
+      - name: Prisma migrate deploy
+        run: npx prisma migrate deploy
+      - name: Seed disposable benchmark database
+        run: npx prisma db seed
+      - name: Build backend
+        run: npm run build
+      - name: Start backend
+        run: |
+          npm run start:prod > /tmp/garment-erp-performance.log 2>&1 &
+          echo $! > /tmp/garment-erp-performance.pid
+      - name: Wait for readiness
+        run: |
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:3000/health/ready >/tmp/garment-erp-readiness.json; then
+              cat /tmp/garment-erp-readiness.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/garment-erp-performance.log
+          exit 1
+      - name: Run repeatable performance benchmark
+        run: npm run test:performance
+      - name: Upload performance results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gf7-dashboard-performance-${{ github.sha }}
+          path: backend/test/performance/results/dashboard-load.json
+          if-no-files-found: warn
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -f /tmp/garment-erp-performance.pid ]; then
+            kill "$(cat /tmp/garment-erp-performance.pid)" || true
+          fi
+          cat /tmp/garment-erp-performance.log || true
