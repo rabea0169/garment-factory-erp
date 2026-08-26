@@ -225,7 +225,7 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
       returnKey,
     );
 
-    expect(replay).toEqual(first);
+    expect(replay).toMatchObject({ ...first, replayed: true });
     expect(await prisma.purchaseReceipt.count()).toBe(1);
     expect(
       await prisma.stockLedgerEntry.count({
