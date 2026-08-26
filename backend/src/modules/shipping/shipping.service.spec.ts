@@ -1,3 +1,5 @@
+import { BadRequestException } from '@nestjs/common';
+import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { ShippingService } from './shipping.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
@@ -28,6 +30,10 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
   });
 
   it('ينشئ شحنة بكود SHP-* ويحفظ بياناتها (حالة PREPARING الافتراضية من المخطط)', async () => {
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.CONFIRMED,
+    });
     prisma.shipment.create.mockImplementation(({ data }) =>
       Promise.resolve({ id: 'sh-2', ...data }),
     );
@@ -47,5 +53,47 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
         trackingNumber: 'TRK-99',
       },
     });
+  });
+
+  it('يرفض إنشاء شحنة لأمر غير مؤكد', async () => {
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.DRAFT,
+    });
+
+    await expect(
+      service.createShipment({ salesOrderId: 'so-1' }),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.shipment.create).not.toHaveBeenCalled();
+  });
+
+  it('يسمح بانتقال PREPARING إلى SHIPPED ويضع shippedAt', async () => {
+    prisma.shipment.findUnique.mockResolvedValue({
+      id: 'sh-1',
+      status: ShipmentStatus.PREPARING,
+    });
+    prisma.shipment.update.mockResolvedValue({
+      id: 'sh-1',
+      status: ShipmentStatus.SHIPPED,
+    });
+
+    await service.updateShipmentStatus('sh-1', ShipmentStatus.SHIPPED);
+
+    expect(prisma.shipment.update).toHaveBeenCalledWith({
+      where: { id: 'sh-1' },
+      data: { status: ShipmentStatus.SHIPPED, shippedAt: expect.any(Date) },
+    });
+  });
+
+  it('يرفض انتقالًا غير منطقي في حالة الشحنة', async () => {
+    prisma.shipment.findUnique.mockResolvedValue({
+      id: 'sh-1',
+      status: ShipmentStatus.PREPARING,
+    });
+
+    await expect(
+      service.updateShipmentStatus('sh-1', ShipmentStatus.DELIVERED),
+    ).rejects.toThrow(BadRequestException);
+    expect(prisma.shipment.update).not.toHaveBeenCalled();
   });
 });
