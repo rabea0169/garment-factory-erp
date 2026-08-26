@@ -8,6 +8,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
+import { CreatePurchaseReturnDto } from './dto/create-purchase-return.dto';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -277,7 +278,7 @@ export class PurchasingService {
     }
   }
 
-  async receiveOrder(orderId: string, userId: string) {
+  async receiveOrder(orderId: string, userId: string, idempotencyKey?: string) {
     const order = await this.prisma.purchaseOrder.findUnique({
       where: { id: orderId },
       include: { items: true },
@@ -287,89 +288,228 @@ export class PurchasingService {
     if (order.status === PurchaseOrderStatus.RECEIVED) {
       throw new BadRequestException('Order is already received');
     }
-    if (order.status === PurchaseOrderStatus.CANCELLED) {
-      throw new BadRequestException('Cannot receive a cancelled order');
+
+    // حساب الكميات المتبقية للاستلام
+    const existingReceipts = await this.prisma.purchaseReceiptItem.findMany({
+      where: { purchaseOrderItemId: { in: order.items.map((i) => i.id) } },
+      select: { purchaseOrderItemId: true, quantity: true },
+    });
+
+    const receivedMap = new Map<string, number>();
+    for (const r of existingReceipts) {
+      receivedMap.set(
+        r.purchaseOrderItemId,
+        (receivedMap.get(r.purchaseOrderItemId) ?? 0) + Number(r.quantity),
+      );
     }
 
-    const rawWarehouse = await this.prisma.warehouse.findFirst({
-      where: { code: 'WH-RAW' },
-    });
-    if (!rawWarehouse)
-      throw new BadRequestException('Default RAW warehouse not found');
+    const itemsToReceive = order.items
+      .map((item) => ({
+        purchaseOrderItemId: item.id,
+        quantity: Number(item.quantity) - (receivedMap.get(item.id) ?? 0),
+      }))
+      .filter((item) => item.quantity > 0);
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 1. Update order status
-      const updatedOrder = await tx.purchaseOrder.update({
+    if (itemsToReceive.length === 0) {
+      // تحديث الحالة إذا كانت الكميات مستلمة بالفعل ولكن الحالة لم تتحدث
+      return this.prisma.purchaseOrder.update({
         where: { id: orderId },
         data: { status: PurchaseOrderStatus.RECEIVED },
       });
+    }
 
-      // 2. Receive items into inventory
-      for (const item of order.items) {
-        await this.inventoryService.receive(
-          {
-            rawMaterialId: item.rawMaterialId,
-            warehouseId: rawWarehouse.id,
-            quantity: Number(item.quantity),
-            unitCost: Number(item.unitCost), // Cost will be averaged in StockLedgerEntry
-            reference: updatedOrder.code,
-            notes: `استلام من أمر الشراء ${updatedOrder.code}`,
-          },
-          userId,
-          tx,
-        );
-      }
-
-      return updatedOrder;
-    });
+    return this.createReceipt(
+      orderId,
+      {
+        items: itemsToReceive,
+        notes: 'استلام كامل (مسار legacy)',
+      },
+      userId,
+      idempotencyKey,
+    );
   }
 
   async returnToSupplier(
     orderId: string,
-    itemId: string,
-    quantity: number,
+    dto: CreatePurchaseReturnDto,
     userId: string,
+    idempotencyKey?: string,
   ) {
+    const requestHash = computeRequestHash({
+      orderId,
+      items: dto.items,
+      notes: dto.notes ?? null,
+      userId,
+    });
+    const scope = 'purchasing-return-create';
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      scope,
+      requestHash,
+    );
+    if (replay) return replay;
+
     const order = await this.prisma.purchaseOrder.findUnique({
       where: { id: orderId },
       include: { items: true },
     });
-
     if (!order) throw new NotFoundException('Purchase order not found');
-    if (order.status !== PurchaseOrderStatus.RECEIVED) {
-      throw new BadRequestException('Can only return from received orders');
+
+    const itemIds = dto.items.map((i) => i.purchaseOrderItemId);
+    const orderItems = new Map(order.items.map((i) => [i.id, i]));
+
+    // التحقق من الكميات المستلمة والمرتجعة سابقًا
+    const receipts = await this.prisma.purchaseReceiptItem.findMany({
+      where: { purchaseOrderItemId: { in: itemIds } },
+      select: { purchaseOrderItemId: true, quantity: true },
+    });
+
+    const ledgerReturns = await this.prisma.stockLedgerEntry.findMany({
+      where: {
+        type: 'RETURN',
+        reference: { startsWith: `RET-${order.code}` },
+      },
+      select: { reference: true, quantityDelta: true },
+    });
+
+    const receivedMap = new Map<string, number>();
+    for (const r of receipts) {
+      receivedMap.set(
+        r.purchaseOrderItemId,
+        (receivedMap.get(r.purchaseOrderItemId) ?? 0) + Number(r.quantity),
+      );
     }
 
-    const item = order.items.find((i) => i.id === itemId);
-    if (!item) throw new NotFoundException('Item not found in order');
+    const returnedMap = new Map<string, number>();
+    for (const r of ledgerReturns) {
+      // نفترض أن المرجع هو RET-ORDERCODE-ITEMID
+      const parts = r.reference?.split('-');
+      const itemId = parts?.[parts.length - 1];
+      if (itemId) {
+        returnedMap.set(
+          itemId,
+          (returnedMap.get(itemId) ?? 0) + Math.abs(Number(r.quantityDelta)),
+        );
+      }
+    }
 
-    if (quantity > Number(item.quantity)) {
-      throw new BadRequestException('Cannot return more than received');
+    for (const item of dto.items) {
+      const orderItem = orderItems.get(item.purchaseOrderItemId);
+      if (!orderItem) throw new NotFoundException('Item not found in order');
+
+      const netReceived =
+        (receivedMap.get(item.purchaseOrderItemId) ?? 0) -
+        (returnedMap.get(item.purchaseOrderItemId) ?? 0);
+
+      if (item.quantity > netReceived) {
+        throw new BadRequestException(
+          `كمية المرتجع (${item.quantity}) تتجاوز الكمية المتاحة للاسترجاع (${netReceived}) للبند ${item.purchaseOrderItemId}`,
+        );
+      }
     }
 
     const rawWarehouse = await this.prisma.warehouse.findFirst({
       where: { code: 'WH-RAW' },
     });
-    if (!rawWarehouse)
+    if (!rawWarehouse) {
       throw new BadRequestException('Default RAW warehouse not found');
+    }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // 1. Issue (remove) items from inventory using RETURN type
-      // Note: StockMovementType.RETURN should exist or we can use another valid type.
-      // We will map it to 'RETURN' if supported, or just use issue logic
-      await this.inventoryService.issue(
-        {
-          rawMaterialId: item.rawMaterialId,
-          warehouseId: rawWarehouse.id,
-          quantity: quantity,
-          reference: `RET-${order.code}`,
-          notes: `مرتجع للمورد من أمر الشراء ${order.code}`,
+    try {
+      return await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+
+          let returnTotal = 0;
+          const results: any[] = [];
+
+          for (const item of dto.items) {
+            const orderItem = orderItems.get(item.purchaseOrderItemId)!;
+            returnTotal += item.quantity * Number(orderItem.unitCost);
+
+            const movement = await this.inventoryService.return(
+              {
+                rawMaterialId: orderItem.rawMaterialId,
+                warehouseId: rawWarehouse.id,
+                quantity: item.quantity,
+                reference: `RET-${order.code}-${item.purchaseOrderItemId}`,
+                notes: dto.notes ?? `مرتجع للمورد: ${order.code}`,
+                idempotencyKey: idempotencyKey
+                  ? `${idempotencyKey}-${item.purchaseOrderItemId}`
+                  : undefined,
+              },
+              userId,
+              tx,
+            );
+            results.push(movement);
+          }
+
+          // الترحيل المالي: عكس الاستلام (مدين للمورد، دائن للمخزون)
+          await this.financialPosting.postJournalEntryInTx(
+            tx,
+            {
+              description: `مرتجع مشتريات ${order.code}`,
+              reference: `RET-${order.code}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+                  creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  amount: returnTotal,
+                  description: `عكس إثبات مخزون للمورد ${order.supplierId}`,
+                },
+              ],
+              supplierUpdates: [
+                { supplierId: order.supplierId, delta: -returnTotal },
+              ],
+              metadata: {
+                source: 'PURCHASE_RETURN',
+                orderId: order.id,
+                itemIds: itemIds,
+              },
+              postingKey: `purchasing.return:${order.id}:${requestHash}`,
+            },
+            userId,
+          );
+
+          // تحديث حالة الطلب إذا لزم الأمر
+          // إذا تم إرجاع كل شيء، ربما يظل RECEIVED أو PENDING؟
+          // حسب المتطلبات، سنبقيها PENDING إذا كان هناك متبقي للاستلام
+          const allReceived = order.items.every((item) => {
+            const net =
+              (receivedMap.get(item.id) ?? 0) -
+              (returnedMap.get(item.id) ?? 0) -
+              (dto.items.find((i) => i.purchaseOrderItemId === item.id)
+                ?.quantity ?? 0);
+            return net >= Number(item.quantity);
+          });
+
+          await tx.purchaseOrder.update({
+            where: { id: orderId },
+            data: {
+              status: allReceived
+                ? PurchaseOrderStatus.RECEIVED
+                : PurchaseOrderStatus.PENDING,
+            },
+          });
+
+          const response = { success: true, results };
+          await storeIdempotencyResponse(tx, idempotencyKey, response);
+          return response;
         },
-        userId,
-        tx,
       );
-
-      return { success: true, message: 'Return processed' };
-    });
+    } catch (error) {
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 }

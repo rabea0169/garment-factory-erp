@@ -4,20 +4,20 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { PaymentType, PurchaseOrderStatus } from '@prisma/client';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, NotFoundException } from '@nestjs/common';
 import { computeRequestHash } from '../../core/common/idempotency.util';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 
 describe('PurchasingService (GF-0009)', () => {
   let service: PurchasingService;
   let prisma: ReturnType<typeof createPrismaMock>;
-  let inventoryService: { receive: jest.Mock };
+  let inventoryService: { receive: jest.Mock; return: jest.Mock };
   let financialPosting: { postJournalEntryInTx: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
 
-    inventoryService = { receive: jest.fn() };
+    inventoryService = { receive: jest.fn(), return: jest.fn() };
     financialPosting = { postJournalEntryInTx: jest.fn() };
     prisma.supplier.findFirst.mockResolvedValue({ id: 'sup-1' });
 
@@ -186,7 +186,7 @@ describe('PurchasingService (GF-0009)', () => {
     });
   });
 
-  describe('receiveOrder', () => {
+  describe('receiveOrder (Legacy)', () => {
     it('should throw if order already received', async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
@@ -198,37 +198,140 @@ describe('PurchasingService (GF-0009)', () => {
       );
     });
 
-    it('should receive items via InventoryService within a transaction', async () => {
+    it('should receive all remaining items via createReceipt', async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
         status: PurchaseOrderStatus.PENDING,
-        items: [{ rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 }],
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
       });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([
+        { purchaseOrderItemId: 'poi-1', quantity: 4 },
+      ]);
       prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
-      prisma.$transaction.mockImplementation(async (cb) => {
-        return cb(prisma); // Pass mocked prisma as tx
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+      prisma.purchaseReceipt.create.mockResolvedValue({
+        id: 'grn-full',
+        code: 'GRN-FULL',
       });
-      prisma.purchaseOrder.update.mockResolvedValue({ code: 'PO-100' });
+      prisma.purchaseOrder.update.mockResolvedValue({ id: 'po-1' });
 
       await service.receiveOrder('po-1', 'user-1');
 
-      expect(prisma.purchaseOrder.update).toHaveBeenCalledWith({
-        where: { id: 'po-1' },
-        data: { status: PurchaseOrderStatus.RECEIVED },
-      });
+      // Should call createReceipt with quantity 6 (10 - 4)
       expect(inventoryService.receive).toHaveBeenCalledWith(
-        {
-          rawMaterialId: 'rm-1',
-          warehouseId: 'wh-raw',
-          quantity: 10,
-          unitCost: 5,
-          reference: 'PO-100',
-          notes: expect.any(String),
-        },
+        expect.objectContaining({ quantity: 6 }),
         'user-1',
         prisma,
       );
+    });
+  });
+
+  describe('returnToSupplier', () => {
+    it('should throw if item not found in order', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        items: [{ id: 'poi-1' }],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+      prisma.stockLedgerEntry.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.returnToSupplier(
+          'po-1',
+          { items: [{ purchaseOrderItemId: 'poi-unknown', quantity: 1 }] },
+          'user-1',
+        ),
+      ).rejects.toThrow(NotFoundException);
+    });
+
+    it('should throw if return quantity exceeds net received', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        items: [{ id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10 }],
+      });
+      // Received 5, Returned 2 -> Net 3. Trying to return 4 should fail.
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([
+        { purchaseOrderItemId: 'poi-1', quantity: 5 },
+      ]);
+      prisma.stockLedgerEntry.findMany.mockResolvedValue([
+        { reference: 'RET-PO-100-poi-1', quantityDelta: -2 },
+      ]);
+
+      await expect(
+        service.returnToSupplier(
+          'po-1',
+          { items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }] },
+          'user-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('should process return and post to financial within transaction', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        supplierId: 'sup-1',
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([
+        { purchaseOrderItemId: 'poi-1', quantity: 10 },
+      ]);
+      prisma.stockLedgerEntry.findMany.mockResolvedValue([]);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+      prisma.purchaseOrder.update.mockResolvedValue({ id: 'po-1' });
+
+      const result = await service.returnToSupplier(
+        'po-1',
+        { items: [{ purchaseOrderItemId: 'poi-1', quantity: 2 }] },
+        'user-1',
+      );
+
+      expect(result.success).toBe(true);
+      expect(inventoryService.return).toHaveBeenCalledWith(
+        expect.objectContaining({
+          quantity: 2,
+          reference: 'RET-PO-100-poi-1',
+        }),
+        'user-1',
+        prisma,
+      );
+      expect(financialPosting.postJournalEntryInTx).toHaveBeenCalledWith(
+        prisma,
+        expect.objectContaining({
+          description: expect.stringContaining('مرتجع'),
+          supplierUpdates: [{ supplierId: 'sup-1', delta: -10 }], // 2 * 5 = 10
+        }),
+        'user-1',
+      );
+    });
+
+    it('should handle idempotency for returns', async () => {
+      const dto = { items: [{ purchaseOrderItemId: 'poi-1', quantity: 2 }] };
+      const key = 'return-key';
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key,
+        scope: 'purchasing-return-create',
+        requestHash: computeRequestHash({
+          orderId: 'po-1',
+          items: dto.items,
+          notes: null,
+          userId: 'user-1',
+        }),
+        response: { success: true, replayed: true },
+      });
+
+      const result = await service.returnToSupplier('po-1', dto, 'user-1', key);
+
+      expect(result.replayed).toBe(true);
+      expect(prisma.purchaseOrder.findUnique).not.toHaveBeenCalled();
+      expect(inventoryService.return).not.toHaveBeenCalled();
     });
   });
 });
