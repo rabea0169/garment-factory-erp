@@ -4,6 +4,7 @@ import {
   SalesOrderStatus,
   ShipmentStatus,
   UserRole,
+  WarehouseType,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -45,6 +46,13 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
       },
     });
     userId = user.id;
+    await prisma.warehouse.create({
+      data: {
+        code: 'WH-FG',
+        name: 'GF-0017 Finished Goods Warehouse',
+        type: WarehouseType.FINISHED_GOODS,
+      },
+    });
     const customer = await prisma.customer.create({
       data: {
         code: `CUS-GF17-${randomUUID().slice(0, 8)}`,
