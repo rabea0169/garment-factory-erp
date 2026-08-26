@@ -179,4 +179,67 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     expect(await prisma.purchaseReceipt.count()).toBe(0);
     expect(await prisma.stockLedgerEntry.count()).toBe(0);
   });
+
+  it('receives only the remaining quantity through legacy receiveOrder', async () => {
+    await service.createReceipt(
+      orderId,
+      { items: [{ purchaseOrderItemId: itemId, quantity: 2 }] },
+      userId,
+      `gf0016-partial-${randomUUID()}`,
+    );
+
+    await service.receiveOrder(orderId, userId);
+
+    expect(await prisma.purchaseReceipt.count()).toBe(2);
+    expect(await prisma.stockLedgerEntry.count()).toBe(2);
+    expect(
+      await prisma.purchaseOrder.count({
+        where: { id: orderId, status: PurchaseOrderStatus.RECEIVED },
+      }),
+    ).toBe(1);
+    const material = await prisma.rawMaterial.findUnique({
+      where: { id: rawMaterialId },
+    });
+    expect(material?.currentStock.toNumber()).toBe(5);
+  });
+
+  it('processes and replays a supplier return with one stock and financial effect', async () => {
+    await service.createReceipt(
+      orderId,
+      { items: [{ purchaseOrderItemId: itemId, quantity: 5 }] },
+      userId,
+      `gf0016-return-receipt-${randomUUID()}`,
+    );
+    const returnKey = `gf0016-return-${randomUUID()}`;
+
+    const first = await service.returnToSupplier(
+      orderId,
+      { purchaseOrderItemId: itemId, quantity: 2 },
+      userId,
+      returnKey,
+    );
+    const replay = await service.returnToSupplier(
+      orderId,
+      { purchaseOrderItemId: itemId, quantity: 2 },
+      userId,
+      returnKey,
+    );
+
+    expect(replay).toEqual(first);
+    expect(await prisma.purchaseReceipt.count()).toBe(1);
+    expect(
+      await prisma.stockLedgerEntry.count({
+        where: { rawMaterialId: rawMaterialId },
+      }),
+    ).toBe(2);
+    expect(
+      await prisma.journalEntry.count({
+        where: { reference: { startsWith: 'PURCHASE_RETURN_ITEM:' } },
+      }),
+    ).toBe(1);
+    const material = await prisma.rawMaterial.findUnique({
+      where: { id: rawMaterialId },
+    });
+    expect(material?.currentStock.toNumber()).toBe(3);
+  });
 });

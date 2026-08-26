@@ -16,6 +16,7 @@ describe('PurchasingService (GF-0009)', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    prisma.$queryRaw.mockResolvedValue([{ id: 'po-1' }]);
 
     inventoryService = { receive: jest.fn() };
     financialPosting = { postJournalEntryInTx: jest.fn() };
@@ -237,6 +238,44 @@ describe('PurchasingService (GF-0009)', () => {
         },
         'user-1',
         prisma,
+      );
+    });
+
+    it('derives a new legacy idempotency key when a later partial receipt changes the remainder', async () => {
+      const receiptSpy = jest
+        .spyOn(service, 'createReceipt')
+        .mockResolvedValue({
+          id: 'grn-legacy',
+          code: 'GRN-LEGACY',
+          notes: null,
+          idempotencyKeyId: null,
+          userId: 'user-1',
+          purchaseOrderId: 'po-1',
+          receivedAt: new Date(),
+          items: [],
+        });
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.PENDING,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([
+        { purchaseOrderItemId: 'poi-1', quantity: 4 },
+      ]);
+
+      await service.receiveOrder('po-1', 'user-1');
+
+      expect(receiptSpy).toHaveBeenCalledWith(
+        'po-1',
+        {
+          items: [{ purchaseOrderItemId: 'poi-1', quantity: 6 }],
+          notes: 'استلام كامل (legacy) لأمر الشراء PO-100',
+        },
+        'user-1',
+        expect.stringMatching(/^legacy-receive-po-1-[a-f0-9]{16}$/),
       );
     });
   });
