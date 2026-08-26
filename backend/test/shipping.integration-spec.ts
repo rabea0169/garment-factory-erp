@@ -7,9 +7,7 @@ import {
   WarehouseType,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
-import { EventEmitter2 } from '@nestjs/event-emitter';
 import { ShippingService } from '../src/modules/shipping/shipping.service';
-import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
@@ -28,8 +26,7 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    const inventory = new InventoryService(prisma, new EventEmitter2());
-    service = new ShippingService(prisma, inventory);
+    service = new ShippingService(prisma);
   });
 
   beforeEach(async () => {
@@ -149,14 +146,14 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
       }),
     ).toBe(3);
     const stock = await prisma.finishedGoodStock.findFirst({
-      where: { quantity: 3 },
+      where: { quantity: 5 },
     });
     expect(stock).toBeTruthy();
     expect(
       await prisma.stockLedgerEntry.count({
-        where: { type: 'ISSUE', quantityDelta: -2, reference: shipmentCode },
+        where: { type: 'ISSUE', reference: shipmentCode },
       }),
-    ).toBe(1);
+    ).toBe(0);
   });
 
   it('rejects delivery without proof and does not mutate the shipment', async () => {

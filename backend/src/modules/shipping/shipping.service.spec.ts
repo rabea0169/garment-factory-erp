@@ -2,24 +2,18 @@ import { BadRequestException } from '@nestjs/common';
 import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { ShippingService } from './shipping.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { InventoryService } from '../inventory/inventory.service';
+
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('ShippingService — الشحنات (GF-0003)', () => {
   let service: ShippingService;
   let prisma: ReturnType<typeof createPrismaMock>;
-  let inventoryService: { issueFinishedGood: jest.Mock };
-
   beforeEach(() => {
     prisma = createPrismaMock();
-    inventoryService = { issueFinishedGood: jest.fn() };
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
-    service = new ShippingService(
-      prisma as unknown as PrismaService,
-      inventoryService as unknown as InventoryService,
-    );
+    service = new ShippingService(prisma as unknown as PrismaService);
   });
 
   it('يجلب الشحنات مع أمر البيع والعميل', async () => {
@@ -115,7 +109,7 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     expect(prisma.shipment.create).not.toHaveBeenCalled();
   });
 
-  it('يسمح بانتقال PREPARING إلى SHIPPED ويخصم المنتج التام', async () => {
+  it('يسمح بانتقال PREPARING إلى SHIPPED دون تغيير المخزون (ADR-0017)', async () => {
     prisma.shipment.findUnique
       .mockResolvedValueOnce({
         id: 'sh-1',
@@ -129,14 +123,11 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
         id: 'sh-1',
         status: ShipmentStatus.SHIPPED,
       });
-    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
     prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
     prisma.shipment.findUnique.mockResolvedValue({
       id: 'sh-1',
       status: ShipmentStatus.SHIPPED,
     });
-    prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
-    prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
     prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
 
     await service.updateShipmentStatus(
@@ -160,6 +151,8 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     });
     expect(request.data.status).toBe(ShipmentStatus.SHIPPED);
     expect(request.data.shippedAt).toBeInstanceOf(Date);
+    // تأكيد عدم استدعاء أي عمليات مخزنية أو مالية
+    expect(prisma.warehouse.findFirst).not.toHaveBeenCalled();
   });
 
   it('يرفض انتقالًا غير منطقي في حالة الشحنة', async () => {

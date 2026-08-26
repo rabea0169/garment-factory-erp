@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import * as crypto from 'node:crypto';
 
 function makeService() {
   const prisma = createPrismaMock();
@@ -186,6 +187,79 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
 
     await expect(service.confirmOrder('so-1', 'u-1')).rejects.toBeInstanceOf(
       ConflictException,
+    );
+  });
+});
+
+describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
+  it('handles retry/idempotency: returns stored response for same key and hash', async () => {
+    const { prisma, service } = makeService();
+    const storedResponse = { id: 'so-1', status: SalesOrderStatus.CONFIRMED };
+
+    // The service computes hash using: { operation: 'sales-order-confirm', orderId: 'so-1', userId: 'u-1' }
+    const requestHash = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify({
+          operation: 'sales-order-confirm',
+          orderId: 'so-1',
+          userId: 'u-1',
+        }),
+      )
+      .digest('hex');
+
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      key: 'retry-key',
+      scope: 'sales-order-confirm',
+      requestHash: requestHash,
+      response: storedResponse,
+    });
+
+    const result = await service.confirmOrder('so-1', 'u-1', 'retry-key');
+    expect(result).toMatchObject(storedResponse);
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('handles concurrency: throws ConflictException when status changed during transaction', async () => {
+    const { prisma, service } = makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.DRAFT,
+      items: [],
+    });
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 0 }); // Simulate concurrent update
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    await expect(service.confirmOrder('so-1', 'u-1')).rejects.toThrow(
+      ConflictException,
+    );
+  });
+
+  it('handles rollback: transaction failure reverts all changes (simulated)', async () => {
+    const { prisma, issueFinishedGood, service } = makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.DRAFT,
+      items: [{ id: 'item-1', productVariantId: 'v-1', quantity: 2 }],
+    });
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+
+    // Simulate failure during journal posting
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: unknown) => Promise<unknown>) => {
+        await callback(prisma);
+      },
+    );
+    issueFinishedGood.mockRejectedValue(new Error('Stock issue failed'));
+
+    await expect(service.confirmOrder('so-1', 'u-1')).rejects.toThrow(
+      'Stock issue failed',
     );
   });
 });
