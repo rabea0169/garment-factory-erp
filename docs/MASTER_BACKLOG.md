@@ -31,7 +31,7 @@
 | GF-REMAINING-004 | Backend Dashboard/Reports حقيقي | `backend/src/modules/dashboard/**`، `mobile_app/lib/features/reports/**`، docs، اختبارات | GF-REMAINING-003 بعد الدمج والتحقق؛ تثبيت تعريفات KPI | `/dashboard/stats` محمي ويعيد KPIs من قاعدة البيانات مع فترة ومصدر واضحين؛ لا static/mock fallback | ✅ مدمجة في `main@dd200c5`؛ PR #51 وCI أخضر |
 | GF-REMAINING-005 | ربط استلام المشتريات بالترحيل المالي | `backend/src/modules/purchasing/**`، financial posting، schema إن لزم، اختبارات | GF-REMAINING-004 بعد الدمج والتحقق؛ GF-0018 أو قرار transaction موثق | `receiveOrder` يغيّر المخزون ويسجل قيدًا متوازنًا داخل transaction واحدة وبـidempotency؛ rollback عند الفشل | ✅ مدمجة في `main@1bc1fc4`؛ PR #55 وCI PostgreSQL أخضر |
 | GF-REMAINING-006 | توسيع اختبارات PostgreSQL الحقيقية وRBAC | `backend/test/**`، CI، `.github/workflows/ci.yml` | GF-REMAINING-001 إلى 005 بحسب المسار | migration deploy وintegration suites على PostgreSQL 16؛ اختبارات 401/403 والتكرار والrollback، مع عدم إخفاء فشل | ✅ مدمجة في `main@0b34949`؛ PR #56 وCI PostgreSQL أخضران |
-| GF-REMAINING-007 | اختبار الأداء القابل للتكرار | `backend/test/performance/**` أو أداة معتمدة، CI/docs | GF-REMAINING-006 بعد الدمج والتحقق؛ استقرار API وبيئة PostgreSQL | قياس p95 وthroughput وpool saturation لحمل موثق؛ العتبات تعتمد قرارًا لا تخمينًا | 🟡 قيد التنفيذ على فرع `phase2/gf-remaining-007-performance` |
+| GF-REMAINING-007 | اختبار الأداء القابل للتكرار | `backend/test/performance/**` أو أداة معتمدة، CI/docs | GF-REMAINING-006 بعد الدمج والتحقق؛ استقرار API وبيئة PostgreSQL | قياس p95 وthroughput وpool saturation لحمل موثق؛ العتبات تعتمد قرارًا لا تخمينًا | 🟡 منفذة في PR #62؛ CI run `32954663324` أخضر؛ بانتظار تفويض الدمج |
 
 ## P2 — تجربة الهاتف والإطلاق
 

@@ -18,15 +18,15 @@
 | إصدار API | `1.1`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` وreceipt/AP idempotency وPOD وfiscal periods/journal entries |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-007 — اختبار الأداء القابل للتكرار |
-| المرحلة النشطة | GF-REMAINING-007 قيد التنفيذ؛ benchmark سيقيس p95 وthroughput وpool saturation؛ Production ما زال No-Go حتى release gates |
+| المهمة النشطة | GF-REMAINING-007 — اختبار الأداء القابل للتكرار؛ التنفيذ مكتمل في PR #62 |
+| المرحلة النشطة | GF-REMAINING-007 مكتملة على فرع مستقل؛ CI run `32954663324` أخضر؛ Production ما زال No-Go حتى اعتماد thresholds وrelease gates |
 | سبب عدم بدء GF-REMAINING-008 | يجب أولاً اعتماد نتائج GF7 ودمجها، ثم تنفيذ Backup/Restore Drill وUAT وGo/No-Go |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 أمني جديد في الإصلاحات المدمجة؛ Secret Scan وCI PASS، لكن Prisma Compute الخارجي وnpm audit وRelease gates ما زالت مفتوحة |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-006.md` — GF6 مدمجة؛ handoff GF7 سيُضاف |
-| Next exact action | تنفيذ benchmark GF7 على خادم وPostgreSQL اختبار، رفع JSON، ثم توثيق p95/throughput/pool saturation وفتح PR؛ لا اعتماد عتبات دون قرار مالك المنتج |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-007.md` — benchmark ونتائج CI موثقة |
+| Next exact action | مراجعة artifact GF7 مع مالك المنتج واعتماد thresholds، ثم دمج PR #62 بتفويض صريح؛ بعده Backup/Restore Drill وUAT وGo/No-Go |
 
 ## المهام المكتملة على main
 

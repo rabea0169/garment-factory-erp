@@ -6,7 +6,7 @@
 - **Base:** `origin/main@0b34949` after merge of GF-REMAINING-006.
 - **Branch:** `phase2/gf-remaining-007-performance`
 - **Scope:** قياس الأداء على خادم backend فعلي متصل بـPostgreSQL 16، مع حمل ثابت موثق على health/readiness/dashboard، وإنتاج artifact JSON يحوي p95 وthroughput وpool saturation.
-- **Status:** initial CI exposed an incorrect production build entrypoint and a throttler configuration defect that applied the 10/minute auth limiter to every route. The build entrypoint and throttler configuration were corrected without disabling security; a new CI run is required for the final artifact.
+- **Status:** complete on PR #62; the initial CI defects were corrected without disabling security, and the final PostgreSQL-backed benchmark passed on CI run `32954663324`. The PR is ready for merge authorization.
 
 ## 2. Changes
 
@@ -33,18 +33,28 @@
 | Unit tests | PASS | 32 suites / 197 tests |
 | E2E tests | PASS | 3 suites / 64 tests |
 | Throttler regression tests | PASS | 7 targeted tests: login override and health/readiness skip metadata |
-| Runtime benchmark | PENDING CI rerun | first run failed at `dist/main`; second run reached benchmark but correctly returned 429 under documented limiter; load reduced and path fixed |
+| Runtime benchmark | PASS | CI run `32954663324`; PostgreSQL 16 + seed + live backend; artifact `dashboard-load.json` uploaded |
 
-## 4. CI acceptance criteria
+## 4. Final CI benchmark evidence
 
-يجب أن ينجح job الأداء من قاعدة PostgreSQL جديدة مع `prisma migrate deploy` وseed وتشغيل الخادم، وأن ينتج artifact JSON صالحاً. يجب أن تكون مسارات القياس الثلاثة بلا أخطاء HTTP، وأن يحتوي الملف على latency وthroughput وpool saturation، مع عرض `sampleCount` و`maxActiveConnections` و`configuredPoolMax`.
+| Endpoint | Requests | Concurrency | Error rate | p95 latency | Throughput |
+|---|---:|---:|---:|---:|---:|
+| `/health` | 30 | 10 | 0% | 25.00 ms | 645.92 req/s |
+| `/health/ready` | 30 | 10 | 0% | 37.75 ms | 557.21 req/s |
+| `/dashboard/stats` | 30 | 10 | 0% | 103.76 ms | 194.50 req/s |
+
+Pool saturation sampling observed 5 samples, with `maxActiveConnections=0` and `configuredPoolMax=20` (`ratio=0`). هذا القياس لا يثبت أن pool لم يُستخدم؛ بل يعني أن عينات `pg_stat_activity` لم تلتقط اتصالاً نشطاً لحظة الاستعلام، ولذلك يجب عدم تفسير ratio=0 كإثبات سعة غير محدودة. رابط التشغيل: [CI run 32954663324](https://github.com/rabea0169/garment-factory-erp/actions/runs/32954663324). artifact المرفوع هو المصدر الخام للنتائج.
+
+## 5. CI acceptance criteria
+
+يجب أن ينجح job الأداء من قاعدة PostgreSQL جديدة مع `prisma migrate deploy` وseed وتشغيل الخادم، وأن ينتج artifact JSON صالحاً. يجب أن تكون مسارات القياس الثلاثة بلا أخطاء HTTP، وأن يحتوي الملف على latency وthroughput وpool saturation، مع عرض `sampleCount` و`maxActiveConnections` و`configuredPoolMax`. وقد تحقق ذلك في CI run `32954663324`. لا توجد عتبات SLA مفروضة؛ اعتمادها يحتاج قرار مالك المنتج.
 
 نتيجة benchmark لا تعني اعتماد الإنتاج تلقائياً. اعتماد thresholds يحتاج مقارنة ببيئة تشغيل مماثلة وقرار UAT/Go-No-Go يشمل حجم البيانات وعدد نسخ الخدمة وحدود pool ومواصفات البنية.
 
-## 5. Known limitations
+## 6. Known limitations
 
 القياس الحالي baseline single-instance على runner واحد، ولا يقيس توزيع الحمل بين عدة replicas أو cache hit ratio أو network latency الخارجي. لا توجد thresholds في CI حتى لا يتم تحويل قياس runner إلى SLA غير معتمد.
 
-## 6. Next exact task
+## 7. Next exact task
 
-بعد نجاح CI، راجع artifact وحدد baseline مع مالك المنتج، ثم افتح PR للدمج. بعد الدمج تُستكمل Backup/Restore Drill وUAT وGo/No-Go؛ Production يبقى No-Go حتى إغلاق Prisma Compute/npm audit وrelease gates.
+راجع artifact مع مالك المنتج وحدد baseline/thresholds، ثم ادمج PR #62 بتفويض صريح. بعد الدمج تُستكمل Backup/Restore Drill وUAT وGo/No-Go؛ Production يبقى No-Go حتى إغلاق Prisma Compute/npm audit وrelease gates.
