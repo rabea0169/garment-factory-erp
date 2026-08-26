@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `a835b87` — دمج PR #31 لإكمال GF-0016 بعد GF-0015 وGF-0017 الجزئي |
-| فرع العمل الحالي | `phase7/gf0017-shipping-hardening` — lifecycle وPOD |
-| آخر commit في فرع العمل | `a835b87` — base verified؛ تغييرات GF-0017 غير ملتزمة بعد |
-| Pull Request الحالي | لا يوجد؛ فرع GF-0017 قيد الإعداد قبل الرفع |
-| آخر مرحلة مكتملة بالكامل على main | GF-0016 receipt hardening؛ GF-0017 ما زالت بحاجة تدقيق/إكمال رغم PR #29 الجزئي |
-| حالة CI على main | PASS — Run `32931068793` على `a835b87`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0016 نجحت على PostgreSQL 16 في CI؛ migration GF-0017 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
-| إصدار API | `1.0`؛ أضيف payroll draft/approval وreceipt idempotency؛ عقد POD قيد PR GF-0017 |
+| آخر commit على main | `17f765b` — دمج PR #33 لإكمال GF-0017 بعد GF-0016 وGF-0015 |
+| فرع العمل الحالي | `phase9/gf0018-accounting` — fiscal periods وjournal entries |
+| آخر commit في فرع العمل | `17f765b` — base verified؛ تغييرات GF-0018 غير ملتزمة بعد |
+| Pull Request الحالي | لا يوجد؛ فرع GF-0018 قيد الإعداد قبل الرفع |
+| آخر مرحلة مكتملة بالكامل على main | GF-0017 shipping lifecycle؛ GF-0018 ما زالت بحاجة تنفيذ المحاسبة والفترات |
+| حالة CI على main | PASS — Run `32932165515` على `17f765b`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0017 نجحت على PostgreSQL 16 في CI؛ migration GF-0018 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
+| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD؛ عقد fiscal periods/journal entries قيد PR GF-0018 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0017-IMPL`: إكمال lifecycle وproof of delivery والتحقق من PostgreSQL CI |
-| المرحلة النشطة | GF-0017 — Shipping lifecycle and POD |
+| المهمة النشطة | `GF-0018-IMPL`: إكمال fiscal periods وjournal entries والتحقق من PostgreSQL CI |
+| المرحلة النشطة | GF-0018 — Accounting fiscal periods and journal entries |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-017.md` |
-| Next exact action | تشغيل diff check، commit/push وفتح PR GF-0017، ثم انتظار migration deploy وPostgreSQL shipping integration في CI |
+| Last handoff | `docs/handoffs/HANDOFF-018.md` |
+| Next exact action | تشغيل diff check والبوابات الكاملة، commit/push وفتح PR GF-0018، ثم انتظار migration deploy وPostgreSQL accounting integration في CI |
 
 ## المهام المكتملة على main
 
@@ -82,4 +82,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `phase7/gf0017-shipping-hardening` فوق `main@a835b87` بعد تدقيق PR #29 وإضافة POD وactor وتحديث ذري للحالة. البوابات المحلية الخاصة بالشحن خضراء، والتكامل الحقيقي ينتظر PR CI؛ لا يُعلن GF-0017 مكتملًا قبل ذلك.
+تم تحديث هذا الملف على فرع `phase9/gf0018-accounting` فوق `main@17f765b` بعد تثبيت نموذج FiscalPeriod ومسار القيد متعدد البنود. البوابات المحلية خضراء للـcompile والوحدات، والتكامل الحقيقي ينتظر PR CI؛ لا يُعلن GF-0018 مكتملًا قبل ذلك.

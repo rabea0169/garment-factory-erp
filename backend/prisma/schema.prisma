@@ -48,6 +48,7 @@ model User {
 
   payrollsCreated        Payroll[]                       @relation("PayrollCreator")
   payrollsApproved       Payroll[]                       @relation("PayrollApprover")
+  fiscalPeriodsCreated   FiscalPeriod[]                 @relation("FiscalPeriodCreator")
   shipmentsDelivered    Shipment[]                     @relation("ShipmentDeliverer")
   @@map("users")
 }
@@ -995,6 +996,29 @@ model Shipment {
 
 // ===== M-10: ACCOUNTING =====
 
+enum FiscalPeriodStatus {
+  OPEN
+  CLOSED
+}
+
+model FiscalPeriod {
+  id          String             @id @default(uuid())
+  name        String
+  startDate   DateTime           @db.Date
+  endDate     DateTime           @db.Date
+  status      FiscalPeriodStatus @default(OPEN)
+  createdById String
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  createdBy     User           @relation("FiscalPeriodCreator", fields: [createdById], references: [id])
+  journalEntries JournalEntry[]
+
+  @@unique([startDate, endDate])
+  @@index([status, startDate, endDate])
+  @@map("fiscal_periods")
+}
+
 enum AccountType {
   ASSET
   LIABILITY
@@ -1045,10 +1069,12 @@ model JournalEntry {
   postingHash  String?
   // E5: multi-currency — العملة التي أُنشئ بها القيد + سعر الصرف مقابل عملة النظام.
   // NULL = system default (EGP). exchangeRate defaults to 1.0 when currencyId is NULL.
-  currencyId   String?
-  exchangeRate Decimal?  @db.Decimal(10, 6)
+  currencyId     String?
+  exchangeRate   Decimal? @db.Decimal(10, 6)
+  fiscalPeriodId String?
 
-  lines      JournalLine[]
+  lines        JournalLine[]
+  fiscalPeriod FiscalPeriod? @relation(fields: [fiscalPeriodId], references: [id])
   // E1: علاقة اختيارية للمستخدم (لا cascade delete — لا تُحذف القيود).
   createdBy  User?          @relation("JournalEntryCreator", fields: [createdById], references: [id])
   // A9: من عكس القيد (audit trail).
@@ -1070,6 +1096,7 @@ model JournalEntry {
   @@index([reversalOfId])
   @@index([isReversed])
   @@index([currencyId])
+  @@index([fiscalPeriodId, date])
   @@map("journal_entries")
 }
 

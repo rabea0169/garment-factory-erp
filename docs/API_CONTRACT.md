@@ -134,8 +134,13 @@
 | GET | `/accounting/vouchers` | أوامر الصرف | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/vouchers` | أمر صرف جديد | 🔒 JWT | ACCOUNTANT, CASHIER |
 | POST | `/accounting/journal-entries/:id/reverse` | عكس قيد مالي مرة واحدة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
+| POST | `/accounting/fiscal-periods` | إنشاء فترة مالية مفتوحة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
+| PATCH | `/accounting/fiscal-periods/:id/close` | إغلاق فترة مالية | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
+| POST | `/accounting/journal-entries` | إنشاء قيد متعدد البنود داخل فترة مفتوحة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 
 يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
+
+الفترات المالية لا تتداخل، ويُمنع الترحيل في فترة CLOSED أو بتاريخ خارج حدود الفترة. يقبل `POST /accounting/journal-entries` `description`, `reference`, `fiscalPeriodId`, `date` الاختياري، و`lines[]` الموجبة؛ يتحقق المحرك من الحسابات النشطة وتوازن المدين/الدائن ويأخذ `createdById` من JWT. إغلاق الفترة مشروط بحالتها الحالية ويسجل ActivityLog، ولا توجد كتابة دفع أو VAT آلية في هذا المسار.
 
 **ملاحظة GF-0002:** `createdById` لم يعد يُقبل من body — من الجلسة.
 

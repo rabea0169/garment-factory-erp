@@ -5,6 +5,7 @@ import {
   Headers,
   Param,
   Post,
+  Patch,
   Query,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
@@ -16,6 +17,8 @@ import { CreateAccountDto } from './dto/create-account.dto';
 import { CreateVoucherDto } from './dto/create-voucher.dto';
 import { ReverseJournalEntryDto } from './dto/reverse-journal-entry.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { CreateFiscalPeriodDto } from './dto/create-fiscal-period.dto';
+import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
 
 @ApiTags('Accounting (الحسابات والمالية)')
 @Controller('accounting')
@@ -34,6 +37,36 @@ export class AccountingController {
   @ApiOperation({ summary: 'إضافة حساب جديد' })
   async createAccount(@Body() body: CreateAccountDto) {
     return this.accountingService.createAccount(body);
+  }
+
+  @Post('fiscal-periods')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'إنشاء فترة مالية مفتوحة' })
+  async createFiscalPeriod(
+    @Body() body: CreateFiscalPeriodDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.accountingService.createFiscalPeriod(body, userId);
+  }
+
+  @Patch('fiscal-periods/:id/close')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'إغلاق فترة مالية' })
+  async closeFiscalPeriod(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.accountingService.closeFiscalPeriod(id, userId);
+  }
+
+  @Post('journal-entries')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'إنشاء قيد متعدد البنود داخل فترة مفتوحة' })
+  async createJournalEntry(
+    @Body() body: CreateJournalEntryDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.accountingService.createJournalEntry(body, userId);
   }
 
   @Get('vouchers')

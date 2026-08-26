@@ -99,7 +99,15 @@
 
 الـrollback يكون بـbackup/restore أو migration عكسية معتمدة بعد إيقاف مسار POD؛ لا تُحذف سجلات الشحن أو ActivityLog. يجب إثبات lifecycle وPOD على PostgreSQL في CI قبل أي بيئة مشتركة.
 
-## 9. نقاط الاسترجاع (Rollback hooks)
+## 9. Migration GF-0018 — Fiscal Periods and Journal Entries
+
+**الاسم:** `20260830040000_gf0018_fiscal_periods`
+
+تنشئ migration جدول `fiscal_periods` بحالة OPEN/CLOSED وقيد ترتيب التاريخ وفهرس الحالة، وتضيف `journal_entries.fiscalPeriodId` nullable مع FK وفهرس التاريخ. الحقول nullable في القيود القديمة للحفاظ على التوافق؛ لا يُرحّل أي سجل قديم تلقائيًا. يمنع التطبيق التداخل والترحيل في فترة مغلقة، بينما تمنع قاعدة البيانات ترتيب التواريخ. كما تصلح migration trigger التوازن القديم الذي كان يشير خطأً إلى أعمدة `debit` و`credit` غير الموجودة؛ الحماية المتوافقة مع schema الحالي تتحقق من `amount` والحسابين.
+
+يجب تشغيل `npx prisma migrate deploy` على PostgreSQL نظيفة وبيانات legacy ثم اختبار قيد مفتوح وقيد مغلق وrollback rehearsal قبل البيئة المشتركة. rollback عبر backup/restore أو migration عكسية معتمدة؛ لا تُحذف journal entries أو account balances يدويًا.
+
+## 10. نقاط الاسترجاع (Rollback hooks)
 
 - المستودع: `git revert` لأي commit — لا migration بعد عكس schema إلا بmigration عكسية.
 - قاعدة البيانات محليًا: إعادة `docker-compose down -v` ثم `migrate dev` + seed (بيانات تطوير فقط — لا بيانات إنتاج موجودة بعد).
