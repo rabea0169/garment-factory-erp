@@ -10,6 +10,9 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
     service = new ShippingService(prisma as unknown as PrismaService);
   });
 
@@ -68,27 +71,37 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
   });
 
   it('يسمح بانتقال PREPARING إلى SHIPPED ويضع shippedAt', async () => {
-    prisma.shipment.findUnique.mockResolvedValue({
-      id: 'sh-1',
-      status: ShipmentStatus.PREPARING,
-    });
-    prisma.shipment.update.mockResolvedValue({
-      id: 'sh-1',
-      status: ShipmentStatus.SHIPPED,
-    });
+    prisma.shipment.findUnique
+      .mockResolvedValueOnce({
+        id: 'sh-1',
+        status: ShipmentStatus.PREPARING,
+      })
+      .mockResolvedValue({
+        id: 'sh-1',
+        status: ShipmentStatus.SHIPPED,
+      });
+    prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
+    prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
 
-    await service.updateShipmentStatus('sh-1', ShipmentStatus.SHIPPED);
+    await service.updateShipmentStatus(
+      'sh-1',
+      ShipmentStatus.SHIPPED,
+      'actor-1',
+    );
 
-    const calls = prisma.shipment.update.mock.calls as unknown as Array<
+    const calls = prisma.shipment.updateMany.mock.calls as unknown as Array<
       [
         {
-          where: { id: string };
+          where: { id: string; status: ShipmentStatus };
           data: { status: ShipmentStatus; shippedAt?: Date };
         },
       ]
     >;
     const request = calls[0][0];
-    expect(request.where).toEqual({ id: 'sh-1' });
+    expect(request.where).toEqual({
+      id: 'sh-1',
+      status: ShipmentStatus.PREPARING,
+    });
     expect(request.data.status).toBe(ShipmentStatus.SHIPPED);
     expect(request.data.shippedAt).toBeInstanceOf(Date);
   });
@@ -100,8 +113,52 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     });
 
     await expect(
-      service.updateShipmentStatus('sh-1', ShipmentStatus.DELIVERED),
+      service.updateShipmentStatus('sh-1', ShipmentStatus.DELIVERED, 'actor-1'),
     ).rejects.toThrow(BadRequestException);
-    expect(prisma.shipment.update).not.toHaveBeenCalled();
+    expect(prisma.shipment.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('يشترط إثبات التسليم ويسجل الفاعل عند DELIVERED', async () => {
+    prisma.shipment.findUnique
+      .mockResolvedValueOnce({
+        id: 'sh-1',
+        status: ShipmentStatus.IN_TRANSIT,
+      })
+      .mockResolvedValueOnce({
+        id: 'sh-1',
+        status: ShipmentStatus.IN_TRANSIT,
+      })
+      .mockResolvedValue({
+        id: 'sh-1',
+        status: ShipmentStatus.DELIVERED,
+        proofOfDelivery: 'POD-1',
+        deliveredById: 'actor-1',
+      });
+
+    await expect(
+      service.updateShipmentStatus('sh-1', ShipmentStatus.DELIVERED, 'actor-1'),
+    ).rejects.toThrow('إثبات التسليم مطلوب');
+
+    prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
+    prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
+
+    const delivered = await service.updateShipmentStatus(
+      'sh-1',
+      ShipmentStatus.DELIVERED,
+      'actor-1',
+      'POD-1',
+    );
+
+    expect(delivered).toMatchObject({
+      status: ShipmentStatus.DELIVERED,
+      proofOfDelivery: 'POD-1',
+      deliveredById: 'actor-1',
+    });
+    expect(prisma.activityLog.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        userId: 'actor-1',
+        action: 'SHIPMENT_STATUS_CHANGED',
+      }) as Record<string, unknown>,
+    });
   });
 });

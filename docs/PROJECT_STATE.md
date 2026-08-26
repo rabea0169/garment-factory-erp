@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `19076b4` — دمج PR #30 الخاص بـGF-0015 بعد PR #29 الخاص بـGF-0017 وPR #27 الجزئي |
-| فرع العمل الحالي | `phase6/gf0016-purchasing-complete` — تدقيق وإكمال receipt idempotency |
-| آخر commit في فرع العمل | `19076b4` — base verified؛ تغييرات GF-0016 غير ملتزمة بعد |
-| Pull Request الحالي | لا يوجد؛ فرع GF-0016 قيد الإعداد قبل الرفع |
-| آخر مرحلة مكتملة بالكامل على main | GF-0015 payroll MVP؛ GF-0016 وGF-0017 ما زالا بحاجة تدقيق/إكمال رغم وجود أجزاء مدمجة |
-| حالة CI على main | PASS — Run `32930054490` على `19076b4`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
-| حالة قاعدة البيانات | migrations GF-0014 وGF-0015 نجحت على PostgreSQL 16 في CI؛ migration GF-0016 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
-| إصدار API | `1.0`؛ أضيف payroll draft/approval في GF-0015 وتوثيق receipt idempotency قيد PR GF-0016 |
+| آخر commit على main | `a835b87` — دمج PR #31 لإكمال GF-0016 بعد GF-0015 وGF-0017 الجزئي |
+| فرع العمل الحالي | `phase7/gf0017-shipping-hardening` — lifecycle وPOD |
+| آخر commit في فرع العمل | `a835b87` — base verified؛ تغييرات GF-0017 غير ملتزمة بعد |
+| Pull Request الحالي | لا يوجد؛ فرع GF-0017 قيد الإعداد قبل الرفع |
+| آخر مرحلة مكتملة بالكامل على main | GF-0016 receipt hardening؛ GF-0017 ما زالت بحاجة تدقيق/إكمال رغم PR #29 الجزئي |
+| حالة CI على main | PASS — Run `32931068793` على `a835b87`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0016 نجحت على PostgreSQL 16 في CI؛ migration GF-0017 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
+| إصدار API | `1.0`؛ أضيف payroll draft/approval وreceipt idempotency؛ عقد POD قيد PR GF-0017 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0016-IMPL`: إكمال receipt idempotency والتحقق من PostgreSQL CI |
-| المرحلة النشطة | GF-0016 — Purchasing receipt hardening |
+| المهمة النشطة | `GF-0017-IMPL`: إكمال lifecycle وproof of delivery والتحقق من PostgreSQL CI |
+| المرحلة النشطة | GF-0017 — Shipping lifecycle and POD |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-016.md` |
-| Next exact action | تشغيل diff check، commit/push وفتح PR GF-0016، ثم انتظار migration deploy وPostgreSQL receipt/ledger integration في CI |
+| Last handoff | `docs/handoffs/HANDOFF-017.md` |
+| Next exact action | تشغيل diff check، commit/push وفتح PR GF-0017، ثم انتظار migration deploy وPostgreSQL shipping integration في CI |
 
 ## المهام المكتملة على main
 
@@ -82,4 +82,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `phase6/gf0016-purchasing-complete` فوق `main@19076b4` بعد تدقيق PR #27 وإضافة receipt idempotency وPostgreSQL integration. البوابات المحلية خضراء، والتكامل الحقيقي ينتظر PR CI؛ لا يُعلن GF-0016 مكتملًا قبل ذلك.
+تم تحديث هذا الملف على فرع `phase7/gf0017-shipping-hardening` فوق `main@a835b87` بعد تدقيق PR #29 وإضافة POD وactor وتحديث ذري للحالة. البوابات المحلية الخاصة بالشحن خضراء، والتكامل الحقيقي ينتظر PR CI؛ لا يُعلن GF-0017 مكتملًا قبل ذلك.

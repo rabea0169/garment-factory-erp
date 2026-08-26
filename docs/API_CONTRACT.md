@@ -119,8 +119,11 @@
 
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
-| GET | `/shipping` | الشحنات | 🔒 JWT | أي مستخدم موثّق |
+| GET | `/shipping` | الشحنات مع pagination | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/shipping` | إنشاء شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| PATCH | `/shipping/:id/status` | انتقال حالة شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+
+تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog؛ لا يكتب هذا المسار قيدًا ماليًا أو حركة مخزون.
 
 ## المحاسبة — `/accounting`
 

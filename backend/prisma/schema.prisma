@@ -48,6 +48,7 @@ model User {
 
   payrollsCreated        Payroll[]                       @relation("PayrollCreator")
   payrollsApproved       Payroll[]                       @relation("PayrollApprover")
+  shipmentsDelivered    Shipment[]                     @relation("ShipmentDeliverer")
   @@map("users")
 }
 
@@ -980,10 +981,13 @@ model Shipment {
   trackingNumber    String?
   shippedAt         DateTime?
   deliveredAt       DateTime?
+  proofOfDelivery   String?
+  deliveredById     String?
   notes             String?
   createdAt         DateTime       @default(now())
 
   salesOrder      SalesOrder       @relation(fields: [salesOrderId], references: [id])
+  deliveredBy     User?            @relation("ShipmentDeliverer", fields: [deliveredById], references: [id], onDelete: SetNull)
   shippingCompany ShippingCompany? @relation(fields: [shippingCompanyId], references: [id])
 
   @@map("shipments")

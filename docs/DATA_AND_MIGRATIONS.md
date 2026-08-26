@@ -91,7 +91,15 @@
 
 قبل التطبيق على بيئة مشتركة يجب تشغيل `npx prisma migrate deploy` على PostgreSQL وفحص اختبار receipt/ledger والتزامن. rollback يكون بـbackup/restore أو migration عكسية معتمدة بعد إيقاف endpoint؛ لا تُحذف receipts أو ledger يدويًا.
 
-## 8. نقاط الاسترجاع (Rollback hooks)
+## 8. Migration GF-0017 — Shipment Proof of Delivery
+
+**الاسم:** `20260830030000_gf0017_shipment_pod`
+
+تضيف `shipments.proofOfDelivery` و`shipments.deliveredById` بصورة nullable، مع FK إلى `users` وفهارس الحالة والفاعل. لا تعدّل الشحنات القديمة؛ تسجل الكتابات الجديدة الفاعل والتاريخ من الخادم عند الانتقال إلى DELIVERED، ويجب تنفيذ migration عبر `npx prisma migrate deploy` لا `db push`.
+
+الـrollback يكون بـbackup/restore أو migration عكسية معتمدة بعد إيقاف مسار POD؛ لا تُحذف سجلات الشحن أو ActivityLog. يجب إثبات lifecycle وPOD على PostgreSQL في CI قبل أي بيئة مشتركة.
+
+## 9. نقاط الاسترجاع (Rollback hooks)
 
 - المستودع: `git revert` لأي commit — لا migration بعد عكس schema إلا بmigration عكسية.
 - قاعدة البيانات محليًا: إعادة `docker-compose down -v` ثم `migrate dev` + seed (بيانات تطوير فقط — لا بيانات إنتاج موجودة بعد).

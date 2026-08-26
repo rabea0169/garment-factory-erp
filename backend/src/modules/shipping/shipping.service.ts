@@ -1,11 +1,12 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PrismaService } from '../../prisma/prisma.service';
+import { Prisma, SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
-import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
   generateDocumentCode,
@@ -61,7 +62,12 @@ export class ShippingService {
     });
   }
 
-  async updateShipmentStatus(id: string, status: ShipmentStatus) {
+  async updateShipmentStatus(
+    id: string,
+    status: ShipmentStatus,
+    actorId: string,
+    proofOfDelivery?: string,
+  ) {
     const shipment = await this.prisma.shipment.findUnique({ where: { id } });
     if (!shipment) throw new NotFoundException('Shipment not found');
 
@@ -78,15 +84,51 @@ export class ShippingService {
     if (!allowed[shipment.status].includes(status)) {
       throw new BadRequestException('Invalid shipment status transition');
     }
+    if (status === ShipmentStatus.DELIVERED && !proofOfDelivery?.trim()) {
+      throw new BadRequestException(
+        'إثبات التسليم مطلوب عند تحويل الشحنة إلى DELIVERED',
+      );
+    }
 
-    return this.prisma.shipment.update({
-      where: { id },
-      data: {
-        status,
-        shippedAt: status === ShipmentStatus.SHIPPED ? new Date() : undefined,
-        deliveredAt:
-          status === ShipmentStatus.DELIVERED ? new Date() : undefined,
-      },
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const result = await tx.shipment.updateMany({
+        where: { id, status: shipment.status },
+        data: {
+          status,
+          shippedAt:
+            status === ShipmentStatus.SHIPPED ? new Date() : shipment.shippedAt,
+          deliveredAt:
+            status === ShipmentStatus.DELIVERED
+              ? new Date()
+              : shipment.deliveredAt,
+          proofOfDelivery:
+            status === ShipmentStatus.DELIVERED
+              ? proofOfDelivery?.trim()
+              : undefined,
+          deliveredById:
+            status === ShipmentStatus.DELIVERED ? actorId : undefined,
+        },
+      });
+      if (result.count !== 1) {
+        throw new ConflictException('Shipment status changed concurrently');
+      }
+
+      const updated = await tx.shipment.findUnique({ where: { id } });
+      if (!updated) throw new NotFoundException('Shipment not found');
+      await tx.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'SHIPMENT_STATUS_CHANGED',
+          module: 'SHIPPING',
+          details: {
+            shipmentId: id,
+            from: shipment.status,
+            to: status,
+            proofOfDelivery: status === ShipmentStatus.DELIVERED,
+          },
+        },
+      });
+      return updated;
     });
   }
 }
