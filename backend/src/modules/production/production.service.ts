@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkOrderStatus, Prisma } from '@prisma/client';
+import { WorkOrderStatus } from '@prisma/client';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { EVENTS } from '../../events/event-types';
 import { InventoryService } from '../inventory/inventory.service';
@@ -67,7 +67,7 @@ export class ProductionService {
   async updateOrderStatus(
     id: string,
     status: WorkOrderStatus,
-    userId?: string,
+    _userId?: string,
   ) {
     const existing = await this.prisma.workOrder.findUnique({
       where: { id },
