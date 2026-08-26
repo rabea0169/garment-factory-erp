@@ -3,10 +3,14 @@
 -- to enable audit trail for reversals. The FinancialPostingService.reverseJournalEntry
 -- marks the original entry as reversed + links the new reversal entry via reversalOfId.
 
+-- NOTE: All id columns are TEXT (matching Prisma's @default(uuid()) convention
+-- from the init migration). Using UUID would cause FK type mismatch errors
+-- because journal_entries.id is TEXT not UUID.
+
 -- 1. Add columns idempotently (safe to re-run after partial failure).
 ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "isReversed" BOOLEAN NOT NULL DEFAULT false;
-ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "reversalOfId" UUID;
-ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "reversedById" UUID;
+ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "reversalOfId" TEXT;
+ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "reversedById" TEXT;
 ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "reversedAt" TIMESTAMP(3);
 
 -- 2. Self-FK: reversal entry → original entry (ON DELETE SET NULL — never block deletion of original).

@@ -1,14 +1,18 @@
 -- E5: Multi-currency MVP — Currency model + currencyId on Treasury/JournalEntry.
 -- Seeded with EGP (system default) + USD (reference). Future PR adds FX conversion logic.
 
+-- NOTE: All id columns are TEXT (matching Prisma's @default(uuid()) convention
+-- from the init migration). Using UUID would cause FK type mismatch errors
+-- because all existing tables use TEXT ids.
+
 -- 1. Create currencies table (idempotent — CREATE TABLE IF NOT EXISTS).
 -- Note: 'id' has NO DEFAULT — all inserts (migration + seed) provide explicit UUIDs.
 -- Prisma Client will also provide UUIDs at insert time via @default(uuid()).
 CREATE TABLE IF NOT EXISTS "currencies" (
-  "id" UUID NOT NULL,
-  "code" VARCHAR(3) NOT NULL,
-  "name" VARCHAR(100) NOT NULL,
-  "symbol" VARCHAR(10),
+  "id" TEXT NOT NULL,
+  "code" TEXT NOT NULL,
+  "name" TEXT NOT NULL,
+  "symbol" TEXT,
   "decimalPlaces" INTEGER NOT NULL DEFAULT 2,
   "isActive" BOOLEAN NOT NULL DEFAULT true,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -42,8 +46,8 @@ VALUES (
 ON CONFLICT ("code") DO NOTHING;
 
 -- 4. Add currencyId columns (nullable for backfill).
-ALTER TABLE "treasuries" ADD COLUMN IF NOT EXISTS "currencyId" UUID;
-ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "currencyId" UUID;
+ALTER TABLE "treasuries" ADD COLUMN IF NOT EXISTS "currencyId" TEXT;
+ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "currencyId" TEXT;
 ALTER TABLE "journal_entries" ADD COLUMN IF NOT EXISTS "exchangeRate" DECIMAL(10,6);
 
 -- 5. Backfill: assign EGP to existing treasuries + journal entries (rate 1.0).
