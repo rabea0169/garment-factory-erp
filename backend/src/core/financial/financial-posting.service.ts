@@ -207,8 +207,12 @@ export class FinancialPostingService {
 
     // (3) تحقق وجود الكيانات المُحدَّثة (Treasury/Customer/Supplier).
     if (input.treasuryUpdates?.length) {
+      const treasuryIds = input.treasuryUpdates.map((u) => u.treasuryId);
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM treasuries WHERE id IN (${Prisma.join(treasuryIds)}) FOR UPDATE`,
+      );
       const ts = await tx.treasury.findMany({
-        where: { id: { in: input.treasuryUpdates.map((u) => u.treasuryId) } },
+        where: { id: { in: treasuryIds } },
         select: { id: true, isActive: true, balance: true },
       });
       for (const u of input.treasuryUpdates) {
@@ -240,13 +244,24 @@ export class FinancialPostingService {
       }
     }
     if (input.supplierUpdates?.length) {
+      const supplierIds = input.supplierUpdates.map((u) => u.supplierId);
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM suppliers WHERE id IN (${Prisma.join(supplierIds)}) FOR UPDATE`,
+      );
       const ss = await tx.supplier.findMany({
-        where: { id: { in: input.supplierUpdates.map((u) => u.supplierId) } },
-        select: { id: true },
+        where: { id: { in: supplierIds } },
+        select: { id: true, balance: true },
       });
       for (const u of input.supplierUpdates) {
-        if (!ss.some((s) => s.id === u.supplierId)) {
+        const supplier = ss.find((s) => s.id === u.supplierId);
+        if (!supplier) {
           throw new NotFoundException(`المورد ${u.supplierId} غير موجود`);
+        }
+        const newBalance = Number(supplier.balance) + u.delta;
+        if (newBalance < 0) {
+          throw new BadRequestException(
+            `العملية تُظهر رصيد المورد إلى ${newBalance} — الرصيد السالب للمورد ممنوع`,
+          );
         }
       }
     }
