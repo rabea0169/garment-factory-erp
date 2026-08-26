@@ -46,6 +46,8 @@ model User {
   productionCosts        ProductionCostSnapshot[]
   qualityChecksCreated   QualityCheck[]                  @relation("QualityCheckCreator")
 
+  payrollsCreated        Payroll[]                       @relation("PayrollCreator")
+  payrollsApproved       Payroll[]                       @relation("PayrollApprover")
   @@map("users")
 }
 
@@ -342,6 +344,7 @@ model IdempotencyKey {
   productionConsumption ProductionMaterialConsumption?
   qualityCheck          QualityCheck?
 
+  payroll               Payroll?
   @@index([scope, createdAt])
   @@index([expiresAt])
   @@map("idempotency_keys")
@@ -631,6 +634,10 @@ model QualityCheck {
 
 // ===== M-07: HR & PAYROLL =====
 
+enum PayrollStatus {
+  DRAFT
+  APPROVED
+}
 enum WorkerSpecialty {
   CUTTING
   SEWING
@@ -704,21 +711,31 @@ model WorkerAdvance {
 }
 
 model Payroll {
-  id            String    @id @default(uuid())
-  workerId      String
-  periodStart   DateTime  @db.Date
-  periodEnd     DateTime  @db.Date
-  grossAmount   Decimal   @db.Decimal(10, 2)
-  advanceDeduct Decimal   @default(0) @db.Decimal(10, 2)
-  absenceDeduct Decimal   @default(0) @db.Decimal(10, 2)
-  netAmount     Decimal   @db.Decimal(10, 2)
-  isPaid        Boolean   @default(false)
-  paidAt        DateTime?
-  notes         String?
-  createdAt     DateTime  @default(now())
-
-  worker Worker @relation(fields: [workerId], references: [id])
-
+  id              String        @id @default(uuid())
+  workerId        String
+  periodStart     DateTime      @db.Date
+  periodEnd       DateTime      @db.Date
+  grossAmount     Decimal       @db.Decimal(10, 2)
+  advanceDeduct   Decimal       @default(0) @db.Decimal(10, 2)
+  absenceDeduct   Decimal       @default(0) @db.Decimal(10, 2)
+  netAmount       Decimal       @db.Decimal(10, 2)
+  status          PayrollStatus @default(DRAFT)
+  isPaid          Boolean       @default(false)
+  paidAt          DateTime?
+  notes           String?
+  createdById     String?
+  approvedById    String?
+  approvedAt      DateTime?
+  idempotencyKeyId String?
+  createdAt       DateTime      @default(now())
+  worker          Worker        @relation(fields: [workerId], references: [id])
+  createdBy       User?         @relation("PayrollCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy      User?         @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  idempotencyKey  IdempotencyKey? @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  @@unique([workerId, periodStart, periodEnd])
+  @@unique([idempotencyKeyId])
+  @@index([status, periodStart, periodEnd])
+  @@index([createdById, createdAt])
   @@map("payrolls")
 }
 

@@ -1,12 +1,22 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
-import { HrService } from './hr.service';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Param,
+  Post,
+  Query,
+} from '@nestjs/common';
+import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
+import { PaginationDto } from '../../common/dto/pagination.dto';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
-import { RecordProductionDto } from './dto/record-production.dto';
 import { CreateAdvanceDto } from './dto/create-advance.dto';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { CreatePayrollDto } from './dto/create-payroll.dto';
+import { RecordProductionDto } from './dto/record-production.dto';
+import { HrService } from './hr.service';
 
 @ApiTags('HR (الموارد البشرية والعمال)')
 @Controller('hr')
@@ -51,5 +61,45 @@ export class HrController {
   @ApiOperation({ summary: 'تسجيل سلفة مالية لعامل' })
   async recordAdvance(@Body() body: CreateAdvanceDto) {
     return this.hrService.recordAdvance(body);
+  }
+
+  @Post('payrolls')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'مفتاح إعادة المحاولة الآمنة لإنشاء كشف الراتب',
+  })
+  @ApiOperation({ summary: 'إنشاء كشف راتب محسوب خادميًا بحالة مسودة' })
+  async createPayroll(
+    @Body() body: CreatePayrollDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.createPayroll(
+      {
+        ...body,
+        periodStart: new Date(body.periodStart),
+        periodEnd: new Date(body.periodEnd),
+      },
+      actorId,
+      idempotencyKey,
+    );
+  }
+
+  @Post('payrolls/:id/approve')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'مفتاح إعادة المحاولة الآمنة لاعتماد كشف الراتب',
+  })
+  @ApiOperation({ summary: 'اعتماد كشف راتب مسودة دون ترحيل مالي' })
+  async approvePayroll(
+    @Param('id') payrollId: string,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.approvePayroll(payrollId, actorId, idempotencyKey);
   }
 }

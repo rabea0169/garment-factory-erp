@@ -139,6 +139,7 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
   const viewerToken = () => tokenFor(users[1]);
   const accountantToken = () => tokenFor(users[2]);
+  const adminToken = () => tokenFor(users[0]);
   const cashierToken = () => tokenFor(users[3]);
 
   afterAll(async () => {
@@ -173,6 +174,19 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
   it('GET /quality/kpis بلا توكن → 401', () => {
     return request(app.getHttpServer()).get('/quality/kpis').expect(401);
+  });
+
+  it('POST /hr/payrolls بلا توكن → 401', () => {
+    return request(app.getHttpServer())
+      .post('/hr/payrolls')
+      .send({})
+      .expect(401);
+  });
+
+  it('POST /hr/payrolls/:id/approve بلا توكن → 401', () => {
+    return request(app.getHttpServer())
+      .post('/hr/payrolls/pay-1/approve')
+      .expect(401);
   });
 
   it('GET /accounting/accounts بلا توكن → 401', () => {
@@ -228,7 +242,23 @@ describe('Auth guard (e2e) — GF-0002', () => {
       });
   });
 
-  // ---------- معيار القبول 2: 403 لدور خاطئ ----------
+  it('POST /hr/payrolls بدور VIEWER → 403', () => {
+    return request(app.getHttpServer())
+      .post('/hr/payrolls')
+      .set('Authorization', `Bearer ${viewerToken()}`)
+      .send({})
+      .expect(403);
+  });
+
+  it('POST /hr/payrolls بمدخلات غير صالحة → 400', () => {
+    return request(app.getHttpServer())
+      .post('/hr/payrolls')
+      .set('Authorization', `Bearer ${adminToken()}`)
+      .send({ workerId: 'not-a-uuid' })
+      .expect(400);
+  });
+
+  // ---------- معيار القبول 2: 403 للدور الخطأ ----------
 
   it('VIEWER يحاول إنشاء حساب محاسبي (مقيّد على ACCOUNTANT) → 403', () => {
     return request(app.getHttpServer())

@@ -1,0 +1,194 @@
+import { ConflictException, NotFoundException } from '@nestjs/common';
+import { PayrollStatus, Prisma } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import { computeRequestHash } from '../../core/common/idempotency.util';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import { HrService } from './hr.service';
+
+describe('HrService — GF-0015 payroll', () => {
+  let service: HrService;
+  let prisma: ReturnType<typeof createPrismaMock>;
+  const periodStart = new Date('2026-08-01T00:00:00.000Z');
+  const periodEnd = new Date('2026-08-31T00:00:00.000Z');
+
+  const payrollRow = (overrides: Record<string, unknown> = {}) => ({
+    id: 'pay-1',
+    workerId: 'worker-1',
+    periodStart,
+    periodEnd,
+    grossAmount: new Prisma.Decimal('660.00'),
+    advanceDeduct: new Prisma.Decimal('250.00'),
+    absenceDeduct: new Prisma.Decimal('0.00'),
+    netAmount: new Prisma.Decimal('410.00'),
+    status: PayrollStatus.DRAFT,
+    isPaid: false,
+    paidAt: null,
+    notes: null,
+    createdById: 'actor-1',
+    approvedById: null,
+    approvedAt: null,
+    ...overrides,
+  });
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.worker.findUnique.mockResolvedValue({ id: 'worker-1' });
+    prisma.payroll.findFirst.mockResolvedValue(null);
+    prisma.dailyProduction.aggregate.mockResolvedValue({
+      _sum: { totalAmount: new Prisma.Decimal('660.00') },
+    });
+    prisma.workerAdvance.aggregate.mockResolvedValue({
+      _sum: { amount: new Prisma.Decimal('250.00') },
+    });
+    prisma.payroll.create.mockResolvedValue(payrollRow());
+    prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
+    service = new HrService(prisma as unknown as PrismaService);
+  });
+
+  it('يحسب gross/net من snapshots الخادم ولا يقبل مبلغًا من العميل', async () => {
+    const result = await service.createPayroll(
+      { workerId: 'worker-1', periodStart, periodEnd },
+      'actor-1',
+    );
+
+    expect(result).toMatchObject({
+      grossAmount: 660,
+      advanceDeduct: 250,
+      absenceDeduct: 0,
+      netAmount: 410,
+      status: PayrollStatus.DRAFT,
+      createdById: 'actor-1',
+    });
+    expect(prisma.payroll.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        grossAmount: new Prisma.Decimal('660.00'),
+        advanceDeduct: new Prisma.Decimal('250.00'),
+        absenceDeduct: new Prisma.Decimal('0.00'),
+        netAmount: new Prisma.Decimal('410.00'),
+        createdById: 'actor-1',
+      }) as Record<string, unknown>,
+    });
+  });
+
+  it('لا يسمح بأن تتجاوز خصومات السلف gross', async () => {
+    prisma.workerAdvance.aggregate.mockResolvedValue({
+      _sum: { amount: new Prisma.Decimal('900.00') },
+    });
+    prisma.payroll.create.mockResolvedValue(
+      payrollRow({
+        advanceDeduct: new Prisma.Decimal('660.00'),
+        netAmount: new Prisma.Decimal('0.00'),
+      }),
+    );
+
+    await service.createPayroll(
+      { workerId: 'worker-1', periodStart, periodEnd },
+      'actor-1',
+    );
+
+    expect(prisma.payroll.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        advanceDeduct: new Prisma.Decimal('660.00'),
+        netAmount: new Prisma.Decimal('0.00'),
+      }) as Record<string, unknown>,
+    });
+  });
+
+  it('يرفض فترة تبدأ بعد نهايتها قبل أي استعلام أو كتابة', async () => {
+    await expect(
+      service.createPayroll(
+        {
+          workerId: 'worker-1',
+          periodStart: periodEnd,
+          periodEnd: periodStart,
+        },
+        'actor-1',
+      ),
+    ).rejects.toThrow('بداية فترة الراتب لا يمكن أن تتجاوز نهايتها');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('يرفض كشفًا مكررًا للعامل والفترة', async () => {
+    prisma.payroll.findFirst.mockResolvedValue({ id: 'existing-payroll' });
+
+    await expect(
+      service.createPayroll(
+        { workerId: 'worker-1', periodStart, periodEnd },
+        'actor-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.payroll.create).not.toHaveBeenCalled();
+  });
+
+  it('يعيد replay للاستجابة دون أثر ثانٍ عند تكرار Idempotency-Key', async () => {
+    const stored = { id: 'pay-1', netAmount: 410, status: PayrollStatus.DRAFT };
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      key: 'pay-key',
+      scope: 'hr-payroll-create',
+      requestHash: computeRequestHash({
+        workerId: 'worker-1',
+        periodStart: periodStart.toISOString(),
+        periodEnd: periodEnd.toISOString(),
+        notes: null,
+        actorId: 'actor-1',
+      }),
+      response: stored,
+    });
+
+    const result = await service.createPayroll(
+      { workerId: 'worker-1', periodStart, periodEnd },
+      'actor-1',
+      'pay-key',
+    );
+
+    expect(result).toEqual({ ...stored, replayed: true });
+    expect(prisma.payroll.create).not.toHaveBeenCalled();
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+  });
+
+  it('يعتمد draft مرة واحدة ويحافظ على عدم الدفع داخل GF-0015', async () => {
+    prisma.payroll.findUnique
+      .mockResolvedValueOnce(payrollRow())
+      .mockResolvedValueOnce(
+        payrollRow({
+          status: PayrollStatus.APPROVED,
+          approvedById: 'manager-1',
+          approvedAt: new Date('2026-08-31T12:00:00.000Z'),
+        }),
+      );
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.approvePayroll('pay-1', 'manager-1');
+
+    expect(result).toMatchObject({
+      status: PayrollStatus.APPROVED,
+      approvedById: 'manager-1',
+      isPaid: false,
+    });
+    expect(prisma.payroll.updateMany).toHaveBeenCalledWith({
+      where: { id: 'pay-1', status: PayrollStatus.DRAFT },
+      data: expect.objectContaining({
+        status: PayrollStatus.APPROVED,
+        approvedById: 'manager-1',
+      }) as Record<string, unknown>,
+    });
+  });
+
+  it('يرفض اعتماد كشف معتمد أو كشف غير موجود', async () => {
+    prisma.payroll.findUnique.mockResolvedValueOnce(
+      payrollRow({ status: PayrollStatus.APPROVED }),
+    );
+    await expect(service.approvePayroll('pay-1', 'manager-1')).rejects.toThrow(
+      ConflictException,
+    );
+
+    prisma.payroll.findUnique.mockResolvedValueOnce(null);
+    await expect(
+      service.approvePayroll('missing', 'manager-1'),
+    ).rejects.toThrow(NotFoundException);
+  });
+});

@@ -13,6 +13,8 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     recordDailyProduction: jest.Mock;
     recordAttendance: jest.Mock;
     recordAdvance: jest.Mock;
+    createPayroll: jest.Mock;
+    approvePayroll: jest.Mock;
   };
 
   beforeEach(() => {
@@ -22,6 +24,8 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       recordDailyProduction: jest.fn().mockResolvedValue({ id: 'dp-1' }),
       recordAttendance: jest.fn().mockResolvedValue({ id: 'att-1' }),
       recordAdvance: jest.fn().mockResolvedValue({ id: 'adv-1' }),
+      createPayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
+      approvePayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
     };
     controller = new HrController(service as unknown as HrService);
   });
@@ -83,6 +87,52 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     const body = { workerId: 'w-1', amount: 200 };
     await controller.recordAdvance(body);
     expect(service.recordAdvance).toHaveBeenCalledWith(body);
+  });
+
+  it('إنشاء payroll يمرر تواريخ الفترة وactor وIdempotency-Key', async () => {
+    const body = {
+      workerId: 'w-1',
+      periodStart: '2026-08-01',
+      periodEnd: '2026-08-31',
+      notes: 'كشف أغسطس',
+    };
+    await controller.createPayroll(body, 'hr-1', 'pay-key');
+    expect(service.createPayroll).toHaveBeenCalledWith(
+      {
+        ...body,
+        periodStart: new Date(body.periodStart),
+        periodEnd: new Date(body.periodEnd),
+      },
+      'hr-1',
+      'pay-key',
+    );
+  });
+
+  it('payroll محمي بدوري HR_MANAGER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      HrController.prototype,
+      'createPayroll',
+    );
+    expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
+  });
+
+  it('اعتماد payroll يمرر id وactor وIdempotency-Key', async () => {
+    await controller.approvePayroll('pay-1', 'manager-1', 'approve-key');
+    expect(service.approvePayroll).toHaveBeenCalledWith(
+      'pay-1',
+      'manager-1',
+      'approve-key',
+    );
+  });
+
+  it('اعتماد payroll محمي بدوري HR_MANAGER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      HrController.prototype,
+      'approvePayroll',
+    );
+    expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
   });
 
   it('تسجيل سلفة مقيّد بـ HR_MANAGER فقط', () => {
