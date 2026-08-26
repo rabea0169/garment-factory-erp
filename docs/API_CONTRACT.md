@@ -81,6 +81,14 @@
 
 يدعم GET `/quality/kpis` المرشحات الاختيارية `stage`, `workOrderId`, `from`, و`to`. يعيد `totals` لـ`checkedQty`, `passedQty`, `rejectedQty`, `wasteQty`, و`wasteCost`، إضافة إلى `rates` كنسب مئوية ذات منزلتين: `passRate`, `rejectionRate`, و`wasteRate`. تعتمد النتائج على السجلات ذات `status = COMPLETED` فقط، ويُرفض نطاق تاريخ يبدأ بعد نهايته بـ400.
 
+## لوحة التحكم — `/dashboard`
+
+| Method | Path | الوظيفة | الحماية | الأدوار |
+|---|---|---|---|---|
+| GET | `/dashboard/stats` | مبيعات آخر 6 أشهر وإنتاج آخر 6 أيام وأفضل 5 عمال | 🔒 JWT | أي مستخدم موثّق |
+
+يعيد endpoint مصفوفة `sales` من ست قيم شهرية تشمل الشهر الحالي، ومصفوفة `production` من ست قيم يومية تشمل اليوم، و`topWorkers` مرتبة تنازليًا حسب `pieces`. تستبعد المبيعات الملغاة، وتُحسب القيم مباشرة من PostgreSQL دون mock fallback. لا يقبل endpoint بيانات من العميل ولا يحتاج إلى صلاحية خاصة خارج JWT.
+
 ## الموارد البشرية — `/hr`
 
 | Method | Path | الوظيفة | الحماية | الأدوار |
@@ -91,10 +99,11 @@
 | POST | `/hr/advances` | صرف سلفة | 🔒 JWT | HR_MANAGER |
 | POST | `/hr/payrolls` | إنشاء كشف راتب DRAFT محسوب خادميًا | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
 | POST | `/hr/payrolls/:id/approve` | اعتماد كشف راتب دون دفع أو ترحيل | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
+| POST | `/hr/payrolls/:id/pay` | دفع كشف راتب معتمد وترحيله من الخزينة | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
 
 `POST /hr/payrolls` يستقبل `workerId`, `periodStart`, `periodEnd`, و`notes` فقط. يحسب الخادم `grossAmount` من مجموع `DailyProduction.totalAmount` داخل الفترة، ويحسب `advanceDeduct` من السلف داخل الفترة بحد أقصى gross، ويجعل `absenceDeduct = 0` في MVP وفق ADR-0015. لا يقبل `grossAmount` أو `netAmount` أو الخصومات من العميل، و`netAmount = grossAmount - advanceDeduct - absenceDeduct`. الفترة شاملة لطرفيها، وسجل العامل والفترة فريد.
 
-يدعم الإنشاء والاعتماد رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان الاستجابة المخزنة دون أثر ثانٍ، والمحتوى المختلف أو التكرار المتزامن يُرفض بـ409. الإنشاء يسجل `createdById` والاعتماد يسجل `approvedById` و`approvedAt` من JWT. لا يسمح اعتماد سجل معتمد ولا يغيّر `isPaid`; الدفع والقيد المالي مؤجلان إلى GF-0018.
+يدعم الإنشاء والاعتماد والدفع رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان الاستجابة المخزنة دون أثر ثانٍ، والمحتوى المختلف أو التكرار المتزامن يُرفض بـ409. الإنشاء يسجل `createdById` والاعتماد يسجل `approvedById` و`approvedAt` من JWT. لا يسمح اعتماد سجل معتمد. يتطلب الدفع كشفًا بحالة `APPROVED` وغير مدفوع، و`treasuryId` صالحًا لخزينة نشطة، ويحسب الخادم المبلغ من `netAmount`؛ لا يقبل مبلغًا من العميل. ينشئ الدفع قيدًا مزدوجًا: مدين `GENERAL_EXPENSE` ودائن `CASH`، ويخفض رصيد الخزينة ويسجل `PAYROLL_PAID` داخل transaction واحدة. لا تُقبل دفعة لصافي مبلغ غير موجب، ولا يُعاد تنفيذ القيد عند replay.
 
 ## المشتريات — `/purchasing`
 
@@ -129,7 +138,7 @@
 | POST | `/shipping` | إنشاء شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | PATCH | `/shipping/:id/status` | انتقال حالة شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام عبر InventoryService داخل نفس transaction، وفشل أي عنصر يعيد العملية كاملة.
+تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. لا يخصم مسار الشحن المخزون عند `SHIPPED`؛ صرف المنتج التام وترحيل COGS يحدثان مرة واحدة عند تأكيد أمر البيع في `/sales`، ويثبت اختبار الشحن التكاملـي عدم وجود ISSUE مرتبط بمرجع الشحنة.
 
 يدعم `POST /shipping` رأس `Idempotency-Key` اختياريًا. نفس المفتاح مع نفس body وactor يعيد الشحنة دون إنشاء جديد، وإعادة استخدامه بمحتوى مختلف تُرفض بـ409. actor مأخوذ من JWT ولا يُقبل من body.
 
@@ -205,7 +214,7 @@
 
 ## ثغرات العقد المتبقية (تُغلق تباعًا)
 
-1. **لا endpoint للـ Dashboard/Reports** رغم أن Flutter يطلب `/dashboard/stats` (P1-05 — GF-0019).
+1. ~~**لا endpoint للـ Dashboard/Reports** رغم أن Flutter يطلب `/dashboard/stats` (P1-05 — GF-0019).~~ — ✅ **أُغلقت بإضافة DashboardModule وبيانات PostgreSQL فعلية واختبار KPI.**
 2. ~~**لا pagination** في القوائم~~ — ✅ **أُغلقت في GF-0012** بعقد موحد واختبارات حدودية.
 3. ~~**لا DTOs** في معظم مسارات الكتابة~~ — ✅ **أُغلقت في GF-0004**.
 4. ~~**لا معالج أخطاء موحد**~~ — ✅ **أُغلق في Cluster 4** عبر Global Exception Filter؛ يجب إضافة اختبارات عقدية لأي أخطاء جديدة.
@@ -239,6 +248,8 @@
 // POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
 // POST /hr/payrolls  { "workerId": "uuid", "periodStart": "2026-08-01", "periodEnd": "2026-08-31", "notes": "اختياري" }
 // POST /hr/payrolls/:id/approve  Header: Idempotency-Key: payroll-approve-2026-08
+// POST /hr/payrolls/:id/pay  Header: Idempotency-Key: payroll-pay-2026-08
+// Body: { "treasuryId": "uuid", "paymentDate": "2026-08-31", "notes": "اختياري" }
 // POST /quality  { "workOrderId": "uuid", "stage": "SEWING", "checkedQty": 100, "passedQty": 95, "rejectedQty": 5 }
 // POST /products  { "code": "PRD-T01", "name": "تيشيرت", "category": "تيشيرت", "retailPrice": 250, "wholesalePrice": 180, "seasonId": "uuid?" }
 // POST /sales/customers  { "name": "عميل", "phone": "اختياري", "address": "اختياري" }

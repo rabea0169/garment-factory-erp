@@ -1,6 +1,8 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PayrollStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { computeRequestHash } from '../../core/common/idempotency.util';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { HrService } from './hr.service';
@@ -8,6 +10,7 @@ import { HrService } from './hr.service';
 describe('HrService — GF-0015 payroll', () => {
   let service: HrService;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let financial: { postJournalEntryInTx: jest.Mock };
   const periodStart = new Date('2026-08-01T00:00:00.000Z');
   const periodEnd = new Date('2026-08-31T00:00:00.000Z');
 
@@ -32,6 +35,7 @@ describe('HrService — GF-0015 payroll', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    financial = { postJournalEntryInTx: jest.fn() };
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
@@ -46,7 +50,10 @@ describe('HrService — GF-0015 payroll', () => {
     });
     prisma.payroll.create.mockResolvedValue(payrollRow());
     prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
-    service = new HrService(prisma as unknown as PrismaService);
+    service = new HrService(
+      prisma as unknown as PrismaService,
+      financial as unknown as FinancialPostingService,
+    );
   });
 
   it('يحسب gross/net من snapshots الخادم ولا يقبل مبلغًا من العميل', async () => {
@@ -176,6 +183,72 @@ describe('HrService — GF-0015 payroll', () => {
         approvedById: 'manager-1',
       }) as Record<string, unknown>,
     });
+  });
+
+  it('يدفع كشفًا معتمدًا مرة واحدة ويرحل المبلغ من الخزينة', async () => {
+    const paymentDate = new Date('2026-08-31T12:00:00.000Z');
+    prisma.payroll.findUnique
+      .mockResolvedValueOnce(
+        payrollRow({
+          status: PayrollStatus.APPROVED,
+          approvedById: 'manager-1',
+        }),
+      )
+      .mockResolvedValueOnce(
+        payrollRow({
+          status: PayrollStatus.APPROVED,
+          isPaid: true,
+          paidAt: paymentDate,
+          approvedById: 'manager-1',
+        }),
+      );
+    prisma.treasury.findUnique.mockResolvedValue({
+      id: 'treasury-1',
+      isActive: true,
+    });
+    prisma.idempotencyKey.create.mockResolvedValue({ id: 'pay-idem-1' });
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.payPayroll(
+      'pay-1',
+      { treasuryId: 'treasury-1', paymentDate },
+      'manager-1',
+      'pay-key',
+    );
+
+    expect(result).toMatchObject({
+      isPaid: true,
+      status: PayrollStatus.APPROVED,
+    });
+    expect(prisma.payroll.updateMany).toHaveBeenCalledWith({
+      where: { id: 'pay-1', status: PayrollStatus.APPROVED, isPaid: false },
+      data: { isPaid: true, paidAt: paymentDate },
+    });
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        reference: 'PAYROLL:pay-1',
+        lines: [
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+            creditAccountId: CHART_OF_ACCOUNTS.CASH,
+            amount: 410,
+          }),
+        ],
+        treasuryUpdates: [{ treasuryId: 'treasury-1', delta: -410 }],
+      }),
+      'manager-1',
+    );
+  });
+
+  it('يرفض دفع كشف غير معتمد أو مدفوعًا مسبقًا', async () => {
+    prisma.payroll.findUnique.mockResolvedValue(
+      payrollRow({ status: PayrollStatus.DRAFT }),
+    );
+    await expect(
+      service.payPayroll('pay-1', { treasuryId: 'treasury-1' }, 'manager-1'),
+    ).rejects.toThrow(ConflictException);
+    expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
   });
 
   it('يرفض اعتماد كشف معتمد أو كشف غير موجود', async () => {
