@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `c18a2aa` — دمج PR #49 وإغلاق GF-REMAINING-002؛ CI PR أخضر |
-| فرع العمل الحالي | `fix/gf-remaining-003-production-idempotency` — حماية مخرجات المراحل من التكرار |
-| آخر commit في فرع العمل | `813bbac` — idempotency لمخرجات المراحل وmigration additive؛ CI أخضر |
-| Pull Request الحالي | [PR #50](https://github.com/rabea0169/garment-factory-erp/pull/50) — CI أخضر؛ ينتظر الدمج |
+| آخر commit على main | `3d28b0f` — دمج PR #50 وإغلاق GF-REMAINING-003؛ CI main يحتاج تحققاً بعد الدمج |
+| فرع العمل الحالي | `fix/gf-remaining-004-dashboard-reports` — Dashboard/Reports حقيقي من قاعدة البيانات |
+| آخر commit في فرع العمل | `1bb96c7` — Dashboard حقيقي وReports mobile؛ backend gates خضراء محلياً |
+| Pull Request الحالي | سيُفتح بعد اكتمال بوابات GF-REMAINING-004 |
 | آخر مرحلة مكتملة بالكامل على main | GF-0019؛ تحقق main CI النهائي أخضر |
 | حالة CI على main | آخر main `c18a2aa` بعد PR #49؛ PR #50 CI run `32943011942` أخضر، وmain لا يزال بانتظار الدمج |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ Dashboard لا يضيف migration |
 | إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries وcreateShipment idempotency |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-003 — idempotency لمخرجات مراحل الإنتاج |
-| المرحلة النشطة | GF-REMAINING-003 مكتملة على فرع مستقل؛ PR #50 وCI أخضران؛ الدمج فقط بتفويض صريح |
+| المهمة النشطة | GF-REMAINING-004 — Dashboard/Reports الحقيقي |
+| المرحلة النشطة | GF-REMAINING-004 قيد التنفيذ؛ backend route وFlutter reports دون static/mock fallback |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0019؛ actor من JWT، المسارات محمية، وSecret Scan CI PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-002.md`؛ handoff GF-REMAINING-003 سيُضاف مع الإصلاح |
-| Next exact action | دمج PR #50 بتفويض صريح ثم التحقق من main CI؛ بعدها يبدأ GF-REMAINING-004 |
+| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-003.md`؛ handoff GF-REMAINING-004 سيُضاف مع الإصلاح |
+| Next exact action | تشغيل بوابات backend وFlutter وفتح PR GF-REMAINING-004؛ لا يبدأ GF-REMAINING-005 قبل الدمج والتحقق |
 
 ## المهام المكتملة على main
 

@@ -20,6 +20,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { FinancialModule } from './core/financial/financial.module';
 import { HealthController } from './common/health.controller';
+import { DashboardModule } from './modules/dashboard/dashboard.module';
 
 @Module({
   imports: [
@@ -56,6 +57,7 @@ import { HealthController } from './common/health.controller';
     QualityModule,
     ShippingModule,
     PurchasingModule,
+    DashboardModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200

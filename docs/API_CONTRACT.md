@@ -47,6 +47,14 @@
 
 يعيد `/inventory/raw-materials/:id/balance-by-warehouse` رصيد كل مستودع من `SUM(stock_ledger_entries.quantityDelta)`، وليس من آخر `balanceAfter`. وفي استجابة حركات المخزون، يمثل `balanceAfter` الرصيد بعد الحركة داخل `warehouseId` المحدد؛ أما `RawMaterial.currentStock` فيبقى الإجمالي عبر المستودعات. معرف غير صالح يرد `400`.
 
+## Dashboard — `/dashboard`
+
+| Method | Path | الوظيفة | الحماية | المدخلات |
+|---|---|---|---|---|
+| GET | `/dashboard/stats` | KPIs المبيعات والإنتاج والعمال والمخزون من قاعدة البيانات | 🔒 JWT | `from` و`to` اختياريان بصيغة ISO-8601 |
+
+يعيد المسار `filters`, `generatedAt`, و`sales` كسلسلة شهرية من `SalesOrder.totalAmount` للطلبات غير الملغاة، و`production` كسلسلة يومية من `DailyProduction.piecesCount`، و`topWorkers` لأعلى خمسة عمال في الفترة، و`inventory` من جداول الخامات والمخزون التام. لا توجد بيانات ثابتة أو mock fallback. إذا أُرسلت `from` بعد `to` أو بصيغة غير صالحة يرد الخادم بـ400. كل رقم يرافقه تعريف في `definitions` داخل الاستجابة.
+
 ## الإنتاج — `/production`
 
 | Method | Path | الوظيفة | الحماية | الأدوار |
