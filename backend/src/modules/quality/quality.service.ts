@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RejectionReason, WorkOrderStatus } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
@@ -43,6 +43,21 @@ export class QualityService {
     rejectionReason?: RejectionReason;
     notes?: string;
   }) {
+    const quantities = [data.checkedQty, data.passedQty, data.rejectedQty];
+    if (
+      quantities.some((quantity) => !Number.isInteger(quantity) || quantity < 0)
+    ) {
+      throw new BadRequestException(
+        'كميات فحص الجودة يجب أن تكون أعدادًا صحيحة غير سالبة',
+      );
+    }
+
+    if (data.checkedQty !== data.passedQty + data.rejectedQty) {
+      throw new BadRequestException(
+        'يجب أن تساوي الكمية المفحوصة مجموع الكمية الناجحة والمرفوضة',
+      );
+    }
+
     return this.prisma.qualityCheck.create({ data });
   }
 }

@@ -55,6 +55,36 @@ describe('QualityService — فحوصات الجودة (GF-0003)', () => {
     expect(prisma.qualityCheck.create).toHaveBeenCalledWith({ data });
   });
 
+  it('يرفض اختلاف مجموع الكميات قبل الوصول إلى قاعدة البيانات', async () => {
+    await expect(
+      service.addQualityCheck({
+        workOrderId: 'wo-1',
+        stage: WorkOrderStatus.SEWING,
+        checkedQty: 100,
+        passedQty: 90,
+        rejectedQty: 5,
+      }),
+    ).rejects.toThrow(
+      'يجب أن تساوي الكمية المفحوصة مجموع الكمية الناجحة والمرفوضة',
+    );
+
+    expect(prisma.qualityCheck.create).not.toHaveBeenCalled();
+  });
+
+  it('يرفض الكميات السالبة أو غير الصحيحة', async () => {
+    await expect(
+      service.addQualityCheck({
+        workOrderId: 'wo-1',
+        stage: WorkOrderStatus.SEWING,
+        checkedQty: -1,
+        passedQty: 0,
+        rejectedQty: 0,
+      }),
+    ).rejects.toThrow('كميات فحص الجودة يجب أن تكون أعدادًا صحيحة غير سالبة');
+
+    expect(prisma.qualityCheck.create).not.toHaveBeenCalled();
+  });
+
   it('لا يسجل فحصًا إلا عبر create — لا مسار تعديل مباشر موجود', async () => {
     prisma.qualityCheck.create.mockResolvedValue({ id: 'qc-3' });
     await service.addQualityCheck({
