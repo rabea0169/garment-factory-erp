@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `9e8ffcc` — دمج PR #25 الخاص بـGF-0014 فوق PR #24 |
-| فرع العمل الحالي | `docs/post-gf0014-state` — توثيق post-merge |
-| آخر commit في فرع العمل | `9e8ffcc` — نفس merge commit الموجود على origin/main |
-| Pull Request الحالي | PR #25 مدمج؛ هذا الفرع مخصص لتوثيق post-merge |
-| آخر مرحلة مكتملة بالكامل على main | GF-0013؛ GF-0015 بدأ جزئيًا فقط عبر attendance endpoint في PR #24 |
-| حالة CI على main | PASS — Run `32926745698` على `9e8ffcc`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| آخر commit على main | `9ed97f7` — دمج PR #26 التوثيقي بعد PR #25 الخاص بـGF-0014 |
+| فرع العمل الحالي | `docs/reconcile-gf0015-0018` — توثيق ومراجعة نطاق GF-0015 |
+| آخر commit في فرع العمل | `9ed97f7` — نفس merge commit الموجود على origin/main قبل توثيق reconciliation |
+| Pull Request الحالي | لا يوجد؛ تغييرات reconciliation قيد الإعداد في فرع docs مستقل |
+| آخر مرحلة مكتملة بالكامل على main | GF-0014؛ GF-0015 بدأ جزئيًا فقط عبر attendance endpoint في PR #24 |
+| حالة CI على main | PASS — Run `32927078386` على `9ed97f7`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
 | حالة قاعدة البيانات | migration `20260830000000_gf0014_quality_waste` نجحت على PostgreSQL 16 disposable في CI؛ لا توجد production/shared DB بعد |
 | إصدار API | `1.0`؛ أضيف `GET /quality/kpis` ووثّق POST الجودة في GF-0014 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0015-RECONCILE`: مراجعة ما تبقى من HR/Payroll بعد attendance المدمج |
-| المرحلة النشطة | بوابة تحديد نطاق GF-0015 قبل التنفيذ |
+| المهمة النشطة | `GF-0015-IMPL`: تنفيذ payroll draft/approval بعد إغلاق مراجعة النطاق |
+| المرحلة النشطة | GF-0015 — HR/Payroll implementation gate |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
-| حالة GF-0015 | يوجد جزء attendance مدمج في main؛ لا يبدأ تنفيذ HR/Payroll إضافي قبل مراجعة PR #24 مقابل MASTER_BACKLOG |
+| حالة GF-0015 | attendance مدمج عبر PR #24؛ نطاق payroll موثق في ADR-0015 وبطاقة HANDOFF-015-REVIEW، والتنفيذ لم يبدأ |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-014.md` — محدث بإغلاق PR #25 في هذا commit التوثيقي |
-| Next exact action | مراجعة PR #24 وملف MASTER_BACKLOG لتحديد ما تبقى من GF-0015، ثم فتح مهمة دقيقة مستقلة دون تكرار attendance |
+| Last handoff | `docs/handoffs/HANDOFF-015-REVIEW.md` |
+| Next exact action | فتح فرع تنفيذ فوق main الحالي لـ`GF-0015-IMPL` وإضافة payroll draft/approval وفق ADR-0015، دون إعادة تنفيذ attendance |
 
 ## المهام المكتملة على main
 
@@ -40,7 +40,7 @@
 | GF-0012 | Pagination موحد لكل القوائم مع data/meta وقيود page/limit | مكتملة |
 | GF-0013 | مراحل الإنتاج، stage runs، المخرجات، الاستهلاك، التكلفة، وposting المنتج التام | مدمجة على main؛ تحتاج متابعة UI/اختبارات تشغيلية لاحقة |
 | GF-0014 | الجودة والهالك وربط stageRun وKPI | مكتملة ومُدمجة عبر PR #25؛ migration وCI PostgreSQL ناجحان |
-| GF-0015 | attendance endpoint | جزئية مدمجة عبر PR #24؛ لا تعتبر المرحلة مكتملة |
+| GF-0015 | attendance endpoint + payroll | attendance جزئي مدمج عبر PR #24؛ payroll ينتظر التنفيذ المستقل |
 
 ## GF-0014 — الحالة التفصيلية
 
@@ -82,4 +82,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف post-merge على فرع `docs/post-gf0014-state` فوق `main@9e8ffcc`، بعد دمج PR #25 والتحقق من CI Run `32926745698`. المهمة التالية هي مراجعة scope GF-0015 الجزئي قبل أي تنفيذ جديد.
+تم تحديث هذا الملف على فرع `docs/reconcile-gf0015-0018` فوق `main@9ed97f7` بعد مراجعة PR #24، إضافة ADR-0015، وتوحيد MASTER_BACKLOG. المهمة التالية الدقيقة هي `GF-0015-IMPL` وفق HANDOFF-015-REVIEW.
