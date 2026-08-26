@@ -6,7 +6,7 @@
 - **Base:** `origin/main@0b34949` after merge of GF-REMAINING-006.
 - **Branch:** `phase2/gf-remaining-007-performance`
 - **Scope:** قياس الأداء على خادم backend فعلي متصل بـPostgreSQL 16، مع حمل ثابت موثق على health/readiness/dashboard، وإنتاج artifact JSON يحوي p95 وthroughput وpool saturation.
-- **Status:** implementation complete locally; benchmark runtime and PostgreSQL-backed artifact are pending CI.
+- **Status:** initial CI exposed an incorrect production build entrypoint; `start:prod` was corrected to `dist/src/main.js`; benchmark runtime and artifact require a new CI run.
 
 ## 2. Changes
 
@@ -14,7 +14,7 @@
 
 يختبر benchmark ثلاثة مسارات: `GET /health` كخط أساس للعملية، `GET /health/ready` كمسار قاعدة البيانات، و`GET /dashboard/stats` كمسار تقارير ERP محمي بالمصادقة. يسجل الدخول بحساب seed الإداري ولا يستخدم token أو بيانات ثابتة خارج بيئة الاختبار.
 
-أضيف `npm run test:performance`، وjob مستقل في CI ينشئ PostgreSQL 16، يطبق migrations، يشغل seed، يبني الخادم ويشغله، ينتظر readiness، ثم ينفذ benchmark ويرفع JSON كـartifact.
+أضيف `npm run test:performance`، وjob مستقل في CI ينشئ PostgreSQL 16، يطبق migrations، يشغل seed، يبني الخادم ويشغله، ينتظر readiness، ثم ينفذ benchmark ويرفع JSON كـartifact. كما صُحح `start:prod` من `dist/main` إلى مسار Nest build الفعلي `dist/src/main.js` بعد أن كشف أول تشغيل CI أن المسار القديم يفشل بـ`MODULE_NOT_FOUND`.
 
 لا تُفرض thresholds تخمينية. يمكن لمالك البيئة ضبط `PERF_MAX_P95_MS` أو `PERF_MIN_THROUGHPUT_RPS` أو `PERF_MAX_ERROR_RATE` صراحة؛ بدونها تكون المرحلة قياساً baseline لا قرار SLA.
 
@@ -22,6 +22,7 @@
 
 | Gate | Result | Evidence |
 |---|---|---|
+| Production entrypoint | PASS locally | `npm run build` produces `dist/src/main.js`; `start:prod` now points to it |
 | Node syntax check | PASS | `node --check test/performance/dashboard-load.mjs` |
 | Backend format check | PASS | `npm run format:check` |
 | Typecheck | PASS | `npm run typecheck` |
@@ -29,7 +30,7 @@
 | Build | PASS | `npm run build` |
 | Unit tests | PASS | 32 suites / 197 tests |
 | E2E tests | PASS | 3 suites / 64 tests |
-| Runtime benchmark | PENDING CI | local sandbox has no PostgreSQL/backend runtime environment |
+| Runtime benchmark | PENDING CI rerun | first CI reached performance job but failed before benchmark بسبب `dist/main`؛ path corrected |
 
 ## 4. CI acceptance criteria
 
