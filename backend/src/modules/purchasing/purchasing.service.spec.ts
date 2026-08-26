@@ -6,21 +6,25 @@ import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { PaymentType, PurchaseOrderStatus } from '@prisma/client';
 import { BadRequestException } from '@nestjs/common';
 import { computeRequestHash } from '../../core/common/idempotency.util';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 
 describe('PurchasingService (GF-0009)', () => {
   let service: PurchasingService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let inventoryService: { receive: jest.Mock };
+  let financialPosting: { postJournalEntryInTx: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
 
     inventoryService = { receive: jest.fn() };
+    financialPosting = { postJournalEntryInTx: jest.fn() };
     prisma.supplier.findFirst.mockResolvedValue({ id: 'sup-1' });
 
     service = new PurchasingService(
       prisma as unknown as PrismaService,
       inventoryService as unknown as InventoryService,
+      financialPosting as unknown as FinancialPostingService,
     );
   });
 

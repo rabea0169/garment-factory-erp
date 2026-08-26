@@ -9,6 +9,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { InventoryService } from '../src/modules/inventory/inventory.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { PurchasingService } from '../src/modules/purchasing/purchasing.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -34,6 +35,7 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
     service = new PurchasingService(
       prisma,
       new InventoryService(prisma, new EventEmitter2()),
+      new FinancialPostingService(prisma),
     );
   });
 

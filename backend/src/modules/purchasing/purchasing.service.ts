@@ -8,6 +8,8 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
@@ -27,6 +29,7 @@ export class PurchasingService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
+    private readonly financialPosting: FinancialPostingService,
   ) {}
 
   async getPurchaseOrders(pagination: PaginationDto) {
@@ -189,11 +192,13 @@ export class PurchasingService {
             include: { items: true },
           });
 
+          let receiptTotal = 0;
           for (const item of dto.items) {
             const orderItem = orderItems.get(item.purchaseOrderItemId);
             if (!orderItem) {
               throw new NotFoundException('Item not found in order');
             }
+            receiptTotal += item.quantity * Number(orderItem.unitCost);
             await this.inventoryService.receive(
               {
                 rawMaterialId: orderItem.rawMaterialId,
@@ -207,6 +212,32 @@ export class PurchasingService {
               tx,
             );
           }
+
+          await this.financialPosting.postJournalEntryInTx(
+            tx,
+            {
+              description: `استلام مشتريات ${receipt.code}`,
+              reference: receipt.code,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+                  amount: receiptTotal,
+                  description: `إثبات مخزون مقابل مورد ${order.supplierId}`,
+                },
+              ],
+              supplierUpdates: [
+                { supplierId: order.supplierId, delta: receiptTotal },
+              ],
+              metadata: {
+                source: 'PURCHASE_RECEIPT',
+                purchaseReceiptId: receipt.id,
+              },
+              postingKey: `purchasing.grn:${receipt.id}`,
+            },
+            userId,
+          );
 
           const allReceived = order.items.every((item) => {
             const previous = receivedByItem.get(item.id) ?? 0;
