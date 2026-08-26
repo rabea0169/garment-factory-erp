@@ -1,0 +1,407 @@
+[1;37mdiff --git a/backend/src/modules/production/gf-audit-001c.spec.ts b/backend/src/modules/production/gf-audit-001c.spec.ts[m
+new file mode 100644
+[1;37mindex 0000000..2b097e1[m
+[1;37m--- /dev/null[m
+[1;37m+++ b/backend/src/modules/production/gf-audit-001c.spec.ts[m
+@@ -0,0 +1,83 @@
+[32m+import { Test, TestingModule } from '@nestjs/testing';[m
+[32m+import { BadRequestException } from '@nestjs/common';[m
+[32m+import { ProductionService } from './production.service';[m
+[32m+import { PrismaService } from '../../prisma/prisma.service';[m
+[32m+import { InventoryService } from '../inventory/inventory.service';[m
+[32m+import { EventEmitter2 } from '@nestjs/event-emitter';[m
+[32m+import { WorkOrderStatus } from '@prisma/client';[m
+[32m+[m
+[32m+describe('GF-AUDIT-001C: Prevent old production status path bypass', () => {[m
+[32m+  let service: ProductionService;[m
+[32m+[m
+[32m+  const mockPrisma = {[m
+[32m+    workOrder: {[m
+[32m+      findUnique: jest.fn(),[m
+[32m+      update: jest.fn(),[m
+[32m+      create: jest.fn(),[m
+[32m+    },[m
+[32m+    warehouse: {[m
+[32m+      findFirst: jest.fn(),[m
+[32m+    },[m
+[32m+    $transaction: jest.fn(),[m
+[32m+  };[m
+[32m+[m
+[32m+  mockPrisma.$transaction.mockImplementation([m
+[32m+    (cb: (prisma: any) => Promise<any>) => cb(mockPrisma),[m
+[32m+  );[m
+[32m+[m
+[32m+  const mockInventoryService = {[m
+[32m+    issue: jest.fn(),[m
+[32m+    receiveFinishedGood: jest.fn(),[m
+[32m+  };[m
+[32m+[m
+[32m+  const mockEventEmitter = {[m
+[32m+    emitAsync: jest.fn(),[m
+[32m+  };[m
+[32m+[m
+[32m+  beforeEach(async () => {[m
+[32m+    const module: TestingModule = await Test.createTestingModule({[m
+[32m+      providers: [[m
+[32m+        ProductionService,[m
+[32m+        { provide: PrismaService, useValue: mockPrisma },[m
+[32m+        { provide: InventoryService, useValue: mockInventoryService },[m
+[32m+        { provide: EventEmitter2, useValue: mockEventEmitter },[m
+[32m+      ],[m
+[32m+    }).compile();[m
+[32m+[m
+[32m+    service = module.get<ProductionService>(ProductionService);[m
+[32m+  });[m
+[32m+[m
+[32m+  it('SHOULD NOT allow setting status to COMPLETED via legacy path (Bypass Check)', async () => {[m
+[32m+    mockPrisma.workOrder.findUnique.mockResolvedValue({[m
+[32m+      id: 'wo-1',[m
+[32m+      status: WorkOrderStatus.PLANNED,[m
+[32m+      quantity: 10,[m
+[32m+      code: 'WO-1',[m
+[32m+      productVariantId: 'v-1',[m
+[32m+      bomVersion: { lines: [] },[m
+[32m+    });[m
+[32m+    mockPrisma.warehouse.findFirst.mockResolvedValue({[m
+[32m+      id: 'wh-1',[m
+[32m+    });[m
+[32m+[m
+[32m+    // This is what we want to prevent[m
+[32m+    await expect([m
+[32m+      service.updateOrderStatus('wo-1', WorkOrderStatus.COMPLETED, 'user-1'),[m
+[32m+    ).rejects.toThrow(BadRequestException);[m
+[32m+  });[m
+[32m+[m
+[32m+  it('SHOULD NOT allow modifying a COMPLETED work order (Immutability Check)', async () => {[m
+[32m+    mockPrisma.workOrder.findUnique.mockResolvedValue({[m
+[32m+      id: 'wo-completed',[m
+[32m+      status: WorkOrderStatus.COMPLETED,[m
+[32m+    });[m
+[32m+[m
+[32m+    await expect([m
+[32m+      service.updateOrderStatus([m
+[32m+        'wo-completed',[m
+[32m+        WorkOrderStatus.CANCELLED,[m
+[32m+        'user-1',[m
+[32m+      ),[m
+[32m+    ).rejects.toThrow(BadRequestException);[m
+[32m+  });[m
+[32m+});[m
+[1;37mdiff --git a/backend/src/modules/production/production.controller.spec.ts b/backend/src/modules/production/production.controller.spec.ts[m
+[1;37mindex 2e520e3..87720cf 100644[m
+[1;37m--- a/backend/src/modules/production/production.controller.spec.ts[m
+[1;37m+++ b/backend/src/modules/production/production.controller.spec.ts[m
+@@ -188,12 +188,15 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
+     ]);
+   });
+ 
+[31m-  it('تحديث الحالة legacy مقيّد بـ PRODUCTION_MANAGER فقط', () => {[m
+[32m+  it('تحديث الحالة legacy مقيّد بـ PRODUCTION_MANAGER و GENERAL_MANAGER', () => {[m
+     const roles = getMethodMetadata<UserRole[]>(
+       ROLES_KEY,
+       ProductionController.prototype,
+       'updateStatus',
+     );
+[31m-    expect(roles).toEqual([UserRole.PRODUCTION_MANAGER]);[m
+[32m+    expect(roles).toEqual([[m
+[32m+      UserRole.PRODUCTION_MANAGER,[m
+[32m+      UserRole.GENERAL_MANAGER,[m
+[32m+    ]);[m
+   });
+ });
+[1;37mdiff --git a/backend/src/modules/production/production.controller.ts b/backend/src/modules/production/production.controller.ts[m
+[1;37mindex 252900e..bea2b7a 100644[m
+[1;37m--- a/backend/src/modules/production/production.controller.ts[m
+[1;37m+++ b/backend/src/modules/production/production.controller.ts[m
+@@ -49,9 +49,12 @@ export class ProductionController {
+   }
+ 
+   @Patch('work-orders/:id/status')
+[31m-  @Roles(UserRole.PRODUCTION_MANAGER)[m
+[32m+  @Roles(UserRole.PRODUCTION_MANAGER, UserRole.GENERAL_MANAGER)[m
+   @ApiOperation({
+[31m-    summary: 'تحديث حالة أمر التشغيل (المسار القديم للتوافق)',[m
+[32m+    summary:[m
+[32m+      'تحديث حالة أمر التشغيل (المسار القديم - مقيد الآن بـ CANCELLED/PLANNED)',[m
+[32m+    description:[m
+[32m+      'يمنع هذا المسار الآن الانتقال إلى COMPLETED أو أي حالة تدار عبر ProductionWorkflowService.',[m
+   })
+   async updateStatus(
+     @Param('id', ParseUUIDPipe) id: string,
+[1;37mdiff --git a/backend/src/modules/production/production.service.spec.ts b/backend/src/modules/production/production.service.spec.ts[m
+[1;37mindex 2fd2441..d0b4250 100644[m
+[1;37m--- a/backend/src/modules/production/production.service.spec.ts[m
+[1;37m+++ b/backend/src/modules/production/production.service.spec.ts[m
+@@ -103,77 +103,64 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
+     );
+   });
+ 
+[31m-  it('تحديث حالة غير مكتملة: يحدّث فقط دون لمس المنتج التام ولا أحداث إكمال', async () => {[m
+[32m+  it('تحديث حالة مسموحة (CANCELLED): يحدّث ويطلق حدث الإلغاء', async () => {[m
+[32m+    prisma.workOrder.findUnique.mockResolvedValue({[m
+[32m+      id: 'wo-1',[m
+[32m+      status: WorkOrderStatus.PLANNED,[m
+[32m+    });[m
+     prisma.workOrder.update.mockResolvedValue({
+       id: 'wo-1',
+[31m-      status: 'SEWING',[m
+[31m-      productId: 'p-1',[m
+[31m-      quantity: 100,[m
+[32m+      status: WorkOrderStatus.CANCELLED,[m
+     });
+ 
+[31m-    await service.updateOrderStatus('wo-1', WorkOrderStatus.SEWING);[m
+[32m+    await service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED);[m
+ 
+     expect(prisma.workOrder.update).toHaveBeenCalledWith({
+       where: { id: 'wo-1' },
+[31m-      data: { status: 'SEWING' },[m
+[32m+      data: { status: WorkOrderStatus.CANCELLED },[m
+     });
+[31m-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();[m
+[31m-    expect(eventEmitter.emitAsync).not.toHaveBeenCalled();[m
+[32m+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith([m
+[32m+      EVENTS.WORK_ORDER_CANCELLED,[m
+[32m+      expect.any(Object),[m
+[32m+    );[m
+   });
+ 
+[31m-  it('الإكمال: يسحب الخامات ويستلم المنتج التام داخل transaction', async () => {[m
+[31m-    // Mock the updated logic for GF-0008[m
+[31m-    prisma.workOrder.findUnique = jest.fn().mockResolvedValue({[m
+[32m+  it('يمنع الانتقال المباشر إلى COMPLETED', async () => {[m
+[32m+    prisma.workOrder.findUnique.mockResolvedValue({[m
+       id: 'wo-1',
+[31m-      status: 'SEWING',[m
+[31m-      productVariantId: 'v-1',[m
+[31m-      quantity: 100,[m
+[31m-      code: 'WO-1',[m
+[31m-      bomVersion: { lines: [] },[m
+[31m-    });[m
+[31m-    prisma.warehouse = {[m
+[31m-      findFirst: jest.fn().mockResolvedValue({ id: 'wh-1', code: 'WH-RAW' }),[m
+[31m-    } as unknown as typeof prisma.warehouse;[m
+[31m-    prisma.workOrder.update.mockResolvedValue({[m
+[31m-      id: 'wo-1',[m
+[31m-      status: 'COMPLETED',[m
+[31m-      productVariantId: 'v-1',[m
+[31m-      quantity: 100,[m
+[32m+      status: WorkOrderStatus.PLANNED,[m
+     });
+[31m-    prisma.$transaction.mockImplementation([m
+[31m-      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),[m
+[32m+[m
+[32m+    await expect([m
+[32m+      service.updateOrderStatus('wo-1', WorkOrderStatus.COMPLETED),[m
+[32m+    ).rejects.toThrow([m
+[32m+      'Direct completion is disabled. Use ProductionWorkflowService stages (PACKING) to complete production.',[m
+     );
+[31m-    inventoryService.receiveFinishedGood.mockResolvedValue({[m
+[31m-      replayed: false,[m
+[31m-      entryCode: 'SLE-1',[m
+[31m-      type: 'RECEIVE',[m
+[31m-      rawMaterialId: '',[m
+[31m-      warehouseId: 'wh-1',[m
+[31m-      quantityDelta: 100,[m
+[31m-      balanceAfter: 100,[m
+[31m-      unitCost: 0,[m
+[31m-      totalValue: 0,[m
+[31m-      costPerUnitAfter: 0,[m
+[31m-      createdAt: new Date().toISOString(),[m
+[32m+  });[m
+[32m+[m
+[32m+  it('يمنع الانتقال المباشر إلى حالات الـ workflow (مثل SEWING)', async () => {[m
+[32m+    prisma.workOrder.findUnique.mockResolvedValue({[m
+[32m+      id: 'wo-1',[m
+[32m+      status: WorkOrderStatus.PLANNED,[m
+     });
+ 
+[31m-    const result = await service.updateOrderStatus([m
+[31m-      'wo-1',[m
+[31m-      WorkOrderStatus.COMPLETED,[m
+[32m+    await expect([m
+[32m+      service.updateOrderStatus('wo-1', WorkOrderStatus.SEWING),[m
+[32m+    ).rejects.toThrow([m
+[32m+      'Direct transition to SEWING is disabled. Use ProductionWorkflowService.transitionStage instead.',[m
+     );
+[32m+  });[m
+ 
+[31m-    expect(result.status).toBe('COMPLETED');[m
+[31m-    expect(prisma.$transaction).toHaveBeenCalled();[m
+[31m-    expect(inventoryService.receiveFinishedGood).toHaveBeenCalledWith([m
+[31m-      expect.objectContaining({[m
+[31m-        productVariantId: 'v-1',[m
+[31m-        warehouseId: 'wh-1',[m
+[31m-        quantity: 100,[m
+[31m-      }),[m
+[31m-      undefined,[m
+[31m-      prisma,[m
+[32m+  it('يمنع تعديل أمر تشغيل مكتمل (Immutability)', async () => {[m
+[32m+    prisma.workOrder.findUnique.mockResolvedValue({[m
+[32m+      id: 'wo-1',[m
+[32m+      status: WorkOrderStatus.COMPLETED,[m
+[32m+    });[m
+[32m+[m
+[32m+    await expect([m
+[32m+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED),[m
+[32m+    ).rejects.toThrow([m
+[32m+      'Completed work orders are immutable. Use approved reversal workflows if needed.',[m
+     );
+[31m-    expect(prisma.finishedGood.create).not.toHaveBeenCalled();[m
+[31m-    expect(prisma.finishedGood.update).not.toHaveBeenCalled();[m
+   });
+ });
+[1;37mdiff --git a/backend/src/modules/production/production.service.ts b/backend/src/modules/production/production.service.ts[m
+[1;37mindex 7d30ac7..51fc275 100644[m
+[1;37m--- a/backend/src/modules/production/production.service.ts[m
+[1;37m+++ b/backend/src/modules/production/production.service.ts[m
+@@ -4,7 +4,7 @@ import {
+   NotFoundException,
+ } from '@nestjs/common';
+ import { PrismaService } from '../../prisma/prisma.service';
+[31m-import { WorkOrderStatus, Prisma } from '@prisma/client';[m
+[32m+import { WorkOrderStatus } from '@prisma/client';[m
+ import { EventEmitter2 } from '@nestjs/event-emitter';
+ import { EVENTS } from '../../events/event-types';
+ import { InventoryService } from '../inventory/inventory.service';
+@@ -67,101 +67,56 @@ export class ProductionService {
+   async updateOrderStatus(
+     id: string,
+     status: WorkOrderStatus,
+[31m-    userId?: string,[m
+[32m+    _userId?: string,[m
+   ) {
+[31m-    if (status !== WorkOrderStatus.COMPLETED) {[m
+[31m-      // تحديث الحالة العادية فقط بدون صرف استثنائي[m
+[31m-      const order = await this.prisma.workOrder.update({[m
+[31m-        where: { id },[m
+[31m-        data: { status },[m
+[31m-      });[m
+[31m-      return order;[m
+[31m-    }[m
+[31m-[m
+[31m-    // إتمام الإنتاج: صرف خامات + استلام منتج تام[m
+[31m-    const order = await this.prisma.workOrder.findUnique({[m
+[32m+    const existing = await this.prisma.workOrder.findUnique({[m
+       where: { id },
+[31m-      include: {[m
+[31m-        bomVersion: {[m
+[31m-          include: {[m
+[31m-            lines: {[m
+[31m-              include: { rawMaterial: { select: { costPerUnit: true } } },[m
+[31m-            },[m
+[31m-          },[m
+[31m-        },[m
+[31m-      },[m
+     });
+ 
+[31m-    if (!order) throw new NotFoundException('Work order not found');[m
+[31m-    if (order.status === WorkOrderStatus.COMPLETED) {[m
+[31m-      throw new BadRequestException('Work order is already completed');[m
+[32m+    if (!existing) {[m
+[32m+      throw new NotFoundException('Work order not found');[m
+     }
+ 
+[31m-    // المخازن الافتراضية[m
+[31m-    const rawWarehouse = await this.prisma.warehouse.findFirst({[m
+[31m-      where: { code: 'WH-RAW' },[m
+[31m-    });[m
+[31m-    const fgWarehouse = await this.prisma.warehouse.findFirst({[m
+[31m-      where: { code: 'WH-FG' },[m
+[31m-    });[m
+[31m-    if (!rawWarehouse || !fgWarehouse) {[m
+[31m-      throw new BadRequestException('Default warehouses not found');[m
+[32m+    // 1. منع تعديل أمر تشغيل مكتمل (Immutability)[m
+[32m+    if (existing.status === WorkOrderStatus.COMPLETED) {[m
+[32m+      throw new BadRequestException([m
+[32m+        'Completed work orders are immutable. Use approved reversal workflows if needed.',[m
+[32m+      );[m
+     }
+ 
+[31m-    const updatedOrder = await this.prisma.$transaction([m
+[31m-      async (tx: Prisma.TransactionClient) => {[m
+[31m-        // 1. تحديث الحالة[m
+[31m-        const updated = await tx.workOrder.update({[m
+[31m-          where: { id },[m
+[31m-          data: { status: WorkOrderStatus.COMPLETED },[m
+[31m-        });[m
+[32m+    // 2. منع الإكمال المباشر عبر هذا المسار (Bypass Prevention)[m
+[32m+    if (status === WorkOrderStatus.COMPLETED) {[m
+[32m+      throw new BadRequestException([m
+[32m+        'Direct completion is disabled. Use ProductionWorkflowService stages (PACKING) to complete production.',[m
+[32m+      );[m
+[32m+    }[m
+ 
+[31m-        // 2. صرف الخامات وفقاً لـ BOM Version (GF-0008)[m
+[31m-        for (const line of order.bomVersion.lines) {[m
+[31m-          const totalQty = Number(line.quantity) * order.quantity;[m
+[31m-          await this.inventoryService.issue([m
+[31m-            {[m
+[31m-              rawMaterialId: line.rawMaterialId,[m
+[31m-              warehouseId: rawWarehouse.id,[m
+[31m-              quantity: totalQty,[m
+[31m-              reference: updated.code,[m
+[31m-              notes: `صرف خامات لأمر تشغيل ${updated.code}`,[m
+[31m-            },[m
+[31m-            userId,[m
+[31m-            tx,[m
+[31m-          );[m
+[31m-        }[m
+[32m+    // 3. منع الانتقال المباشر لحالات الـ workflow النشطة[m
+[32m+    const workflowStatuses: WorkOrderStatus[] = [[m
+[32m+      WorkOrderStatus.IN_PROGRESS,[m
+[32m+      WorkOrderStatus.CUTTING,[m
+[32m+      WorkOrderStatus.SEWING,[m
+[32m+      WorkOrderStatus.IRONING,[m
+[32m+      WorkOrderStatus.FINISHING,[m
+[32m+      WorkOrderStatus.PACKAGING,[m
+[32m+    ];[m
+ 
+[31m-        // 3. استلام التام عبر مصدر الحقيقة الوحيد FinishedGoodStock + ledger.[m
+[31m-        const totalMaterialCost = order.bomVersion.lines.reduce([m
+[31m-          (sum, line) =>[m
+[31m-            sum +[m
+[31m-            Number(line.quantity) *[m
+[31m-              order.quantity *[m
+[31m-              Number(line.rawMaterial.costPerUnit),[m
+[31m-          0,[m
+[31m-        );[m
+[31m-        const unitCost =[m
+[31m-          order.quantity > 0 ? totalMaterialCost / order.quantity : 0;[m
+[31m-        await this.inventoryService.receiveFinishedGood([m
+[31m-          {[m
+[31m-            productVariantId: order.productVariantId,[m
+[31m-            warehouseId: fgWarehouse.id,[m
+[31m-            quantity: order.quantity,[m
+[31m-            unitCost,[m
+[31m-            reference: updated.code,[m
+[31m-            notes: `استلام تام من أمر تشغيل ${updated.code}`,[m
+[31m-            idempotencyKey: `production.legacy.receive:${updated.id}`,[m
+[31m-          },[m
+[31m-          userId,[m
+[31m-          tx,[m
+[31m-        );[m
+[32m+    if (workflowStatuses.includes(status)) {[m
+[32m+      throw new BadRequestException([m
+[32m+        `Direct transition to ${status} is disabled. Use ProductionWorkflowService.transitionStage instead.`,[m
+[32m+      );[m
+[32m+    }[m
+ 
+[31m-        return updated;[m
+[31m-      },[m
+[31m-    );[m
+[32m+    // تحديث الحالة المسموحة (مثل CANCELLED أو PLANNED)[m
+[32m+    const order = await this.prisma.workOrder.update({[m
+[32m+      where: { id },[m
+[32m+      data: { status },[m
+[32m+    });[m
+[32m+[m
+[32m+    if (status === WorkOrderStatus.CANCELLED) {[m
+[32m+      void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_CANCELLED, order);[m
+[32m+    }[m
+ 
+[31m-    void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_COMPLETED, updatedOrder);[m
+[31m-    return updatedOrder;[m
+[32m+    return order;[m
+   }
+ }

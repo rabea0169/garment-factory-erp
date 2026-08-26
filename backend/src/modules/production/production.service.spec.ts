@@ -1,7 +1,10 @@
-import { WorkOrderStatus } from '@prisma/client';
+import { Test, TestingModule } from '@nestjs/testing';
 import { ProductionService } from './production.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { WorkOrderStatus } from '@prisma/client';
+import { NotFoundException } from '@nestjs/common';
 import {
   createEventEmitterMock,
   createPrismaMock,
@@ -17,7 +20,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     receiveFinishedGood: jest.Mock;
   };
 
-  beforeEach(() => {
+  beforeEach(async () => {
     prisma = createPrismaMock();
     eventEmitter = createEventEmitterMock() as unknown as {
       emitAsync: jest.Mock;
@@ -26,11 +29,17 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       issue: jest.fn(),
       receiveFinishedGood: jest.fn(),
     };
-    service = new ProductionService(
-      prisma as unknown as PrismaService,
-      eventEmitter as never,
-      inventoryService as unknown as InventoryService,
-    );
+
+    const module: TestingModule = await Test.createTestingModule({
+      providers: [
+        ProductionService,
+        { provide: PrismaService, useValue: prisma },
+        { provide: InventoryService, useValue: inventoryService },
+        { provide: EventEmitter2, useValue: eventEmitter },
+      ],
+    }).compile();
+
+    service = module.get<ProductionService>(ProductionService);
   });
 
   it('يجلب أوامر التشغيل مع المنتج وتحديثات المراحل', async () => {
@@ -125,7 +134,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     );
   });
 
-  it('يمنع الانتقال المباشر إلى COMPLETED', async () => {
+  it('يمنع الانتقال المباشر إلى COMPLETED (Bypass Prevention)', async () => {
     prisma.workOrder.findUnique.mockResolvedValue({
       id: 'wo-1',
       status: WorkOrderStatus.PLANNED,
@@ -162,5 +171,13 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     ).rejects.toThrow(
       'Completed work orders are immutable. Use approved reversal workflows if needed.',
     );
+  });
+
+  it('يرفع NotFoundException إذا كان أمر التشغيل غير موجود', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.updateOrderStatus('non-existent', WorkOrderStatus.CANCELLED),
+    ).rejects.toThrow(NotFoundException);
   });
 });

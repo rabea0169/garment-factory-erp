@@ -10,6 +10,7 @@ export function createPrismaMock() {
     $connect: jest.fn(),
     $disconnect: jest.fn(),
     $transaction: jest.fn(),
+    $executeRaw: jest.fn().mockResolvedValue(1),
     // B2: $queryRaw mock — default returns empty array. Override per-test with
     // prisma.$queryRaw = jest.fn().mockResolvedValue([...])
     $queryRaw: jest.fn().mockResolvedValue([]),
@@ -33,6 +34,7 @@ export function createPrismaMock() {
     finishedGoodStock: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       updateMany: jest.fn(),
       upsert: jest.fn(),
       create: jest.fn(),
@@ -68,7 +70,17 @@ export function createPrismaMock() {
       findUnique: jest.fn(),
       count: jest.fn(),
     },
-    productionStageRun: { findFirst: jest.fn() },
+    productionStageRun: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      update: jest.fn(),
+      create: jest.fn(),
+    },
+    productionMaterialConsumption: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      findUnique: jest.fn(),
+    },
     warehouse: {
       findFirst: jest.fn(),
       findMany: jest.fn(),
@@ -91,7 +103,12 @@ export function createPrismaMock() {
       count: jest.fn(),
       aggregate: jest.fn(),
     },
-    productionCostSnapshot: { findFirst: jest.fn() },
+    productionCostSnapshot: {
+      findFirst: jest.fn(),
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      create: jest.fn(),
+    },
     activityLog: { create: jest.fn() },
     bomVersion: {
       findFirst: jest.fn(),

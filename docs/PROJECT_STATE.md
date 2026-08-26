@@ -12,13 +12,13 @@
 | فرع العمل الحالي | `phase/gf0019-shipment-idempotency` — حماية إنشاء الشحنة من التكرار |
 | آخر commit في فرع العمل | `94ca689` — base verified؛ تغييرات GF-0019 غير ملتزمة بعد |
 | Pull Request الحالي | لا يوجد؛ فرع GF-0019 قيد الإعداد قبل الرفع |
-| آخر مرحلة مكتملة بالكامل على main | GF-0018؛ GF-0019 مدمج جزئيًا عبر PR #35 وتدقيقه مستمر |
+| آخر مرحلة مكتملة بالكامل على main | GF-0018؛ GF-AUDIT-001C مراجعة وإصلاح مكتملة |
 | حالة CI على main | PASS — Run `32933999818` على `94ca689` بعد PR #35، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
 | حالة قاعدة البيانات | migrations GF-0014 إلى GF-0018 نجحت على PostgreSQL 16؛ migration GF-0019 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
 | إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries؛ createShipment idempotency قيد GF-0019 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0019-IMPL`: idempotency لإنشاء الشحنة واختبار صرف المنتج التام الحقيقي |
+| المهمة النشطة | `GF-AUDIT-001C`: مراجعة وإصلاح انحرافات PR #44 |
 | المرحلة النشطة | GF-0019 — Shipping create idempotency and inventory proof |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |

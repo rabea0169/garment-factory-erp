@@ -49,7 +49,7 @@ export class ProductionController {
   }
 
   @Patch('work-orders/:id/status')
-  @Roles(UserRole.PRODUCTION_MANAGER, UserRole.GENERAL_MANAGER)
+  @Roles(UserRole.PRODUCTION_MANAGER)
   @ApiOperation({
     summary:
       'تحديث حالة أمر التشغيل (المسار القديم - مقيد الآن بـ CANCELLED/PLANNED)',
