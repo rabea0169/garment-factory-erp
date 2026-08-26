@@ -17,9 +17,9 @@
 | **FinishedGood** | مخزون المنتج التام لكل variant | `FinishedGood` (quantity لكل variant واحد) | **فجوة:** غير مرتبط بمخزن، ولا سجل حركة |
 | **WorkOrder** | أمر تصنيع لكمية من منتج | `WorkOrder` (يرتبط بـ **Product لا Variant**) | **فجوة:** الربط يجب أن يكون بـ SKU/variant + BOM version |
 | **Stage** | مرحلة تشغيل داخل أمر التصنيع | `WorkOrderStage` + `WorkOrderStatus` enum (PLANNED→CUTTING→SEWING→FINISHING→IRONING→PACKAGING→COMPLETED/CANCELLED) | الانتقالات غير مقيدة بقواعد state machine |
-| **QualityCheck** | نتيجة فحص كمية في مرحلة: checked = passed + rejected | `QualityCheck` + `RejectionReason` | **فجوة:** لا يوجد تحقق checked=passed+rejected |
-| **Waste (الهالك)** | كمية مرفوضة مصنفة السبب ومربوطة بمرجع | جزئيًا عبر `rejectionReason` و`TransactionType.WASTE` | **فجوة:** لا يوجد كيان Waste مستقل بتكلفة ومرجع |
-| **Payroll** | مستحقات عامل لفترة: الإنتاج بالقطعة − السلف − خصومات الغياب | `Payroll` + `DailyProduction` + `WorkerAdvance` | **فجوة:** لا يوجد snapshot للسعر ولا تدقيق اعتماد |
+| **QualityCheck** | فحص نهائي واحد لمرحلة مكتملة: checked = passed + rejected + waste | `QualityCheck` + `ProductionStageRun` + `QualityCheckStatus` | ✅ GF-0014: conservation، actor، idempotency، وتكلفة الهالك |
+| **Waste (الهالك)** | كمية هالك مصنفة السبب ومربوطة بفحص وstageRun وتكلفة محسوبة خادميًا | `QualityCheck.wasteQty/wasteReason/wasteCost` | ✅ GF-0014؛ لا يكتب المخزون أو المحاسبة مباشرة |
+| **Payroll** | مستحقات عامل لفترة: إجمالي الإنتاج بالقطعة − السلف − خصومات الغياب المعتمدة | `Payroll` + `DailyProduction` + `WorkerAdvance` | GF-0015: gross خادمي، snapshot للسعر، draft/approval، actor؛ absence deduction = 0 في MVP حتى اعتماد سياسة راتب ثابت |
 | **Piece Rate (أجر القطعة)** | سعر القطعة لكل تخصص/عامل | `Worker.pieceRate` + `DailyProduction.pieceRate` | يجب أن يحفظ السعر لحظة التسجيل (يحدث جزئيًا) |
 
 ## المحاسبة
@@ -44,8 +44,8 @@
 
 1. كل حركة مخزون **يجب** أن تمر عبر ledger بحركة موثقة — لا تحديث مباشر للرصيد من الواجهة.
 2. أمر التشغيل يستهدف **variant** + إصدار BOM محدد — لا "أول variant".
-3. `checked = passed + rejected` شرط حفظ لأي فحص جودة.
-4. الراتب يحسبه الخادم من قواعد معتمدة مع snapshot للسعر — لا يقبل إجماليًا من الهاتف.
+3. `checked = passed + rejected + waste` شرط حفظ لفحص GF-0014، والهالك منفصل عن الرفض بسببًا وتصنيفًا.
+4. الراتب يحسبه الخادم من `DailyProduction.totalAmount` و`WorkerAdvance` مع snapshot للسعر — لا يقبل gross/net من الهاتف؛ اعتماد ودفع الراتب مرحلتان منفصلتان.
 5. القيد المرحل لا يُحذف ولا يُعدل — التصحيح بقيد عكسي.
 6. عمليات متعددة الجداول = `prisma.$transaction` إلزاميًا (المخزون، المدفوعات، الإنتاج).
 7. هوية المنشئ من الجلسة فقط — أي حقل `userId/createdById/creatorId` في body يُتجاهل.
