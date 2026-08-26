@@ -14,8 +14,8 @@
 |---|---|
 | Working branch | `fix/gf-remaining-004-dashboard-reports` |
 | Base SHA | `3d28b0fb933b1ee9c9652c8ef749c2bfef509d9b` |
-| Implementation commit | `1bb96c7` — database-backed dashboard and mobile reports |
-| Pull Request | pending push and PR creation |
+| Implementation commit | `a87889a` — database-backed dashboard, mobile reports, and deterministic concurrency assertion |
+| Pull Request | [#51](https://github.com/rabea0169/garment-factory-erp/pull/51) |
 | Merge status | not merged |
 | Database impact | no schema or migration change |
 
@@ -48,9 +48,9 @@
 | Unit tests | `npm test -- --runInBand` | PASS | 32 suites / 191 tests |
 | E2E tests | `npm run test:e2e -- --runInBand` | PASS | 3 suites / 60 tests |
 | Integration tests | `npm run test:integration -- --runInBand` | SKIPPED LOCALLY | 8 suites / 30 tests؛ لا `GF_INTEGRATION_DATABASE_URL` |
-| Flutter pub/analyze/test | `flutter pub get`, `flutter analyze`, `flutter test` | UNAVAILABLE LOCALLY | أوامر Flutter/Dart غير مثبتة في sandbox؛ CI required |
+| Flutter pub/analyze/test | CI run `32944708223` | PASS | pub get, analyze, and test passed on CI |
 | Diff check | `git diff --check` | PASS | no whitespace errors |
-| Secret scan | required on PR CI | PENDING | لا أسرار مضافة معروفة |
+| Secret scan | CI run `32944708223` | PASS | no hardcoded secret detected |
 
 ## 6. Known limitations and risks
 
