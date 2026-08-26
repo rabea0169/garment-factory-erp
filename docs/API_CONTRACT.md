@@ -83,6 +83,12 @@
 | GET | `/hr/workers/:id` | عامل واحد | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/hr/production` | تسجيل إنتاج يومي | 🔒 JWT | PRODUCTION_MANAGER, HR_MANAGER, GENERAL_MANAGER |
 | POST | `/hr/advances` | صرف سلفة | 🔒 JWT | HR_MANAGER |
+| POST | `/hr/payrolls` | إنشاء كشف راتب DRAFT محسوب خادميًا | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
+| POST | `/hr/payrolls/:id/approve` | اعتماد كشف راتب دون دفع أو ترحيل | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
+
+`POST /hr/payrolls` يستقبل `workerId`, `periodStart`, `periodEnd`, و`notes` فقط. يحسب الخادم `grossAmount` من مجموع `DailyProduction.totalAmount` داخل الفترة، ويحسب `advanceDeduct` من السلف داخل الفترة بحد أقصى gross، ويجعل `absenceDeduct = 0` في MVP وفق ADR-0015. لا يقبل `grossAmount` أو `netAmount` أو الخصومات من العميل، و`netAmount = grossAmount - advanceDeduct - absenceDeduct`. الفترة شاملة لطرفيها، وسجل العامل والفترة فريد.
+
+يدعم الإنشاء والاعتماد رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان الاستجابة المخزنة دون أثر ثانٍ، والمحتوى المختلف أو التكرار المتزامن يُرفض بـ409. الإنشاء يسجل `createdById` والاعتماد يسجل `approvedById` و`approvedAt` من JWT. لا يسمح اعتماد سجل معتمد ولا يغيّر `isPaid`; الدفع والقيد المالي مؤجلان إلى GF-0018.
 
 ## المبيعات — `/sales`
 
@@ -203,6 +209,8 @@
 // POST /inventory/raw-materials/:uuid/add-stock  { "quantity": 50, "costPerUnit": 45.5 }
 // POST /hr/production  { "workerId": "uuid", "workOrderId": "uuid?", "date": "2026-08-25T00:00:00.000Z", "piecesCount": 100 }
 // POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
+// POST /hr/payrolls  { "workerId": "uuid", "periodStart": "2026-08-01", "periodEnd": "2026-08-31", "notes": "اختياري" }
+// POST /hr/payrolls/:id/approve  Header: Idempotency-Key: payroll-approve-2026-08
 // POST /quality  { "workOrderId": "uuid", "stage": "SEWING", "checkedQty": 100, "passedQty": 95, "rejectedQty": 5 }
 // POST /products  { "code": "PRD-T01", "name": "تيشيرت", "category": "تيشيرت", "retailPrice": 250, "wholesalePrice": 180, "seasonId": "uuid?" }
 // POST /sales/customers  { "name": "عميل", "phone": "اختياري", "address": "اختياري" }

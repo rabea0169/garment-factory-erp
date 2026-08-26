@@ -1,12 +1,64 @@
 import {
+  BadRequestException,
   ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+import { PayrollStatus, Prisma } from '@prisma/client';
+import {
+  computeRequestHash,
+  createIdempotencyKey,
+  isIdempotencyUniqueViolation,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import { PrismaService } from '../../prisma/prisma.service';
+
+export interface PayrollInput {
+  workerId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  notes?: string;
+}
+
+type PayrollResponse = {
+  id: string;
+  workerId: string;
+  periodStart: Date;
+  periodEnd: Date;
+  grossAmount: number;
+  advanceDeduct: number;
+  absenceDeduct: number;
+  netAmount: number;
+  status: PayrollStatus;
+  isPaid: boolean;
+  paidAt: Date | null;
+  notes: string | null;
+  createdById: string | null;
+  approvedById: string | null;
+  approvedAt: Date | null;
+};
+
+function getPeriodEndExclusive(periodEnd: Date): Date {
+  const endExclusive = new Date(periodEnd);
+  endExclusive.setUTCDate(endExclusive.getUTCDate() + 1);
+  return endExclusive;
+}
+
+function isPayrollPeriodUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  const candidate = error as { code?: unknown; meta?: unknown };
+  if (candidate.code !== 'P2002') return false;
+  const target = JSON.stringify(candidate.meta ?? {});
+  return (
+    target.includes('worker_period') ||
+    (target.includes('workerId') &&
+      target.includes('periodStart') &&
+      target.includes('periodEnd'))
+  );
+}
 
 @Injectable()
 export class HrService {
@@ -119,5 +171,253 @@ export class HrService {
         notes: data.notes,
       },
     });
+  }
+
+  async createPayroll(
+    input: PayrollInput,
+    actorId: string,
+    idempotencyKey?: string,
+  ): Promise<PayrollResponse | (PayrollResponse & { replayed: true })> {
+    this.validatePayrollPeriod(input.periodStart, input.periodEnd);
+    const periodEndExclusive = getPeriodEndExclusive(input.periodEnd);
+    const requestHash = computeRequestHash({
+      workerId: input.workerId,
+      periodStart: input.periodStart.toISOString(),
+      periodEnd: input.periodEnd.toISOString(),
+      notes: input.notes ?? null,
+      actorId,
+    });
+    const scope = 'hr-payroll-create';
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) {
+          return replay as PayrollResponse & { replayed: true };
+        }
+
+        const worker = await tx.worker.findUnique({
+          where: { id: input.workerId },
+          select: { id: true },
+        });
+        if (!worker) throw new NotFoundException('العامل غير موجود');
+
+        const existing = await tx.payroll.findFirst({
+          where: {
+            workerId: input.workerId,
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+          },
+          select: { id: true },
+        });
+        if (existing) {
+          throw new ConflictException(
+            'يوجد كشف راتب للعامل في هذه الفترة بالفعل',
+          );
+        }
+
+        const [production, advances] = await Promise.all([
+          tx.dailyProduction.aggregate({
+            where: {
+              workerId: input.workerId,
+              date: { gte: input.periodStart, lt: periodEndExclusive },
+            },
+            _sum: { totalAmount: true },
+          }),
+          tx.workerAdvance.aggregate({
+            where: {
+              workerId: input.workerId,
+              date: { gte: input.periodStart, lt: periodEndExclusive },
+            },
+            _sum: { amount: true },
+          }),
+        ]);
+        const grossAmount =
+          production._sum.totalAmount ?? new Prisma.Decimal(0);
+        const advanceTotal = advances._sum.amount ?? new Prisma.Decimal(0);
+        const advanceDeduct = advanceTotal.gt(grossAmount)
+          ? grossAmount
+          : advanceTotal;
+        const absenceDeduct = new Prisma.Decimal(0);
+        const netAmount = grossAmount.minus(advanceDeduct).minus(absenceDeduct);
+        const payrollIdempotencyKeyId = await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        const created = await tx.payroll.create({
+          data: {
+            workerId: input.workerId,
+            periodStart: input.periodStart,
+            periodEnd: input.periodEnd,
+            grossAmount,
+            advanceDeduct,
+            absenceDeduct,
+            netAmount,
+            status: PayrollStatus.DRAFT,
+            notes: input.notes,
+            createdById: actorId,
+            idempotencyKeyId: payrollIdempotencyKeyId,
+          },
+        });
+        const response = this.toPayrollResponse(created);
+        await tx.activityLog.create({
+          data: {
+            userId: actorId,
+            action: 'PAYROLL_CREATED',
+            module: 'HR',
+            details: {
+              payrollId: response.id,
+              workerId: response.workerId,
+              grossAmount: response.grossAmount,
+              advanceDeduct: response.advanceDeduct,
+              netAmount: response.netAmount,
+            },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+        return response;
+      });
+    } catch (error) {
+      if (isPayrollPeriodUniqueViolation(error)) {
+        throw new ConflictException(
+          'يوجد كشف راتب للعامل في هذه الفترة بالفعل',
+        );
+      }
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replay = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay as PayrollResponse & { replayed: true };
+      }
+      throw error;
+    }
+  }
+
+  async approvePayroll(
+    payrollId: string,
+    actorId: string,
+    idempotencyKey?: string,
+  ): Promise<PayrollResponse | (PayrollResponse & { replayed: true })> {
+    const requestHash = computeRequestHash({ payrollId, actorId });
+    const scope = 'hr-payroll-approve';
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) {
+          return replay as PayrollResponse & { replayed: true };
+        }
+        const payroll = await tx.payroll.findUnique({
+          where: { id: payrollId },
+        });
+        if (!payroll) throw new NotFoundException('كشف الراتب غير موجود');
+        if (payroll.status !== PayrollStatus.DRAFT) {
+          throw new ConflictException('كشف الراتب معتمد ولا يمكن تعديله');
+        }
+
+        const updated = await tx.payroll.updateMany({
+          where: { id: payrollId, status: PayrollStatus.DRAFT },
+          data: {
+            status: PayrollStatus.APPROVED,
+            approvedById: actorId,
+            approvedAt: new Date(),
+          },
+        });
+        if (updated.count !== 1) {
+          throw new ConflictException('تعذر اعتماد كشف الراتب؛ حالته تغيرت');
+        }
+        const approved = await tx.payroll.findUnique({
+          where: { id: payrollId },
+        });
+        if (!approved) throw new NotFoundException('كشف الراتب غير موجود');
+        const response = this.toPayrollResponse(approved);
+        await tx.activityLog.create({
+          data: {
+            userId: actorId,
+            action: 'PAYROLL_APPROVED',
+            module: 'HR',
+            details: { payrollId: response.id, approvedById: actorId },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, response);
+        return response;
+      });
+    } catch (error) {
+      if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
+        const replay = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay as PayrollResponse & { replayed: true };
+      }
+      throw error;
+    }
+  }
+
+  private validatePayrollPeriod(periodStart: Date, periodEnd: Date): void {
+    if (
+      Number.isNaN(periodStart.getTime()) ||
+      Number.isNaN(periodEnd.getTime())
+    ) {
+      throw new BadRequestException('فترة الراتب تحتوي على تاريخ غير صالح');
+    }
+    if (periodStart > periodEnd) {
+      throw new BadRequestException(
+        'بداية فترة الراتب لا يمكن أن تتجاوز نهايتها',
+      );
+    }
+  }
+
+  private toPayrollResponse(row: {
+    id: string;
+    workerId: string;
+    periodStart: Date;
+    periodEnd: Date;
+    grossAmount: Prisma.Decimal;
+    advanceDeduct: Prisma.Decimal;
+    absenceDeduct: Prisma.Decimal;
+    netAmount: Prisma.Decimal;
+    status: PayrollStatus;
+    isPaid: boolean;
+    paidAt: Date | null;
+    notes: string | null;
+    createdById: string | null;
+    approvedById: string | null;
+    approvedAt: Date | null;
+  }): PayrollResponse {
+    return {
+      id: row.id,
+      workerId: row.workerId,
+      periodStart: row.periodStart,
+      periodEnd: row.periodEnd,
+      grossAmount: row.grossAmount.toNumber(),
+      advanceDeduct: row.advanceDeduct.toNumber(),
+      absenceDeduct: row.absenceDeduct.toNumber(),
+      netAmount: row.netAmount.toNumber(),
+      status: row.status,
+      isPaid: row.isPaid,
+      paidAt: row.paidAt,
+      notes: row.notes,
+      createdById: row.createdById,
+      approvedById: row.approvedById,
+      approvedAt: row.approvedAt,
+    };
   }
 }

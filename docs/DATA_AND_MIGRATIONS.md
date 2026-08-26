@@ -61,7 +61,29 @@
 
 يجب تشغيل `npx prisma migrate deploy` على قاعدة اختبار نظيفة ونسخة تحتوي بيانات جودة قديمة، ثم تشغيل `npm run test:integration`. لا يُستخدم `db push`، ولا تُعدل migration بعد تطبيقها. في حال التراجع يُوقف استخدام الحقول الجديدة ويُنفذ `git revert` مع migration عكسية معتمدة؛ لا تُحذف سجلات الجودة أو الهالك حذفًا نهائيًا.
 
-## 6. نقاط الاسترجاع (Rollback hooks)
+## 6. Migration GF-0015 — HR and Payroll Controls
+
+**الاسم:** `20260830010000_gf0015_payroll_controls`
+
+### ما تفعله
+
+1. تضيف enum `PayrollStatus` بقيمتي `DRAFT` و`APPROVED`، وحقول `status`, `createdById`, `approvedById`, `approvedAt`, و`idempotencyKeyId` إلى `payrolls`.
+2. تضيف علاقات التدقيق إلى `users` ومفتاح idempotency، وقيدًا فريدًا على `(workerId, periodStart, periodEnd)` لمنع كشفين للعامل والفترة نفسها، وقيدًا فريدًا على `idempotencyKeyId`.
+3. تضيف فهارس الحالة والفترة والفاعل، وقيود مبالغ غير سالبة وقيد اكتمال بيانات الاعتماد بصيغة `NOT VALID` للتوافق مع صفوف payroll التاريخية.
+
+### الأثر على البيانات القديمة
+
+التغيير additive ولا يحذف أي payroll أو attendance أو production. الصفوف القديمة تحصل على `status = DRAFT` وتبقى `createdById` و`approvedById` و`approvedAt` و`idempotencyKeyId` فارغة. قبل تطبيق migration على بيئة تحمل بيانات فعلية يجب فحص تكرار `(workerId, periodStart, periodEnd)` وتسوية التكرارات بقرار تدقيق؛ القيد الفريد لا يمكن إنشاؤه إذا بقيت تكرارات.
+
+### قواعد المجال المرتبطة
+
+يحسِب التطبيق `grossAmount` من `DailyProduction.totalAmount` داخل الفترة، ويحسب `advanceDeduct` من السلف داخل الفترة بحد أقصى gross، ويجعل `absenceDeduct = 0` في MVP لأن schema لا يحتوي سياسة راتب ثابت أو daily absence rate معتمدة. لا يقبل endpoint مبالغ gross/net من العميل، ولا ينشئ GF-0015 دفعًا أو قيدًا ماليًا؛ ذلك مؤجل إلى GF-0018.
+
+### التحقق والـrollback
+
+يجب تشغيل `npx prisma migrate deploy` على PostgreSQL نظيفة وعلى نسخة بيانات تحتوي صفوف Payroll legacy، ثم تشغيل unit وHTTP وPostgreSQL integration. يجب اختبار uniqueness والتزامن وreplay والحساب والاعتماد وعدم التعديل. للتراجع البرمجي استخدم `git revert`، وللقاعدة استخدم backup/restore أو migration عكسية معتمدة بعد إيقاف endpoints الجديدة؛ لا تسقط أعمدة أو تحذف سجلات payroll يدويًا.
+
+## 7. نقاط الاسترجاع (Rollback hooks)
 
 - المستودع: `git revert` لأي commit — لا migration بعد عكس schema إلا بmigration عكسية.
 - قاعدة البيانات محليًا: إعادة `docker-compose down -v` ثم `migrate dev` + seed (بيانات تطوير فقط — لا بيانات إنتاج موجودة بعد).
