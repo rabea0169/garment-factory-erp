@@ -2,6 +2,7 @@ import { ConflictException, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { HrService } from './hr.service';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('HrService — العمال والإنتاج بالقطعة (GF-0003)', () => {
@@ -10,7 +11,10 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new HrService(prisma as unknown as PrismaService);
+    service = new HrService(
+      prisma as unknown as PrismaService,
+      {} as FinancialPostingService,
+    );
   });
 
   it('يجلب العمال مرتبين بالأحدث', async () => {

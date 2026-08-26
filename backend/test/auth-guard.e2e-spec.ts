@@ -166,6 +166,10 @@ describe('Auth guard (e2e) — GF-0002', () => {
     return request(app.getHttpServer()).get('/sales/orders').expect(401);
   });
 
+  it('GET /dashboard/stats بلا توكن → 401', () => {
+    return request(app.getHttpServer()).get('/dashboard/stats').expect(401);
+  });
+
   it('GET /inventory/raw-materials بلا توكن → 401', () => {
     return request(app.getHttpServer())
       .get('/inventory/raw-materials')

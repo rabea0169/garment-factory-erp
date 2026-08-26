@@ -15,6 +15,7 @@ import { Roles } from '../auth/roles.guard';
 import { CreateAdvanceDto } from './dto/create-advance.dto';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { CreatePayrollDto } from './dto/create-payroll.dto';
+import { PayPayrollDto } from './dto/pay-payroll.dto';
 import { RecordProductionDto } from './dto/record-production.dto';
 import { HrService } from './hr.service';
 
@@ -101,5 +102,31 @@ export class HrController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.hrService.approvePayroll(payrollId, actorId, idempotencyKey);
+  }
+
+  @Post('payrolls/:id/pay')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'مفتاح إعادة المحاولة الآمنة لدفع كشف الراتب',
+  })
+  @ApiOperation({ summary: 'دفع كشف راتب معتمد وترحيله إلى الخزينة' })
+  async payPayroll(
+    @Param('id') payrollId: string,
+    @Body() body: PayPayrollDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.payPayroll(
+      payrollId,
+      {
+        treasuryId: body.treasuryId,
+        paymentDate: body.paymentDate ? new Date(body.paymentDate) : undefined,
+        notes: body.notes,
+      },
+      actorId,
+      idempotencyKey,
+    );
   }
 }

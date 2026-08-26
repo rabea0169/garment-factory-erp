@@ -1,4 +1,5 @@
 import { FinancialPostingService } from './financial-posting.service';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
@@ -177,5 +178,38 @@ describe('FinancialPostingService', () => {
       where: { id: 'je-reversal' },
       data: { reversalOfId: 'je-original' },
     });
+  });
+
+  it('rejects supplier balance updates that would become negative', async () => {
+    const prisma = createPrismaMock();
+    const service = new FinancialPostingService(
+      prisma as unknown as PrismaService,
+    );
+    prisma.account.findMany.mockResolvedValue([
+      { id: 'expense-account', isActive: true, isGroup: false },
+      { id: 'cash-account', isActive: true, isGroup: false },
+    ]);
+    prisma.supplier.findMany.mockResolvedValue([
+      { id: 'supplier-1', balance: new Prisma.Decimal('10.00') },
+    ]);
+
+    await expect(
+      service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'Invalid supplier update',
+          lines: [
+            {
+              debitAccountId: 'expense-account',
+              creditAccountId: 'cash-account',
+              amount: 40,
+            },
+          ],
+          supplierUpdates: [{ supplierId: 'supplier-1', delta: -40 }],
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow('الرصيد السالب للمورد ممنوع');
+    expect(prisma.journalEntry.create).not.toHaveBeenCalled();
   });
 });
