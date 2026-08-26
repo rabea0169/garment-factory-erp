@@ -315,9 +315,8 @@ export class FinancialPostingService {
    * النمط: قيد عكسي = نفس المبلغ + طرفين مقلوبين. كل تحققات التوازن والوجود
    * تُطبَّق على القيد العكسي كأي قيد جديد.
    *
-   * ملاحظة: العكس لا يتعقب بشكل تلقائي الـ side-effects على treasury/customer/
-   * supplier. لكل قيد عكسي، يجب على المستدعي تمرير treasuryUpdates/customerUpdates
-   * بقيم معكوسة. يمكن لاحقًا بناء دالة عكسية كاملة تُقلب الـ side-effects تلقائيًا.
+   * العكس يقلب تلقائيًا آثار treasury/customer/supplier المحفوظة في metadata
+   * داخل نفس transaction، مع تعليم القيد الأصلي وربط القيد العكسي به.
    *
    * A9 (enhanced): يرفض عكس قيد معكوس بالفعل، يُعلِّم الأصلي isReversed=true،
    * ويربط القيد العكسي بالأصلي عبر reversalOfId.

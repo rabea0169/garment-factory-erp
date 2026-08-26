@@ -31,6 +31,7 @@ export function createPrismaMock() {
     },
     rawMaterialTransaction: { create: jest.fn() },
     finishedGoodStock: {
+      findMany: jest.fn(),
       findUnique: jest.fn(),
       updateMany: jest.fn(),
       upsert: jest.fn(),

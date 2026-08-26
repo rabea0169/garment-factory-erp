@@ -5,7 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { EVENTS } from '../../events/event-types';
@@ -451,6 +451,152 @@ export class InventoryService {
 
   // ===================== FINISHED GOODS =====================
 
+  async receiveFinishedGood(
+    input: {
+      productVariantId: string;
+      warehouseId: string;
+      quantity: number;
+      unitCost: number;
+      reference?: string;
+      notes?: string;
+      idempotencyKey?: string;
+    },
+    userId?: string,
+    externalTx?: TxClient,
+  ): Promise<StockMovementResult> {
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+      throw new BadRequestException(
+        'كمية المنتج التام يجب أن تكون عددًا صحيحًا موجبًا',
+      );
+    }
+    if (!Number.isFinite(input.unitCost) || input.unitCost < 0) {
+      throw new BadRequestException(
+        'تكلفة وحدة المنتج التام يجب أن تكون رقمًا غير سالب',
+      );
+    }
+
+    const client = externalTx ?? this.prisma;
+    const warehouse = await client.warehouse.findUnique({
+      where: { id: input.warehouseId },
+    });
+    if (!warehouse) throw new NotFoundException('المخزن غير موجود');
+    if (
+      !warehouse.isActive ||
+      warehouse.type !== WarehouseType.FINISHED_GOODS
+    ) {
+      throw new BadRequestException('الحركة تتطلب مخزن منتج تام نشط');
+    }
+
+    const scope = 'inventory.finished_good_receive';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      productVariantId: input.productVariantId,
+      warehouseId: input.warehouseId,
+      quantity: input.quantity,
+      unitCost: input.unitCost,
+      reference: input.reference ?? null,
+      notes: input.notes ?? null,
+    });
+    if (input.idempotencyKey) {
+      const replay = await this.tryReplay(
+        input.idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay) return replay;
+    }
+
+    const execute = async (tx: TxClient): Promise<StockMovementResult> => {
+      let idempotencyKeyId: string | undefined;
+      if (input.idempotencyKey) {
+        idempotencyKeyId = (
+          await tx.idempotencyKey.create({
+            data: { key: input.idempotencyKey, scope, requestHash },
+            select: { id: true },
+          })
+        ).id;
+      }
+
+      await tx.$executeRaw(
+        Prisma.sql`INSERT INTO "finished_good_stocks"
+          ("id", "warehouseId", "productVariantId", "quantity", "unitCost", "createdAt", "updatedAt")
+        VALUES (${randomUUID()}, ${input.warehouseId}, ${input.productVariantId}, ${input.quantity}, ${input.unitCost}, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+        ON CONFLICT ("warehouseId", "productVariantId") DO UPDATE SET
+          "unitCost" = CASE
+            WHEN "finished_good_stocks"."quantity" + EXCLUDED."quantity" = 0 THEN 0
+            ELSE (("finished_good_stocks"."quantity" * "finished_good_stocks"."unitCost") + (EXCLUDED."quantity" * EXCLUDED."unitCost"))
+              / ("finished_good_stocks"."quantity" + EXCLUDED."quantity")
+          END,
+          "quantity" = "finished_good_stocks"."quantity" + EXCLUDED."quantity",
+          "updatedAt" = CURRENT_TIMESTAMP`,
+      );
+
+      const stock = await tx.finishedGoodStock.findUniqueOrThrow({
+        where: {
+          warehouseId_productVariantId: {
+            warehouseId: input.warehouseId,
+            productVariantId: input.productVariantId,
+          },
+        },
+      });
+      const entry = await tx.stockLedgerEntry.create({
+        data: {
+          entryCode: generateEntryCode(),
+          type: StockMovementType.RECEIVE,
+          warehouseId: input.warehouseId,
+          productVariantId: input.productVariantId,
+          quantityDelta: input.quantity,
+          balanceAfter: stock.quantity,
+          unitCost: input.unitCost,
+          totalValue: new Prisma.Decimal(input.unitCost).mul(input.quantity),
+          reference: input.reference,
+          notes: input.notes,
+          idempotencyKeyId,
+          createdById: userId,
+        },
+        select: { entryCode: true, createdAt: true },
+      });
+      const response = {
+        replayed: false,
+        entryCode: entry.entryCode,
+        type: StockMovementType.RECEIVE,
+        rawMaterialId: '',
+        warehouseId: input.warehouseId,
+        quantityDelta: input.quantity,
+        balanceAfter: stock.quantity,
+        unitCost: input.unitCost,
+        totalValue: new Prisma.Decimal(input.unitCost)
+          .mul(input.quantity)
+          .toNumber(),
+        costPerUnitAfter: stock.unitCost.toNumber(),
+        createdAt: entry.createdAt.toISOString(),
+      } satisfies StockMovementResult;
+      if (input.idempotencyKey) {
+        await tx.idempotencyKey.update({
+          where: { key: input.idempotencyKey },
+          data: { response },
+        });
+      }
+      return response;
+    };
+
+    try {
+      return await (externalTx
+        ? execute(externalTx)
+        : this.prisma.$transaction(execute));
+    } catch (error) {
+      if (input.idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replay = await this.tryReplay(
+          input.idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
+  }
+
   async issueFinishedGood(
     input: {
       productVariantId: string;
@@ -600,19 +746,28 @@ export class InventoryService {
     const limit = pagination.limit || 20;
     const skip = (page - 1) * limit;
 
-    const [data, total] = await Promise.all([
-      this.prisma.finishedGood.findMany({
+    const where: Prisma.FinishedGoodStockWhereInput = {
+      quantity: { gt: 0 },
+    };
+    const [rows, total] = await Promise.all([
+      this.prisma.finishedGoodStock.findMany({
         skip,
         take: limit,
+        where,
         include: {
-          variant: {
+          productVariant: {
             include: { product: true },
           },
+          warehouse: true,
         },
-        orderBy: { variant: { product: { name: 'asc' } } },
+        orderBy: { updatedAt: 'desc' },
       }),
-      this.prisma.finishedGood.count(),
+      this.prisma.finishedGoodStock.count({ where }),
     ]);
+    const data = rows.map(({ productVariant, ...stock }) => ({
+      ...stock,
+      variant: productVariant,
+    }));
 
     return new PaginatedResult(data, total, page, limit);
   }
@@ -622,7 +777,9 @@ export class InventoryService {
     const lowStock = (
       await this.getLowStockMaterials({ page: 1, limit: 10000 })
     ).data.length;
-    const finishedGoods = await this.prisma.finishedGood.count();
+    const finishedGoods = await this.prisma.finishedGoodStock.count({
+      where: { quantity: { gt: 0 } },
+    });
 
     return {
       totalMaterials: materials,
