@@ -48,6 +48,14 @@ const users: TestUser[] = [
     password: 'x',
   },
   {
+    id: 'e2e-production-manager',
+    name: 'مدير إنتاج',
+    email: 'production@t.co',
+    role: 'PRODUCTION_MANAGER',
+    isActive: true,
+    password: 'x',
+  },
+  {
     id: 'e2e-accountant',
     name: 'محاسب',
     email: 'acc@t.co',
@@ -76,6 +84,11 @@ describe('Auth guard (e2e) — GF-0002', () => {
     account: { create: jest.fn() },
     voucher: { create: jest.fn(), findFirst: jest.fn() },
     workerAdvance: { create: jest.fn() },
+    product: { create: jest.fn(), findFirst: jest.fn() },
+    productVariant: { create: jest.fn() },
+    rawMaterial: { findFirst: jest.fn() },
+    bomVersion: { findFirst: jest.fn(), create: jest.fn() },
+    bomLine: { upsert: jest.fn(), delete: jest.fn() },
   };
 
   // A1/A2/A3: mock مبسّط لـ FinancialPostingService — لا يحتاج DB فعلي.
@@ -138,9 +151,10 @@ describe('Auth guard (e2e) — GF-0002', () => {
     jwtService.sign({ sub: user.id, email: user.email, role: user.role });
 
   const viewerToken = () => tokenFor(users[1]);
-  const accountantToken = () => tokenFor(users[2]);
+  const productionManagerToken = () => tokenFor(users[2]);
+  const accountantToken = () => tokenFor(users[3]);
   const adminToken = () => tokenFor(users[0]);
-  const cashierToken = () => tokenFor(users[3]);
+  const cashierToken = () => tokenFor(users[4]);
 
   afterAll(async () => {
     await app.close();
@@ -555,6 +569,146 @@ describe('Auth guard (e2e) — GF-0002', () => {
         .set('Authorization', `Bearer ${adminToken()}`)
         .send({ workerId: UUID, amount: 200, notes: 'سلفة اختبار' })
         .expect(201);
+    });
+  });
+
+  // ---------- GF-REMAINING-001: حماية مسارات المنتجات ----------
+
+  describe('ProductsController RBAC and UUID validation', () => {
+    const productId = '123e4567-e89b-12d3-a456-426614174000';
+    const rawMaterialId = '223e4567-e89b-12d3-a456-426614174000';
+    const bomId = '323e4567-e89b-12d3-a456-426614174000';
+    const validProduct = {
+      code: 'PRD-RBAC-001',
+      name: 'منتج اختبار الصلاحيات',
+      category: 'اختبار',
+      retailPrice: 300,
+      wholesalePrice: 220,
+    };
+
+    beforeEach(() => {
+      prismaFns.product.create.mockResolvedValue({
+        id: productId,
+        ...validProduct,
+      });
+      prismaFns.product.findFirst.mockResolvedValue({ id: productId });
+      prismaFns.productVariant.create.mockResolvedValue({
+        id: 'variant-rbac-1',
+      });
+      prismaFns.rawMaterial.findFirst.mockResolvedValue({ id: rawMaterialId });
+      prismaFns.bomVersion.findFirst.mockResolvedValue({
+        id: 'bom-version-rbac-1',
+      });
+      prismaFns.bomLine.upsert.mockResolvedValue({ id: bomId });
+      prismaFns.bomLine.delete.mockResolvedValue({ id: bomId });
+    });
+
+    it('POST /products بلا توكن → 401', () => {
+      return request(app.getHttpServer())
+        .post('/products')
+        .send(validProduct)
+        .expect(401);
+    });
+
+    it('POST /products/:id/variants بلا توكن → 401', () => {
+      return request(app.getHttpServer())
+        .post(`/products/${productId}/variants`)
+        .send({ size: 'L', color: 'أزرق' })
+        .expect(401);
+    });
+
+    it('POST /products/:id/bom بلا توكن → 401', () => {
+      return request(app.getHttpServer())
+        .post(`/products/${productId}/bom`)
+        .send({ rawMaterialId, quantity: 1.25, unit: 'METER' })
+        .expect(401);
+    });
+
+    it('POST /products/bom/:bomId/delete بلا توكن → 401', () => {
+      return request(app.getHttpServer())
+        .post(`/products/bom/${bomId}/delete`)
+        .expect(401);
+    });
+
+    it('VIEWER لا يستطيع إنشاء منتج أو متغير أو BOM أو حذف BOM → 403', async () => {
+      await request(app.getHttpServer())
+        .post('/products')
+        .set('Authorization', `Bearer ${viewerToken()}`)
+        .send(validProduct)
+        .expect(403);
+      await request(app.getHttpServer())
+        .post(`/products/${productId}/variants`)
+        .set('Authorization', `Bearer ${viewerToken()}`)
+        .send({ size: 'L', color: 'أزرق' })
+        .expect(403);
+      await request(app.getHttpServer())
+        .post(`/products/${productId}/bom`)
+        .set('Authorization', `Bearer ${viewerToken()}`)
+        .send({ rawMaterialId, quantity: 1.25, unit: 'METER' })
+        .expect(403);
+      return request(app.getHttpServer())
+        .post(`/products/bom/${bomId}/delete`)
+        .set('Authorization', `Bearer ${viewerToken()}`)
+        .expect(403);
+    });
+
+    it('PRODUCTION_MANAGER يستطيع إنشاء منتج → 201', () => {
+      return request(app.getHttpServer())
+        .post('/products')
+        .set('Authorization', `Bearer ${productionManagerToken()}`)
+        .send(validProduct)
+        .expect(201);
+    });
+
+    it('PRODUCTION_MANAGER يستطيع إضافة متغير وBOM وحذف BOM → 201/201/201', async () => {
+      await request(app.getHttpServer())
+        .post(`/products/${productId}/variants`)
+        .set('Authorization', `Bearer ${productionManagerToken()}`)
+        .send({ size: 'L', color: 'أزرق' })
+        .expect(201);
+      await request(app.getHttpServer())
+        .post(`/products/${productId}/bom`)
+        .set('Authorization', `Bearer ${productionManagerToken()}`)
+        .send({ rawMaterialId, quantity: 1.25, unit: 'METER' })
+        .expect(201);
+      return request(app.getHttpServer())
+        .post(`/products/bom/${bomId}/delete`)
+        .set('Authorization', `Bearer ${productionManagerToken()}`)
+        .expect(201);
+    });
+
+    it('معرف المنتج أو BOM غير صالح → 400 قبل الخدمة', async () => {
+      await request(app.getHttpServer())
+        .get('/products/not-a-uuid')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .expect(400);
+      await request(app.getHttpServer())
+        .post('/products/not-a-uuid/variants')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ size: 'L', color: 'أزرق' })
+        .expect(400);
+      return request(app.getHttpServer())
+        .post('/products/bom/not-a-uuid/delete')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .expect(400);
+    });
+
+    it('مدخلات المنتج والمتغير وBOM غير الصالحة → 400', async () => {
+      await request(app.getHttpServer())
+        .post('/products')
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ ...validProduct, retailPrice: 0 })
+        .expect(400);
+      await request(app.getHttpServer())
+        .post(`/products/${productId}/variants`)
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ size: '', color: 'أزرق' })
+        .expect(400);
+      return request(app.getHttpServer())
+        .post(`/products/${productId}/bom`)
+        .set('Authorization', `Bearer ${adminToken()}`)
+        .send({ rawMaterialId: 'not-a-uuid', quantity: 0, unit: '' })
+        .expect(400);
     });
   });
 });

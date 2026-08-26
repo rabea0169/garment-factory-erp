@@ -12,7 +12,7 @@
 | enum غير صالح | `paymentType: 'X'`, `type`, `stage`, `status`, `rejectionReason`, `AccountType` |
 | كمية/سعر غير موجب | `quantity: -2/0`, `unitPrice: 0`, `amount: -50`, `retailPrice: 0` |
 | عدد صحيح مطلوب | `quantity: 1.5` (في الكميات والقطع) |
-| UUID غير صالح | `customerId: 'not-a-uuid'` + معامل مسار إضافة المخزون/تحديث الحالة |
+| UUID غير صالح | `customerId: 'not-a-uuid'` + أي معرف مسار للمنتج أو المتغير أو BOM أو إضافة المخزون/تحديث الحالة |
 | تاريخ غير صالح | `date: 'not-a-date'` (ISO 8601) |
 | مصفوفة بنود فارغة | `items: []` |
 
@@ -30,6 +30,9 @@
 | GET | `/products/:id` | منتج واحد | 🔒 JWT | أي مستخدم موثّق |
 | GET | `/products/seasons` | المواسم | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/products` | إنشاء منتج | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER |
+| POST | `/products/:id/variants` | إضافة مقاس/لون | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER؛ `:id` UUID |
+| POST | `/products/:id/bom` | إضافة/تحديث مادة في BOM | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER؛ `:id` UUID |
+| POST | `/products/bom/:bomId/delete` | حذف مادة من BOM | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER؛ `:bomId` UUID |
 
 ## المخزون — `/inventory`
 

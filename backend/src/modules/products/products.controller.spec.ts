@@ -5,14 +5,19 @@ import { ProductsService } from './products.service';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 
-describe('ProductsController — التفويض والتفويض للخدمة (GF-0003)', () => {
+describe('ProductsController — التفويض والتحقق من المسارات الحساسة (GF-REMAINING-001)', () => {
   let controller: ProductsController;
   let service: {
     getAllSeasons: jest.Mock;
     getAllProducts: jest.Mock;
     getProductDetails: jest.Mock;
     createProduct: jest.Mock;
+    createVariant: jest.Mock;
+    addBomItem: jest.Mock;
+    deleteBomItem: jest.Mock;
   };
+
+  const managerRoles = [UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER];
 
   beforeEach(() => {
     service = {
@@ -20,6 +25,9 @@ describe('ProductsController — التفويض والتفويض للخدمة (G
       getAllProducts: jest.fn().mockResolvedValue([]),
       getProductDetails: jest.fn().mockResolvedValue({ id: 'p-1' }),
       createProduct: jest.fn().mockResolvedValue({ id: 'p-2' }),
+      createVariant: jest.fn().mockResolvedValue({ id: 'v-1' }),
+      addBomItem: jest.fn().mockResolvedValue({ id: 'bom-1' }),
+      deleteBomItem: jest.fn().mockResolvedValue({ id: 'bom-1' }),
     };
     controller = new ProductsController(service as unknown as ProductsService);
   });
@@ -27,10 +35,12 @@ describe('ProductsController — التفويض والتفويض للخدمة (G
   it('يفوّض قائمة المواسم والمنتجات وتفاصيل منتج إلى الخدمة', async () => {
     await controller.getSeasons({});
     await controller.getAllProducts({});
-    await controller.getProduct('p-1');
+    await controller.getProduct('123e4567-e89b-12d3-a456-426614174000');
     expect(service.getAllSeasons).toHaveBeenCalledTimes(1);
     expect(service.getAllProducts).toHaveBeenCalledTimes(1);
-    expect(service.getProductDetails).toHaveBeenCalledWith('p-1');
+    expect(service.getProductDetails).toHaveBeenCalledWith(
+      '123e4567-e89b-12d3-a456-426614174000',
+    );
   });
 
   it('ينشئ منتجًا عبر الخدمة ببيانات الطلب كما هي', async () => {
@@ -45,15 +55,45 @@ describe('ProductsController — التفويض والتفويض للخدمة (G
     expect(service.createProduct).toHaveBeenCalledWith(body);
   });
 
-  it('إنشاء منتج مقيّد بدورين: GENERAL_MANAGER وPRODUCTION_MANAGER فقط', () => {
+  it.each([
+    ['createProduct', 'إنشاء المنتج'],
+    ['createVariant', 'إضافة المتغير'],
+    ['addBomItem', 'إضافة مادة BOM'],
+    ['deleteBomItem', 'حذف مادة BOM'],
+  ] as const)('%s مقيّد بأدوار الإدارة المناسبة: %s', (method, _label) => {
     const roles = getMethodMetadata<UserRole[]>(
       ROLES_KEY,
       ProductsController.prototype,
-      'createProduct',
+      method,
     );
-    expect(roles).toEqual([
-      UserRole.GENERAL_MANAGER,
-      UserRole.PRODUCTION_MANAGER,
-    ]);
+    expect(roles).toEqual(managerRoles);
+  });
+
+  it('يفوّض إضافة متغير إلى الخدمة', async () => {
+    const productId = '123e4567-e89b-12d3-a456-426614174000';
+    await controller.createVariant(productId, { size: 'L', color: 'أزرق' });
+    expect(service.createVariant).toHaveBeenCalledWith(productId, 'L', 'أزرق');
+  });
+
+  it('يفوّض إضافة BOM إلى الخدمة', async () => {
+    const productId = '123e4567-e89b-12d3-a456-426614174000';
+    const rawMaterialId = '223e4567-e89b-12d3-a456-426614174000';
+    await controller.addBomItem(productId, {
+      rawMaterialId,
+      quantity: 1.25,
+      unit: 'METER',
+    });
+    expect(service.addBomItem).toHaveBeenCalledWith(
+      productId,
+      rawMaterialId,
+      1.25,
+      'METER',
+    );
+  });
+
+  it('يفوّض حذف BOM إلى الخدمة', async () => {
+    const bomId = '323e4567-e89b-12d3-a456-426614174000';
+    await controller.deleteBomItem(bomId);
+    expect(service.deleteBomItem).toHaveBeenCalledWith(bomId);
   });
 });

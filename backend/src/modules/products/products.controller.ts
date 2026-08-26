@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Param, Query } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Query,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -32,7 +40,7 @@ export class ProductsController {
   @ApiOperation({
     summary: 'تفاصيل المنتج تشمل مقاساته وألوانه والخامات (BOM)',
   })
-  async getProduct(@Param('id') id: string) {
+  async getProduct(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.productsService.getProductDetails(id);
   }
 
@@ -47,7 +55,7 @@ export class ProductsController {
   @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة مقاس/لون جديد للمنتج' })
   async createVariant(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: CreateProductVariantDto,
   ) {
     return this.productsService.createVariant(id, body.size, body.color);
@@ -56,7 +64,10 @@ export class ProductsController {
   @Post(':id/bom')
   @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
-  async addBomItem(@Param('id') id: string, @Body() body: CreateBomLineDto) {
+  async addBomItem(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() body: CreateBomLineDto,
+  ) {
     return this.productsService.addBomItem(
       id,
       body.rawMaterialId,
@@ -69,7 +80,7 @@ export class ProductsController {
   @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
   @ApiOperation({ summary: 'حذف مادة من شجرة التصنيع' })
-  async deleteBomItem(@Param('bomId') bomId: string) {
+  async deleteBomItem(@Param('bomId', new ParseUUIDPipe()) bomId: string) {
     return this.productsService.deleteBomItem(bomId);
   }
 }
