@@ -269,7 +269,7 @@ integrationDescribe('GF-0015 payroll integration', () => {
       await prisma.journalEntry.count({
         where: { reference: `PAYROLL:${payroll.id}` },
       }),
-    ).toBe(1);
+    ).toBe(2); // WAVE2-C2 (COMM-F03): one approval entry + one payment entry
     const treasury = await prisma.treasury.findUnique({
       where: { id: treasuryId },
     });
