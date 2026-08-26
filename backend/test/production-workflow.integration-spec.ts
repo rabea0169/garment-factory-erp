@@ -1,6 +1,8 @@
 import {
+  Prisma,
   ProductionStage,
   ProductionStageRunStatus,
+  QualityCheckStatus,
   StockMovementType,
   ProductionWasteReason,
   UserRole,
@@ -825,6 +827,23 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       { workOrderId: scenario.workOrderId, toStage: ProductionStage.PACKING },
       scenario.userId,
     );
+    // OPS-F05:PACKING requires a QualityCheck before the work order can
+    // transition to COMPLETED via recordStageOutput. Seed one to satisfy
+    // the guard introduced in WAVE2-B2.
+    await prisma.qualityCheck.create({
+      data: {
+        workOrderId: scenario.workOrderId,
+        stage: WorkOrderStatus.PACKAGING,
+        checkedQty: 7,
+        passedQty: 7,
+        rejectedQty: 0,
+        wasteQty: 0,
+        unitCost: new Prisma.Decimal('2.86'),
+        wasteCost: new Prisma.Decimal('0'),
+        status: QualityCheckStatus.COMPLETED,
+        checkedAt: new Date(),
+      },
+    });
     await workflowService.recordStageOutput({
       workOrderId: scenario.workOrderId,
       stage: ProductionStage.PACKING,
