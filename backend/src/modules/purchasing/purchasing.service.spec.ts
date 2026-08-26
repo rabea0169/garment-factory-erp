@@ -48,6 +48,67 @@ describe('PurchasingService (GF-0009)', () => {
     });
   });
 
+  describe('createReceipt', () => {
+    it('ينشئ إذن استلام جزئيًا ويرسل الكمية المستلمة فقط إلى المخزون', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.PENDING,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+      prisma.purchaseReceipt.create.mockResolvedValue({
+        id: 'grn-1',
+        code: 'GRN-100',
+        items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }],
+      });
+      prisma.purchaseOrder.update.mockResolvedValue({
+        status: PurchaseOrderStatus.PENDING,
+      });
+
+      const result = await service.createReceipt(
+        'po-1',
+        { items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }] },
+        'user-1',
+      );
+
+      expect(result.id).toBe('grn-1');
+      expect(inventoryService.receive).toHaveBeenCalledWith(
+        expect.objectContaining({ rawMaterialId: 'rm-1', quantity: 4 }),
+        'user-1',
+        prisma,
+      );
+      expect(prisma.purchaseOrder.update).toHaveBeenCalledWith({
+        where: { id: 'po-1' },
+        data: { status: PurchaseOrderStatus.PENDING },
+      });
+    });
+
+    it('يرفض الاستلام الذي يتجاوز كمية أمر الشراء', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        status: PurchaseOrderStatus.PENDING,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+
+      await expect(
+        service.createReceipt(
+          'po-1',
+          { items: [{ purchaseOrderItemId: 'poi-1', quantity: 11 }] },
+          'user-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.purchaseReceipt.create).not.toHaveBeenCalled();
+    });
+  });
+
   describe('receiveOrder', () => {
     it('should throw if order already received', async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({

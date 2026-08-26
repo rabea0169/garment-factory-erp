@@ -35,6 +35,7 @@ export const DocumentCodePrefix = {
   WORK_ORDER: 'WO',
   SHIPMENT: 'SHP',
   PURCHASE_ORDER: 'PO',
+  PURCHASE_RECEIPT: 'GRN',
   CUSTOMER_PAYMENT: 'CP',
   SUPPLIER_PAYMENT: 'SP',
   IDENTITY_DOC: 'ID',
