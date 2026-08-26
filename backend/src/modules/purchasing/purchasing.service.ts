@@ -7,6 +7,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseOrderStatus, Prisma } from '@prisma/client';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
@@ -77,6 +78,119 @@ export class PurchasingService {
         },
       },
       include: { items: true },
+    });
+  }
+
+  async createReceipt(
+    orderId: string,
+    dto: CreatePurchaseReceiptDto,
+    userId: string,
+  ) {
+    if (!dto.items.length) {
+      throw new BadRequestException(
+        'يجب أن يحتوي إذن الاستلام على بند واحد على الأقل',
+      );
+    }
+
+    const itemIds = dto.items.map((item) => item.purchaseOrderItemId);
+    if (new Set(itemIds).size !== itemIds.length) {
+      throw new BadRequestException(
+        'لا يجوز تكرار بند أمر الشراء في إذن الاستلام',
+      );
+    }
+
+    const order = await this.prisma.purchaseOrder.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+    if (!order) throw new NotFoundException('Purchase order not found');
+    if (order.status === PurchaseOrderStatus.CANCELLED) {
+      throw new BadRequestException('Cannot receive a cancelled order');
+    }
+
+    const existing = await this.prisma.purchaseReceiptItem.findMany({
+      where: { purchaseOrderItemId: { in: itemIds } },
+      select: { purchaseOrderItemId: true, quantity: true },
+    });
+    const receivedByItem = new Map<string, number>();
+    for (const item of existing) {
+      receivedByItem.set(
+        item.purchaseOrderItemId,
+        (receivedByItem.get(item.purchaseOrderItemId) ?? 0) +
+          Number(item.quantity),
+      );
+    }
+
+    const orderItems = new Map(order.items.map((item) => [item.id, item]));
+    for (const item of dto.items) {
+      const orderItem = orderItems.get(item.purchaseOrderItemId);
+      if (!orderItem) throw new NotFoundException('Item not found in order');
+      const alreadyReceived = receivedByItem.get(item.purchaseOrderItemId) ?? 0;
+      if (alreadyReceived + item.quantity > Number(orderItem.quantity)) {
+        throw new BadRequestException(
+          `كمية الاستلام تتجاوز المتبقي للبند ${item.purchaseOrderItemId}`,
+        );
+      }
+    }
+
+    const rawWarehouse = await this.prisma.warehouse.findFirst({
+      where: { code: 'WH-RAW' },
+    });
+    if (!rawWarehouse) {
+      throw new BadRequestException('Default RAW warehouse not found');
+    }
+
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const receipt = await tx.purchaseReceipt.create({
+        data: {
+          code: generateDocumentCode(DocumentCodePrefix.PURCHASE_RECEIPT),
+          purchaseOrderId: orderId,
+          userId,
+          notes: dto.notes,
+          items: {
+            create: dto.items.map((item) => ({
+              purchaseOrderItemId: item.purchaseOrderItemId,
+              quantity: item.quantity,
+            })),
+          },
+        },
+        include: { items: true },
+      });
+
+      for (const item of dto.items) {
+        const orderItem = orderItems.get(item.purchaseOrderItemId)!;
+        await this.inventoryService.receive(
+          {
+            rawMaterialId: orderItem.rawMaterialId,
+            warehouseId: rawWarehouse.id,
+            quantity: item.quantity,
+            unitCost: Number(orderItem.unitCost),
+            reference: receipt.code,
+            notes: `استلام ${receipt.code} من أمر الشراء ${order.code}`,
+          },
+          userId,
+          tx,
+        );
+      }
+
+      const allReceived = order.items.every((item) => {
+        const previous = receivedByItem.get(item.id) ?? 0;
+        const current =
+          dto.items.find(
+            (receiptItem) => receiptItem.purchaseOrderItemId === item.id,
+          )?.quantity ?? 0;
+        return previous + current >= Number(item.quantity);
+      });
+      await tx.purchaseOrder.update({
+        where: { id: orderId },
+        data: {
+          status: allReceived
+            ? PurchaseOrderStatus.RECEIVED
+            : PurchaseOrderStatus.PENDING,
+        },
+      });
+
+      return receipt;
     });
   }
 

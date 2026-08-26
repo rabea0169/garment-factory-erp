@@ -33,17 +33,19 @@ model User {
   activityLogs           ActivityLog[]
   salesOrders            SalesOrder[]
   purchaseOrders         PurchaseOrder[]
+  purchaseReceipts       PurchaseReceipt[]
   vouchers               Voucher[]
   // E1: القيود المالية التي أنشأها هذا المستخدم.
-  journalEntries         JournalEntry[] @relation("JournalEntryCreator")
+  journalEntries         JournalEntry[]                  @relation("JournalEntryCreator")
   // A9: القيود المالية التي عكسها هذا المستخدم (audit trail).
-  reversedJournalEntries JournalEntry[] @relation("JournalEntryReverser")
+  reversedJournalEntries JournalEntry[]                  @relation("JournalEntryReverser")
   workOrders             WorkOrder[]
   stockLedgerEntries     StockLedgerEntry[]
   stageTransitions       WorkOrderStageTransition[]
   productionConsumptions ProductionMaterialConsumption[]
   productionCosts        ProductionCostSnapshot[]
-  qualityChecksCreated   QualityCheck[] @relation("QualityCheckCreator")
+  qualityChecksCreated   QualityCheck[]                  @relation("QualityCheckCreator")
+
   @@map("users")
 }
 
@@ -76,20 +78,20 @@ model Season {
 }
 
 model Product {
-  id             String   @id @default(uuid())
-  code           String   @unique
+  id             String    @id @default(uuid())
+  code           String    @unique
   name           String
   description    String?
   imageUrl       String?
   seasonId       String?
   category       String?
-  retailPrice    Decimal  @db.Decimal(10, 2)
-  wholesalePrice Decimal  @db.Decimal(10, 2)
-  isActive       Boolean  @default(true)
+  retailPrice    Decimal   @db.Decimal(10, 2)
+  wholesalePrice Decimal   @db.Decimal(10, 2)
+  isActive       Boolean   @default(true)
   // E2: soft-delete — المنتج يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
-  deletedAt       DateTime?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  deletedAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   season      Season?          @relation(fields: [seasonId], references: [id])
   variants    ProductVariant[]
@@ -339,6 +341,7 @@ model IdempotencyKey {
   stageTransition       WorkOrderStageTransition?
   productionConsumption ProductionMaterialConsumption?
   qualityCheck          QualityCheck?
+
   @@index([scope, createdAt])
   @@index([expiresAt])
   @@map("idempotency_keys")
@@ -438,10 +441,12 @@ enum QualityWasteReason {
   MATERIAL_DEFECT
   OTHER
 }
+
 enum QualityCheckStatus {
   COMPLETED
   VOIDED
 }
+
 enum ProductionWasteReason {
   CUTTING_LOSS
   SEWING_DEFECT
@@ -474,6 +479,7 @@ model ProductionStageRun {
   fromTransitions      WorkOrderStageTransition[]      @relation("StageTransitionFromRun")
   toTransitions        WorkOrderStageTransition[]      @relation("StageTransitionToRun")
   qualityChecks        QualityCheck[]
+
   @@unique([workOrderId, stage])
   @@unique([workOrderId, sequence])
   @@index([workOrderId, status])
@@ -592,28 +598,29 @@ enum RejectionReason {
 }
 
 model QualityCheck {
-  id              String              @id @default(uuid())
-  workOrderId     String
-  stage           WorkOrderStatus
-  stageRunId      String?
-  checkedQty      Int
-  passedQty       Int
-  rejectedQty     Int
-  wasteQty        Int                 @default(0)
-  rejectionReason RejectionReason?
-  wasteReason     QualityWasteReason?
-  unitCost        Decimal             @default(0) @db.Decimal(14, 4)
-  wasteCost       Decimal             @default(0) @db.Decimal(14, 2)
-  status          QualityCheckStatus   @default(COMPLETED)
-  createdById     String?
+  id               String              @id @default(uuid())
+  workOrderId      String
+  stage            WorkOrderStatus
+  stageRunId       String?
+  checkedQty       Int
+  passedQty        Int
+  rejectedQty      Int
+  wasteQty         Int                 @default(0)
+  rejectionReason  RejectionReason?
+  wasteReason      QualityWasteReason?
+  unitCost         Decimal             @default(0) @db.Decimal(14, 4)
+  wasteCost        Decimal             @default(0) @db.Decimal(14, 2)
+  status           QualityCheckStatus  @default(COMPLETED)
+  createdById      String?
   idempotencyKeyId String?
-  closedAt        DateTime            @default(now())
-  notes           String?
-  checkedAt       DateTime            @default(now())
-  workOrder       WorkOrder           @relation(fields: [workOrderId], references: [id])
-  stageRun        ProductionStageRun? @relation(fields: [stageRunId], references: [id], onDelete: SetNull)
-  createdBy       User?               @relation("QualityCheckCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  idempotencyKey  IdempotencyKey?      @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  closedAt         DateTime            @default(now())
+  notes            String?
+  checkedAt        DateTime            @default(now())
+  workOrder        WorkOrder           @relation(fields: [workOrderId], references: [id])
+  stageRun         ProductionStageRun? @relation(fields: [stageRunId], references: [id], onDelete: SetNull)
+  createdBy        User?               @relation("QualityCheckCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  idempotencyKey   IdempotencyKey?     @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+
   @@unique([idempotencyKeyId])
   @@unique([stageRunId])
   @@index([workOrderId, stage, checkedAt])
@@ -621,7 +628,6 @@ model QualityCheck {
   @@index([createdById, checkedAt])
   @@map("quality_checks")
 }
-
 
 // ===== M-07: HR & PAYROLL =====
 
@@ -719,18 +725,18 @@ model Payroll {
 // ===== M-08: SALES & PURCHASING =====
 
 model Customer {
-  id        String   @id @default(uuid())
-  code      String   @unique
+  id        String    @id @default(uuid())
+  code      String    @unique
   name      String
   phone     String?
   address   String?
   email     String?
   notes     String?
-  balance   Decimal  @default(0) @db.Decimal(10, 2)
-  isActive  Boolean  @default(true)
+  balance   Decimal   @default(0) @db.Decimal(10, 2)
+  isActive  Boolean   @default(true)
   // E2: soft-delete — العميل يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   deletedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   salesOrders SalesOrder[]
   payments    CustomerPayment[]
@@ -741,18 +747,18 @@ model Customer {
 }
 
 model Supplier {
-  id        String   @id @default(uuid())
-  code      String   @unique
+  id        String    @id @default(uuid())
+  code      String    @unique
   name      String
   phone     String?
   address   String?
   email     String?
   notes     String?
-  balance   Decimal  @default(0) @db.Decimal(10, 2)
-  isActive  Boolean  @default(true)
+  balance   Decimal   @default(0) @db.Decimal(10, 2)
+  isActive  Boolean   @default(true)
   // E2: soft-delete — المورد يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   deletedAt DateTime?
-  createdAt DateTime @default(now())
+  createdAt DateTime  @default(now())
 
   purchaseOrders   PurchaseOrder[]
   rawMaterials     RawMaterial[]
@@ -786,9 +792,9 @@ model SalesOrder {
   // A10: VAT 14% Egyptian — subtotal (sum of line items before discount/vat),
   // vatRate (decimal fraction 0.14 = 14%), vatAmount (computed tax), totalAmount
   // (subtotal - discount + vatAmount). Old `totalAmount` field now includes VAT.
-  subtotal   Decimal          @default(0) @db.Decimal(12, 2)
-  vatRate    Decimal          @default(0) @db.Decimal(5, 4)
-  vatAmount  Decimal          @default(0) @db.Decimal(10, 2)
+  subtotal    Decimal          @default(0) @db.Decimal(12, 2)
+  vatRate     Decimal          @default(0) @db.Decimal(5, 4)
+  vatAmount   Decimal          @default(0) @db.Decimal(10, 2)
   totalAmount Decimal          @db.Decimal(10, 2)
   paidAmount  Decimal          @default(0) @db.Decimal(10, 2)
   discount    Decimal          @default(0) @db.Decimal(10, 2)
@@ -860,6 +866,7 @@ model PurchaseOrder {
   supplier Supplier            @relation(fields: [supplierId], references: [id])
   user     User                @relation(fields: [userId], references: [id])
   items    PurchaseOrderItem[]
+  receipts PurchaseReceipt[]
   payments SupplierPayment[]
 
   @@map("purchase_orders")
@@ -873,10 +880,40 @@ model PurchaseOrderItem {
   unitCost        Decimal @db.Decimal(10, 2)
   totalCost       Decimal @db.Decimal(10, 2)
 
-  purchaseOrder PurchaseOrder @relation(fields: [purchaseOrderId], references: [id])
-  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id])
+  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  rawMaterial   RawMaterial           @relation(fields: [rawMaterialId], references: [id])
+  receiptItems  PurchaseReceiptItem[]
 
   @@map("purchase_order_items")
+}
+
+model PurchaseReceipt {
+  id              String   @id @default(uuid())
+  code            String   @unique
+  purchaseOrderId String
+  userId          String
+  receivedAt      DateTime @default(now())
+  notes           String?
+
+  purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
+  user          User                  @relation(fields: [userId], references: [id])
+  items         PurchaseReceiptItem[]
+
+  @@index([purchaseOrderId, receivedAt])
+  @@map("purchase_receipts")
+}
+
+model PurchaseReceiptItem {
+  id                  String  @id @default(uuid())
+  receiptId           String
+  purchaseOrderItemId String
+  quantity            Decimal @db.Decimal(10, 4)
+
+  receipt           PurchaseReceipt   @relation(fields: [receiptId], references: [id])
+  purchaseOrderItem PurchaseOrderItem @relation(fields: [purchaseOrderItemId], references: [id])
+
+  @@unique([receiptId, purchaseOrderItemId])
+  @@map("purchase_receipt_items")
 }
 
 model SupplierPayment {
@@ -963,15 +1000,15 @@ model Account {
 }
 
 model JournalEntry {
-  id          String   @id @default(uuid())
-  code        String   @unique
-  description String
-  reference   String?
-  date        DateTime @default(now())
-  isAuto      Boolean  @default(false)
+  id           String    @id @default(uuid())
+  code         String    @unique
+  description  String
+  reference    String?
+  date         DateTime  @default(now())
+  isAuto       Boolean   @default(false)
   // E1: audit trail — من أنشأ القيد (nullable للقيود الالية).
-  createdById String?
-  createdAt   DateTime @default(now())
+  createdById  String?
+  createdAt    DateTime  @default(now())
   // A9: reversal tracking — القيد الأصلي يُعلَّم كمعكوس، والقيد العكسي يربط بـ reversalOfId.
   // لا cascade delete — العلاقة استشارية لحفظ سجل المراجعة.
   isReversed   Boolean   @default(false)
@@ -981,32 +1018,32 @@ model JournalEntry {
   // A9: payload of linked side effects used for atomic reversal.
   metadata     Json?
   // Financial posting idempotency: same key + same hash replays; different hash conflicts.
-  postingKey  String?
-  postingHash String?
+  postingKey   String?
+  postingHash  String?
   // E5: multi-currency — العملة التي أُنشئ بها القيد + سعر الصرف مقابل عملة النظام.
   // NULL = system default (EGP). exchangeRate defaults to 1.0 when currencyId is NULL.
-  currencyId    String?
-  exchangeRate  Decimal?  @db.Decimal(10, 6)
+  currencyId   String?
+  exchangeRate Decimal?  @db.Decimal(10, 6)
 
-  lines     JournalLine[]
+  lines      JournalLine[]
   // E1: علاقة اختيارية للمستخدم (لا cascade delete — لا تُحذف القيود).
-  createdBy User?        @relation("JournalEntryCreator", fields: [createdById], references: [id])
+  createdBy  User?          @relation("JournalEntryCreator", fields: [createdById], references: [id])
   // A9: من عكس القيد (audit trail).
-  reversedBy User?        @relation("JournalEntryReverser", fields: [reversedById], references: [id])
+  reversedBy User?          @relation("JournalEntryReverser", fields: [reversedById], references: [id])
   // A9: علاقة ذاتية للربط بين القيد العكسي والأصلي.
-  reversalOf  JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id])
+  reversalOf JournalEntry?  @relation("JournalEntryReversal", fields: [reversalOfId], references: [id])
   reversals  JournalEntry[] @relation("JournalEntryReversal")
   // E5: FK to Currency (nullable — defaults to system EGP).
-  currency   Currency?     @relation(fields: [currencyId], references: [id])
-  vouchers  Voucher[]
+  currency   Currency?      @relation(fields: [currencyId], references: [id])
+  vouchers   Voucher[]
 
+  @@unique([reversalOfId])
+  @@unique([postingKey])
   // Cluster 2 — B5/E4: فهارس للتقارير وحساب السنة المالية
   // A9: فهارس لاستعلامات العكس (المؤجلة / المنفذة).
   // E5: فهرس على currencyId لتقارير العملات الأجنبية.
   @@index([date])
   @@index([createdById, createdAt])
-  @@unique([reversalOfId])
-  @@unique([postingKey])
   @@index([reversalOfId])
   @@index([isReversed])
   @@index([currencyId])
@@ -1051,7 +1088,7 @@ model Voucher {
   counterpartyType String?
   counterpartyId   String?
 
-  createdBy    User?          @relation(fields: [createdById], references: [id])
+  createdBy    User?         @relation(fields: [createdById], references: [id])
   journalEntry JournalEntry? @relation(fields: [journalEntryId], references: [id])
   treasury     Treasury?     @relation(fields: [treasuryId], references: [id])
 
@@ -1061,17 +1098,17 @@ model Voucher {
 }
 
 model Treasury {
-  id        String   @id @default(uuid())
-  name      String
-  type      String // CASH or BANK
-  balance   Decimal  @default(0) @db.Decimal(15, 2)
-  isActive  Boolean  @default(true)
+  id         String    @id @default(uuid())
+  name       String
+  type       String // CASH or BANK
+  balance    Decimal   @default(0) @db.Decimal(15, 2)
+  isActive   Boolean   @default(true)
   // E2: soft-delete — الخزينة يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   // ملاحظة: لا تسمح بـ soft-delete إذا كان balance != 0 (يُيتم سندات مرتبطة).
-  deletedAt DateTime?
+  deletedAt  DateTime?
   // E5: multi-currency — كل خزينة لها عملة (EGP default).
   currencyId String?
-  createdAt DateTime @default(now())
+  createdAt  DateTime  @default(now())
 
   // A3: السندات المرتبطة بهذه الخزينة (لا cascade delete — يُمنع حذف خزينة مرتبطة).
   vouchers Voucher[]

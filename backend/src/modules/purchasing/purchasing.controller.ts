@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { PurchasingService } from './purchasing.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
+import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
@@ -38,6 +39,17 @@ export class PurchasingController {
     @CurrentUser('id') userId: string,
   ) {
     return this.purchasingService.createPurchaseOrder(dto, userId);
+  }
+
+  @Post(':id/receipts')
+  @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'Create a partial or complete goods receipt' })
+  async createReceipt(
+    @Param('id') id: string,
+    @Body() dto: CreatePurchaseReceiptDto,
+    @CurrentUser('id') userId: string,
+  ) {
+    return this.purchasingService.createReceipt(id, dto, userId);
   }
 
   @Put(':id/receive')
