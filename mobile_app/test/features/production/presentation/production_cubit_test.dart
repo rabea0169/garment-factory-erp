@@ -26,6 +26,9 @@ void main() {
     final cubit = ProductionCubit(
       getWorkOrders: GetWorkOrders(repository),
       transitionStage: TransitionProductionStage(repository),
+      recordStageOutput: RecordProductionStageOutput(repository),
+      consumeMaterial: ConsumeProductionMaterial(repository),
+      finalizeCost: FinalizeProductionCost(repository),
     );
     addTearDown(cubit.close);
 
@@ -50,6 +53,9 @@ void main() {
     final cubit = ProductionCubit(
       getWorkOrders: GetWorkOrders(repository),
       transitionStage: TransitionProductionStage(repository),
+      recordStageOutput: RecordProductionStageOutput(repository),
+      consumeMaterial: ConsumeProductionMaterial(repository),
+      finalizeCost: FinalizeProductionCost(repository),
     );
     addTearDown(cubit.close);
 
