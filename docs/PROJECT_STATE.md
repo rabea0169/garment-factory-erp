@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `17f765b` — دمج PR #33 لإكمال GF-0017 بعد GF-0016 وGF-0015 |
-| فرع العمل الحالي | `phase9/gf0018-accounting` — fiscal periods وjournal entries |
-| آخر commit في فرع العمل | `17f765b` — base verified؛ تغييرات GF-0018 غير ملتزمة بعد |
-| Pull Request الحالي | لا يوجد؛ فرع GF-0018 قيد الإعداد قبل الرفع |
-| آخر مرحلة مكتملة بالكامل على main | GF-0017 shipping lifecycle؛ GF-0018 ما زالت بحاجة تنفيذ المحاسبة والفترات |
-| حالة CI على main | PASS — Run `32932165515` على `17f765b`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0017 نجحت على PostgreSQL 16 في CI؛ migration GF-0018 الحالية تنتظر PR/CI؛ لا توجد production/shared DB |
-| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD؛ عقد fiscal periods/journal entries قيد PR GF-0018 |
+| آخر commit على main | `5dfa0fe` — دمج PR #36 لإكمال GF-0018 بعد GF-0017 وGF-0016 وGF-0015 |
+| فرع العمل الحالي | `docs/post-gf0018-state` — توثيق post-merge |
+| آخر commit في فرع العمل | `5dfa0fe` — base verified؛ تحديث post-merge للتوثيق فقط |
+| Pull Request الحالي | لا يوجد؛ فرع post-merge docs قيد الإعداد قبل الرفع |
+| آخر مرحلة مكتملة بالكامل على main | GF-0018 fiscal periods and journal entries؛ CI الأخضر موثق أدناه |
+| حالة CI على main | PASS — Run `32933591101` على `5dfa0fe`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0018 نجحت على PostgreSQL 16 في CI؛ لا توجد production/shared DB |
+| إصدار API | `1.0`؛ أضيف payroll وreceipt idempotency وPOD وfiscal periods/journal entries |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0018-IMPL`: إكمال fiscal periods وjournal entries والتحقق من PostgreSQL CI |
-| المرحلة النشطة | GF-0018 — Accounting fiscal periods and journal entries |
+| المهمة النشطة | Post-merge verification؛ لا يبدأ GF-0019 قبل قرار ونطاق معتمد |
+| المرحلة النشطة | GF-0018 مكتملة؛ بوابة GF-0019 تنتظر مراجعة مستقلة |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
 | Last handoff | `docs/handoffs/HANDOFF-018.md` |
-| Next exact action | تشغيل diff check والبوابات الكاملة، commit/push وفتح PR GF-0018، ثم انتظار migration deploy وPostgreSQL accounting integration في CI |
+| Next exact action | تحديث handoff/state post-merge في PR توثيقي مستقل، ثم مراجعة أي GF-0019 ظاهر قبل التنفيذ؛ لا اعتماد تلقائي لنطاق جديد |
 
 ## المهام المكتملة على main
 
@@ -40,7 +40,10 @@
 | GF-0012 | Pagination موحد لكل القوائم مع data/meta وقيود page/limit | مكتملة |
 | GF-0013 | مراحل الإنتاج، stage runs، المخرجات، الاستهلاك، التكلفة، وposting المنتج التام | مدمجة على main؛ تحتاج متابعة UI/اختبارات تشغيلية لاحقة |
 | GF-0014 | الجودة والهالك وربط stageRun وKPI | مكتملة ومُدمجة عبر PR #25؛ migration وCI PostgreSQL ناجحان |
-| GF-0015 | attendance endpoint + payroll | attendance جزئي مدمج عبر PR #24؛ payroll ينتظر التنفيذ المستقل |
+| GF-0015 | attendance endpoint + payroll | مكتملة ومُدمجة عبر PR #24 و#30؛ CI أخضر |
+| GF-0016 | receipt idempotency وربط الاستلام بالـledger | مكتملة ومُدمجة عبر PR #27 و#31؛ CI PostgreSQL أخضر |
+| GF-0017 | shipment lifecycle وproof of delivery وactor audit | مكتملة ومُدمجة عبر PR #29 و#33؛ CI PostgreSQL أخضر |
+| GF-0018 | fiscal periods وقيود متعددة البنود ومنع الترحيل المغلق | مكتملة ومُدمجة عبر PR #32 و#36؛ CI PostgreSQL أخضر |
 
 ## GF-0014 — الحالة التفصيلية
 
@@ -70,11 +73,11 @@
 
 ## الفجوات والقيود المعروفة
 
-1. تم دمج PR #25، ونجح CI على `main@9e8ffcc`؛ GF-0014 مغلقة من ناحية الكود والبوابات، مع بقاء متطلبات التشغيل المؤسسي العامة.
+1. تم دمج GF-0014 إلى GF-0018 في PRs مستقلة (#25، #30، #31، #33، #36)، ونجح CI النهائي على `main@5dfa0fe` بما في ذلك migrations وPostgreSQL integration.
 2. أثبت Run `32926745698` تطبيق migration على PostgreSQL نظيفة وتشغيل integration؛ لا تزال قاعدة بيانات production غير موجودة ضمن المشروع.
 3. اختبارات E2E الحالية mock-backed، وتظل اختبارات PostgreSQL التكاملية المرجع لمسار البيانات الحقيقي.
 4. لا توجد بعد آلية adjustment/reversal لفحص مكتمل؛ أي تصحيح يجب أن يكون مهمة مستقلة مع audit trail.
-5. وجود PR #24 المدمج يعني أن GF-0015 بدأت جزئيًا على main، ولا يجوز تكرار أو استبدال attendance قبل مراجعة scope الفعلي.
+5. GF-0015 إلى GF-0018 مكتملة ضمن النطاق المنفذ، لكن ذلك لا يعني الجاهزية المؤسسية: لا تزال UAT، backup/restore، monitoring، Flutter workflows، وربط posting التجاري/الرواتب بالمحاسبة الآلية خارج هذه الشرائح.
 
 ## بروتوكول التسليم
 
@@ -82,4 +85,4 @@
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `phase9/gf0018-accounting` فوق `main@17f765b` بعد تثبيت نموذج FiscalPeriod ومسار القيد متعدد البنود. البوابات المحلية خضراء للـcompile والوحدات، والتكامل الحقيقي ينتظر PR CI؛ لا يُعلن GF-0018 مكتملًا قبل ذلك.
+تم تحديث هذا الملف على فرع `docs/post-gf0018-state` فوق `main@5dfa0fe` بعد دمج PR #36. Run `32933591101` أخضر وحقق migration deploy وPostgreSQL integration وBackend وFlutter وSecret Scan. GF-0015 إلى GF-0018 مغلقة ضمن النطاق الحالي، مع بقاء متطلبات UAT والتشغيل المؤسسي العامة.

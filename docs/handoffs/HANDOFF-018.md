@@ -2,16 +2,16 @@
 
 ## Status
 
-- Branch: `phase9/gf0018-accounting`
-- Base: `main@17f765b` بعد CI أخضر لـGF-0017
+- Branch: `docs/post-gf0018-state`
+- Base: `main@5dfa0fe` بعد دمج PR #36
 - Phase: GF-0018 Accounting
-- Status: تنفيذ محلي؛ ينتظر commit/PR/CI
+- Status: مكتملة ومُدمجة؛ main CI أخضر
 
 ## Completed
 
 أضيف نموذج `FiscalPeriod` بحالتي OPEN/CLOSED وقيد تاريخي وفهارس، وربط اختياري بـ`JournalEntry` للحفاظ على القيود القديمة. أضيفت endpoints لإنشاء الفترة وإغلاقها وإنشاء قيد متعدد البنود. يمنع محرك FinancialPostingService الترحيل في فترة مغلقة أو بتاريخ خارجها، ويتحقق من الحسابات النشطة وتوازن البنود، بينما يمر إغلاق الفترة داخل transaction ويسجل actor في ActivityLog.
 
-أضيفت integration suite لـPostgreSQL لقيد فترة مفتوحة ومنع القيد بعد الإغلاق، واختبارات unit/controller. لا يضيف هذا slice دفعًا أو VAT أو ترحيلًا آليًا للرواتب والمشتريات، ولا يعيد تصميم JournalLine الحالي؛ ذلك قرار لاحق.
+أضيفت integration suite لـPostgreSQL لقيد فترة مفتوحة ومنع القيد بعد الإغلاق، واختبارات unit/controller. فشل CI الأول بسبب trigger قديم يشير إلى أعمدة `debit` و`credit` غير الموجودة؛ أصلحت migration GF-0018 trigger ليطابق `debitAccountId` و`creditAccountId` و`amount`. نجح CI بعد الإصلاح، ثم دُمج PR #36 وأثبت Run `32933591101` migration deploy وPostgreSQL integration. لا يضيف هذا slice دفعًا أو VAT أو ترحيلًا آليًا للرواتب والمشتريات، ولا يعيد تصميم JournalLine الحالي؛ ذلك قرار لاحق.
 
 ## Files Changed
 
@@ -38,10 +38,10 @@
 | Prisma validate/generate | PASS | schema valid; Client generated |
 | Format/typecheck/lint | PASS | local |
 | Accounting unit/controller | PASS | 2 suites / 17 tests |
-| Build/full unit/E2E | PENDING | بعد التوثيق النهائي |
-| PostgreSQL integration | NOT RUN LOCALLY | 6 suites / 24 tests skipped لغياب Docker وGF_INTEGRATION_DATABASE_URL |
-| Flutter | NOT RUN LOCALLY | لا تغييرات Flutter؛ مطلوب CI |
-| Secret scan | PENDING PR CI | لا secrets جديدة |
+| Build/full unit/E2E | PASS | Run PR #36 وmain Run `32933591101` |
+| PostgreSQL integration | PASS | migration deploy و6 suites / 24 tests على PostgreSQL في CI |
+| Flutter | PASS | Run PR #36 وmain Run `32933591101` |
+| Secret scan | PASS | Run PR #36 وmain Run `32933591101` |
 
 ## Not Done / Boundaries
 
@@ -49,7 +49,7 @@
 
 ## Next Exact Task
 
-تشغيل البوابات الكاملة، مراجعة migration/diff والأسرار، commit/push وفتح PR GF-0018، ثم انتظار PostgreSQL migration/integration وFlutter وSecret Scan في CI. بعد الدمج يُحدّث PROJECT_STATE post-merge وتُكتب خلاصة المراحل.
+تم تشغيل البوابات الكاملة محليًا، ثم فتح PR #36 ونجح CI بعد إصلاح trigger القديم، ودُمج PR #36 إلى `main@5dfa0fe`. Run `32933591101` على main أخضر بكل البوابات. الخطوة التالية هي مراجعة أي نطاق GF-0019 ظاهر في فرع مستقل؛ لا يبدأ تنفيذ جديد تلقائيًا.
 
 ## Rollback
 
