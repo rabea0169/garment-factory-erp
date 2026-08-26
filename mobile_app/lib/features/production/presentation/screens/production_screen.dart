@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
+
 import '../../../../core/constants/app_colors.dart';
+import '../../domain/entities/work_order.dart';
+import '../../production_module.dart';
 import '../cubit/production_cubit.dart';
 import '../cubit/production_state.dart';
 
@@ -11,119 +14,302 @@ class ProductionScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return BlocProvider(
-      create: (context) => ProductionCubit()..fetchWorkOrders(),
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('الإنتاج وأوامر التشغيل'),
-          actions: [
-            Builder(
-              builder: (ctx) => IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () => ctx.read<ProductionCubit>().fetchWorkOrders(),
-              ),
-            ),
-          ],
-        ),
-        body: BlocBuilder<ProductionCubit, ProductionState>(
-          builder: (context, state) {
-            if (state is ProductionLoading) {
-              return const Center(child: CircularProgressIndicator());
-            } else if (state is ProductionError) {
-              return Center(child: Text(state.message, style: const TextStyle(color: AppColors.error, fontFamily: 'Cairo')));
-            } else if (state is ProductionLoaded) {
-              final orders = state.workOrders;
-              if (orders.isEmpty) {
-                return const Center(child: Text('لا توجد أوامر تشغيل حالياً', style: TextStyle(fontFamily: 'Cairo')));
-              }
-              return ListView.builder(
-                padding: const EdgeInsets.all(16),
-                itemCount: orders.length,
-                itemBuilder: (context, index) {
-                  final order = orders[index];
-                  final variant = order['productVariant'];
-                  final product = variant['product'];
-                  
-                  return Card(
-                    margin: const EdgeInsets.only(bottom: 12),
-                    child: ExpansionTile(
-                      leading: _getStatusIcon(order['status']),
-                      title: Text('${product['name']} (مقاس: ${variant['size']})', style: const TextStyle(fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
-                      subtitle: Text('الكمية: ${order['quantity']} قطعة | حالة: ${_translateStatus(order['status'])}'),
-                      children: [
-                        Padding(
-                          padding: const EdgeInsets.all(16.0),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('تاريخ الإضافة: ${DateFormat('yyyy-MM-dd').format(DateTime.parse(order['createdAt']))}', style: const TextStyle(fontFamily: 'Cairo')),
-                              const SizedBox(height: 12),
-                              if (order['status'] != 'COMPLETED')
-                                Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                                  children: [
-                                    if (order['status'] == 'PLANNED')
-                                      ElevatedButton(
-                                        onPressed: () {
-                                          context.read<ProductionCubit>().updateOrderStatus(order['id'], 'CUTTING');
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(
-                                              content: Text('تم بدء القص وطباعة باركود الحزمة بنجاح عبر طابعة البلوتوث! 🖨️', style: TextStyle(fontFamily: 'Cairo')),
-                                              backgroundColor: AppColors.primary,
-                                            ),
-                                          );
-                                        },
-                                        child: const Text('بدء القص وطباعة التيكت', style: TextStyle(fontFamily: 'Cairo')),
-                                      ),
-                                    if (order['status'] == 'CUTTING' || order['status'] == 'SEWING' || order['status'] == 'FINISHING')
-                                      ElevatedButton(
-                                        style: ElevatedButton.styleFrom(backgroundColor: AppColors.success),
-                                        onPressed: () => context.read<ProductionCubit>().updateOrderStatus(order['id'], 'COMPLETED'),
-                                        child: const Text('إنهاء واستلام بالمخزن', style: TextStyle(fontFamily: 'Cairo')),
-                                      ),
-                                  ],
-                                ),
-                            ],
-                          ),
-                        )
-                      ],
-                    ),
-                  );
-                },
-              );
-            }
-            return const SizedBox();
-          },
-        ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () {},
-          icon: const Icon(Icons.add),
-          label: const Text('أمر جديد', style: TextStyle(fontFamily: 'Cairo')),
-        ),
+      create: (_) => createProductionCubit()..fetchWorkOrders(),
+      child: const _ProductionView(),
+    );
+  }
+}
+
+class _ProductionView extends StatelessWidget {
+  const _ProductionView();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('الإنتاج وأوامر التشغيل'),
+        actions: [
+          IconButton(
+            tooltip: 'تحديث',
+            icon: const Icon(Icons.refresh),
+            onPressed: () =>
+                context.read<ProductionCubit>().fetchWorkOrders(refresh: true),
+          ),
+        ],
+      ),
+      body: BlocConsumer<ProductionCubit, ProductionState>(
+        listener: (context, state) {
+          if (state is ProductionUnauthorized) {
+            _showMessage(context, 'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى');
+          } else if (state is ProductionOffline) {
+            _showMessage(context, 'تعذر الاتصال بالخادم، تحقق من الشبكة');
+          } else if (state is ProductionFailure) {
+            _showMessage(context, state.failure.message);
+          }
+        },
+        builder: (context, state) {
+          if (state is ProductionLoading || state is ProductionInitial) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (state is ProductionEmpty) {
+            return _EmptyProductionView(
+              onRefresh: () => context
+                  .read<ProductionCubit>()
+                  .fetchWorkOrders(),
+            );
+          }
+          if (state is ProductionLoaded) {
+            return Stack(
+              children: [
+                _WorkOrderList(orders: state.workOrders),
+                if (state.isRefreshing)
+                  const Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: LinearProgressIndicator(),
+                  ),
+              ],
+            );
+          }
+          if (state is ProductionFailure) {
+            return _ErrorProductionView(
+              message: state.failure.message,
+              onRetry: () => context
+                  .read<ProductionCubit>()
+                  .fetchWorkOrders(),
+            );
+          }
+          if (state is ProductionOffline) {
+            return _ErrorProductionView(
+              message: 'لا يوجد اتصال بالخادم',
+              onRetry: () => context
+                  .read<ProductionCubit>()
+                  .fetchWorkOrders(),
+            );
+          }
+          if (state is ProductionUnauthorized) {
+            return const Center(child: Text('يرجى تسجيل الدخول للمتابعة'));
+          }
+          return const SizedBox.shrink();
+        },
       ),
     );
   }
 
-  Widget _getStatusIcon(String status) {
-    switch (status) {
-      case 'PLANNED':
-        return const Icon(Icons.calendar_today, color: Colors.blue);
-      case 'IN_PROGRESS':
-        return const Icon(Icons.sync, color: AppColors.warning);
-      case 'COMPLETED':
-        return const Icon(Icons.check_circle, color: AppColors.success);
-      default:
-        return const Icon(Icons.info, color: Colors.grey);
+  static void _showMessage(BuildContext context, String message) {
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+class _WorkOrderList extends StatelessWidget {
+  const _WorkOrderList({required this.orders});
+
+  final List<WorkOrder> orders;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListView.builder(
+      padding: const EdgeInsets.all(16),
+      itemCount: orders.length,
+      itemBuilder: (context, index) => _WorkOrderCard(order: orders[index]),
+    );
+  }
+}
+
+class _WorkOrderCard extends StatelessWidget {
+  const _WorkOrderCard({required this.order});
+
+  final WorkOrder order;
+
+  @override
+  Widget build(BuildContext context) {
+    final nextStage = _nextStage(order);
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: ExpansionTile(
+        leading: _statusIcon(order.status),
+        title: Text(
+          '${order.productName} (مقاس: ${order.variantSize})',
+          style: const TextStyle(fontWeight: FontWeight.bold),
+        ),
+        subtitle: Text(
+          'الكمية: ${order.quantity} قطعة | الحالة: ${_statusLabel(order.status)}',
+        ),
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'رقم الأمر: ${order.code}',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  'تاريخ الإضافة: ${DateFormat('yyyy-MM-dd').format(order.createdAt)}',
+                ),
+                if (nextStage != null) ...[
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.arrow_forward),
+                      label: Text('الانتقال إلى ${_stageLabel(nextStage)}'),
+                      onPressed: () => context
+                          .read<ProductionCubit>()
+                          .transitionStage(
+                            workOrderId: order.id,
+                            stage: nextStage,
+                          ),
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static ProductionStage? _nextStage(WorkOrder order) {
+    if (order.status == WorkOrderStatus.completed ||
+        order.status == WorkOrderStatus.cancelled) {
+      return null;
+    }
+    final currentStage = order.currentStage ?? _stageFromStatus(order.status);
+    if (currentStage == null) return ProductionStage.cutting;
+    switch (currentStage) {
+      case ProductionStage.cutting:
+        return ProductionStage.sewing;
+      case ProductionStage.sewing:
+        return ProductionStage.ironing;
+      case ProductionStage.ironing:
+        return ProductionStage.packing;
+      case ProductionStage.packing:
+        return null;
     }
   }
 
-  String _translateStatus(String status) {
+  static ProductionStage? _stageFromStatus(WorkOrderStatus status) {
     switch (status) {
-      case 'PLANNED': return 'مخطط';
-      case 'CUTTING': return 'مرحلة القص';
-      case 'SEWING': return 'مرحلة الخياطة';
-      case 'FINISHING': return 'التشطيب';
-      case 'COMPLETED': return 'مكتمل';
-      default: return status;
+      case WorkOrderStatus.cutting:
+        return ProductionStage.cutting;
+      case WorkOrderStatus.sewing:
+        return ProductionStage.sewing;
+      case WorkOrderStatus.ironing:
+        return ProductionStage.ironing;
+      case WorkOrderStatus.packing:
+        return ProductionStage.packing;
+      default:
+        return null;
     }
+  }
+
+  static Icon _statusIcon(WorkOrderStatus status) {
+    switch (status) {
+      case WorkOrderStatus.planned:
+        return const Icon(Icons.calendar_today, color: Colors.blue);
+      case WorkOrderStatus.completed:
+        return const Icon(Icons.check_circle, color: AppColors.success);
+      case WorkOrderStatus.cancelled:
+        return const Icon(Icons.cancel, color: AppColors.error);
+      default:
+        return const Icon(Icons.sync, color: AppColors.warning);
+    }
+  }
+
+  static String _statusLabel(WorkOrderStatus status) {
+    switch (status) {
+      case WorkOrderStatus.planned:
+        return 'مخطط';
+      case WorkOrderStatus.cutting:
+        return 'القص';
+      case WorkOrderStatus.sewing:
+        return 'الخياطة';
+      case WorkOrderStatus.ironing:
+        return 'الكي';
+      case WorkOrderStatus.packing:
+        return 'التغليف';
+      case WorkOrderStatus.inProgress:
+        return 'قيد التنفيذ';
+      case WorkOrderStatus.completed:
+        return 'مكتمل';
+      case WorkOrderStatus.cancelled:
+        return 'ملغى';
+    }
+  }
+
+  static String _stageLabel(ProductionStage stage) {
+    switch (stage) {
+      case ProductionStage.cutting:
+        return 'القص';
+      case ProductionStage.sewing:
+        return 'الخياطة';
+      case ProductionStage.ironing:
+        return 'الكي';
+      case ProductionStage.packing:
+        return 'التغليف';
+    }
+  }
+}
+
+class _EmptyProductionView extends StatelessWidget {
+  const _EmptyProductionView({required this.onRefresh});
+
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(Icons.factory_outlined, size: 56, color: Colors.grey),
+          const SizedBox(height: 12),
+          const Text('لا توجد أوامر تشغيل حالياً'),
+          const SizedBox(height: 12),
+          OutlinedButton.icon(
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh),
+            label: const Text('إعادة المحاولة'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ErrorProductionView extends StatelessWidget {
+  const _ErrorProductionView({required this.message, required this.onRetry});
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.error_outline, size: 52, color: AppColors.error),
+            const SizedBox(height: 12),
+            Text(message, textAlign: TextAlign.center),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 }

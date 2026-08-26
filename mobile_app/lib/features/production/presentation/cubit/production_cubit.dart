@@ -1,31 +1,78 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
-import '../../../../core/network/api_client.dart';
+import 'package:uuid/uuid.dart';
+
+import '../../domain/entities/work_order.dart';
+import '../../domain/failures/production_failure.dart' as failures;
+import '../../domain/usecases/production_usecases.dart';
 import 'production_state.dart';
 
 class ProductionCubit extends Cubit<ProductionState> {
-  ProductionCubit() : super(ProductionInitial());
+  ProductionCubit({
+    required GetWorkOrders getWorkOrders,
+    required TransitionProductionStage transitionStage,
+    Uuid? uuid,
+  })  : _getWorkOrders = getWorkOrders,
+        _transitionStage = transitionStage,
+        _uuid = uuid ?? const Uuid(),
+        super(const ProductionInitial());
 
-  Future<void> fetchWorkOrders() async {
-    emit(ProductionLoading());
+  final GetWorkOrders _getWorkOrders;
+  final TransitionProductionStage _transitionStage;
+  final Uuid _uuid;
+  int _page = 1;
+  int _limit = 20;
+
+  Future<void> fetchWorkOrders({bool refresh = false}) async {
+    if (refresh && state is ProductionLoaded) {
+      final current = state as ProductionLoaded;
+      emit(ProductionLoaded(workOrders: current.workOrders, isRefreshing: true));
+    } else {
+      emit(const ProductionLoading());
+    }
+
     try {
-      final dio = ApiClient.instance.dio;
-      final response = await dio.get('/production/work-orders');
-      emit(ProductionLoaded(ApiClient.extractPaginatedData(response.data)));
-    } catch (e) {
-      emit(ProductionError('حدث خطأ أثناء تحميل أوامر التشغيل: $e'));
+      final orders = await _getWorkOrders(page: _page, limit: _limit);
+      emit(
+        orders.isEmpty
+            ? const ProductionEmpty()
+            : ProductionLoaded(workOrders: orders),
+      );
+    } on failures.ProductionUnauthorizedFailure {
+      emit(const ProductionUnauthorized());
+    } on failures.ProductionNetworkFailure {
+      emit(const ProductionOffline());
+    } on failures.ProductionFailure catch (failure) {
+      emit(ProductionFailure(failure));
+    } catch (_) {
+      emit(const ProductionFailure(failures.ProductionServerFailure()));
     }
   }
 
-  Future<void> updateOrderStatus(String id, String newStatus) async {
+  Future<void> transitionStage({
+    required String workOrderId,
+    required ProductionStage stage,
+  }) async {
     try {
-      final dio = ApiClient.instance.dio;
-      await dio.patch('/production/work-orders/$id/status', data: {
-        'status': newStatus,
-      });
-      // جلب البيانات مجدداً بعد التحديث
-      await fetchWorkOrders();
-    } catch (e) {
-      emit(ProductionError('فشل في تحديث حالة الأمر: $e'));
+      await _transitionStage(
+        workOrderId: workOrderId,
+        toStage: stage,
+        idempotencyKey: _uuid.v4(),
+      );
+      await fetchWorkOrders(refresh: true);
+    } on failures.ProductionUnauthorizedFailure {
+      emit(const ProductionUnauthorized());
+    } on failures.ProductionNetworkFailure {
+      emit(const ProductionOffline());
+    } on failures.ProductionFailure catch (failure) {
+      emit(ProductionFailure(failure));
+    } catch (_) {
+      emit(const ProductionFailure(failures.ProductionServerFailure()));
     }
+  }
+
+  void setPageSize(int limit) {
+    if (limit <= 0) return;
+    _limit = limit;
+    _page = 1;
   }
 }
