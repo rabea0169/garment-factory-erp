@@ -25,6 +25,8 @@ npm run test:integration
 
 يضيف `inventory-warehouse.integration-spec.ts` سيناريو GF-REMAINING-002: استلام وصرف خامة في مستودعين، التحقق من أن `SUM(quantityDelta)` يعطي رصيد كل مستودع وأن الإجمالي يطابق `RawMaterial.currentStock`، ثم تنفيذ صرفين متزامنين للتأكد من نجاح واحد فقط وتراجع الآخر دون ledger زائد أو رصيد سالب.
 
+يضيف `dashboard.integration-spec.ts` سيناريو GF-REMAINING-004: إنشاء طلب بيع وإنتاج عامل في يوم محدد، ثم التحقق من أن `/dashboard/stats` service يعيد المبيعات الشهرية والإنتاج اليومي وأفضل عامل من PostgreSQL ضمن `from/to`، مع مؤشرات المخزون ورفض الفترة المعكوسة في طبقة DTO/service.
+
 ## حدود التغطية
 
 هذه الاختبارات لا تغطي بعد API/RBAC الخاص بواجهات مراحل الإنتاج ولا استلام المنتج التام حسب `FinishedGoodStock`. هذان المساران يحتاجان endpoints وخدمة مخزون المنتج التام في مراحل GF-0013 اللاحقة.

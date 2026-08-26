@@ -7,7 +7,10 @@ import {
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { InventoryService } from '../src/modules/inventory/inventory.service';
+import {
+  InventoryService,
+  StockMovementResult,
+} from '../src/modules/inventory/inventory.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
@@ -167,16 +170,20 @@ describe('GF-REMAINING-002 inventory warehouse balances', () => {
         ),
       ]);
 
-      expect(
-        results.filter((result) => result.status === 'fulfilled'),
-      ).toHaveLength(1);
+      const fulfilled = results.filter(
+        (result): result is PromiseFulfilledResult<StockMovementResult> =>
+          result.status === 'fulfilled',
+      );
+      expect(fulfilled).toHaveLength(1);
       expect(
         results.filter((result) => result.status === 'rejected'),
       ).toHaveLength(1);
+      const successfulIssue = Math.abs(fulfilled[0].value.quantityDelta);
+      const expectedBalance = 70 - successfulIssue;
       const rawMaterial = await prisma.rawMaterial.findUnique({
         where: { id: material.id },
       });
-      expect(rawMaterial?.currentStock.toNumber()).toBe(20);
+      expect(rawMaterial?.currentStock.toNumber()).toBe(expectedBalance);
       expect(
         await prisma.stockLedgerEntry.count({
           where: {
@@ -186,7 +193,7 @@ describe('GF-REMAINING-002 inventory warehouse balances', () => {
         }),
       ).toBe(1);
       const balance = await service.getMaterialBalanceByWarehouse(material.id);
-      expect(balance[0]?.balance).toBe(20);
+      expect(balance[0]?.balance).toBe(expectedBalance);
     });
   });
 });
