@@ -3,11 +3,11 @@
 ## Status
 
 - Branch: `phase4/gf0014-quality-waste-v2`
-- Commit: `89e7f5c` (implementation `2a56602`)
+- Commit: `9e8ffcc` (merge commit for PR #25; implementation `2a56602`)
 - Phase: 4 — Quality and Waste
 - Task ID: `GF-0014`
 - Date: 2026-08-26
-- Base: `origin/main@90c37f6`; تمت إعادة تأسيس الفرع فوق main الأحدث الذي يتضمن PR #23 وPR #24.
+- Base: `origin/main@90c37f6`; PR #25 merged into `main@9e8ffcc`.
 
 ## Completed
 
@@ -48,39 +48,37 @@ Migration `20260830000000_gf0014_quality_waste` تضيف enums وحقولًا و
 | Build | PASS | `npm run build` |
 | Backend unit tests | PASS | 27 suites / 144 tests |
 | Backend E2E tests | PASS | 3 suites / 46 tests، وتشمل 401 لمسار KPI |
-| PostgreSQL integration | NOT RUN LOCALLY | 2 suites / 14 tests skipped لغياب `GF_INTEGRATION_DATABASE_URL` وDocker غير متاح؛ يجب إثباتها في CI |
-| Migration deploy | PENDING CI | لم تُطبق على قاعدة فعلية محلية |
-| Flutter analyze/test | NOT RUN LOCALLY | التغيير Backend-only؛ يجب أن يمر job Flutter في CI |
+| PostgreSQL integration | PASS IN CI | 2 suites / 14 tests passed in Run `32926745698` on PostgreSQL 16; local run skipped بسبب غياب Docker و`GF_INTEGRATION_DATABASE_URL` |
+| Migration deploy | PASS IN CI | `prisma migrate deploy` passed on disposable PostgreSQL 16 in Run `32926745698` |
+| Flutter analyze/test | PASS IN CI | Flutter job passed in Run `32926745698`; not run locally |
 | Security scan | PASS | نفس patterns الخاصة بـCI، بلا match |
 | `git diff --check` | PASS | بلا whitespace errors |
 
 ## Known Issues
 
-- لم يُفتح PR GF-0014 بعد، ولم يُرفع commit `2a56602`، وCI PostgreSQL هو بوابة الإغلاق المتبقية.
+- PR #25 مدمج في `main@9e8ffcc`، وCI Run `32926745698` أخضر؛ لا توجد بوابة GF-0014 تقنية متبقية.
 - `origin/main` يتضمن بالفعل جزءًا من GF-0015 (`PR #24` attendance). لا يجوز بدء تنفيذ HR/Payroll إضافي قبل مراجعة هذا الدمج ومقارنته بـMASTER_BACKLOG بعد إغلاق GF-0014.
 - لا يوجد adjustment/reversal endpoint لفحص مكتمل؛ التصحيح خارج نطاق GF-0014 ويتطلب ADR ومهمة مستقلة.
 - اختبارات E2E الحالية mock-backed، بينما إثبات PostgreSQL مطلوب من CI integration suite.
 
 ## Not Done
 
-- رفع الفرع وفتح PR مستقل بعنوان GF-0014.
-- انتظار نجاح CI الكامل: `npm ci`، migrate deploy على PostgreSQL، integration، Flutter، وSecret Scan.
-- دمج PR والتحقق من merge commit وCI على main.
-- تحديث `PROJECT_STATE.md` بعد رقم PR وSHA النهائيين.
+- لا توجد أعمال كود أو بوابات GF-0014 متبقية ضمن هذا التسليم.
+- متطلبات التشغيل المؤسسي العامة، وadjustment/reversal، ما زالت خارج نطاق المرحلة.
+- يجب مراجعة جزء GF-0015 attendance الموجود في PR #24 قبل تنفيذ HR/Payroll المتبقي.
 
 ## Next Exact Task
 
 ```text
-TASK_ID: GF-0014-CLOSE
-TITLE: Push and merge the isolated GF-0014 quality/waste PR
-OBJECTIVE: رفع phase4/gf0014-quality-waste-v2، فتح PR مستقل فوق main@90c37f6، وإغلاقه فقط بعد CI أخضر يتضمن migrate deploy وPostgreSQL integration، ثم التحقق من main.
-ALLOWED FILES: لا تغييرات كود جديدة؛ عند الحاجة فقط docs/PROJECT_STATE.md وdocs/handoffs/HANDOFF-014.md لتسجيل PR ونتيجته.
+TASK_ID: GF-0015-RECONCILE
+TITLE: Reconcile the already-merged GF-0015 attendance endpoint with the master backlog
+OBJECTIVE: فحص PR #24 وملفات HR الحالية مقابل MASTER_BACKLOG، وتحديد أصغر نطاق متبقٍ لـGF-0015 دون تكرار attendance أو خلط payroll قبل إنشاء فرع تنفيذ مستقل.
+ALLOWED FILES: قراءة فقط في مرحلة المراجعة؛ عند اعتماد النطاق تُذكر الملفات في بطاقة جديدة قبل تعديلها.
 ACCEPTANCE CRITERIA:
-1. PR مستقل يحتوي commit GF-0014 دون تعديلات main مباشرة.
-2. CI ينجح في Prisma validate/generate، build، unit، E2E، migrate deploy، integration PostgreSQL، Flutter، وSecret Scan.
-3. migration تُطبق على قاعدة CI نظيفة وتنجح اختبارات one-check-per-stageRun وKPI وCHECK constraints.
-4. بعد الدمج يُتحقق من merge SHA وCI على main وتُحدّث PROJECT_STATE.
-5. لا يبدأ GF-0015 الجديد إلا بعد مراجعة ما هو موجود في PR #24 وتحديد الفجوة المتبقية رسميًا.
+1. تقرير يحدد ما أضافه PR #24 وما لم يغطه من attendance/worker production/payroll.
+2. لا يوجد تكرار أو تضارب مع endpoint attendance المدمج.
+3. تُحدد schema/API/migration المطلوبة فقط، مع سياسة payroll والاعتماد والتسوية.
+4. تُكتب مهمة تنفيذ GF-0015 مستقلة بفرع وPR وCI منفصلين، ولا يبدأ الكود قبل اعتماد نطاقها.
 ```
 
 ## Rollback

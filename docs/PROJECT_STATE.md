@@ -8,24 +8,24 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `90c37f6` — دمج PR #24، ويتضمن جزء attendance من GF-0015 |
-| فرع العمل الحالي | `phase4/gf0014-quality-waste-v2` |
-| آخر commit في فرع العمل | `89e7f5c` — GF-0014 implementation مع state/handoff بعد rebase على main الأحدث |
-| Pull Request الحالي | لا يوجد بعد؛ الفرع جاهز للرفع وفتح PR مستقل |
+| آخر commit على main | `9e8ffcc` — دمج PR #25 الخاص بـGF-0014 فوق PR #24 |
+| فرع العمل الحالي | `docs/post-gf0014-state` — توثيق post-merge |
+| آخر commit في فرع العمل | `9e8ffcc` — نفس merge commit الموجود على origin/main |
+| Pull Request الحالي | PR #25 مدمج؛ هذا الفرع مخصص لتوثيق post-merge |
 | آخر مرحلة مكتملة بالكامل على main | GF-0013؛ GF-0015 بدأ جزئيًا فقط عبر attendance endpoint في PR #24 |
-| حالة CI على main | يجب إعادة التحقق بعد رفع GF-0014؛ آخر main مرجعي هو `90c37f6` |
-| حالة قاعدة البيانات | migration `20260830000000_gf0014_quality_waste` غير مطبقة على بيئة مشتركة؛ التغيير additive فقط |
+| حالة CI على main | PASS — Run `32926745698` على `9e8ffcc`، بما في ذلك Backend/PostgreSQL وFlutter وSecret Scan |
+| حالة قاعدة البيانات | migration `20260830000000_gf0014_quality_waste` نجحت على PostgreSQL 16 disposable في CI؛ لا توجد production/shared DB بعد |
 | إصدار API | `1.0`؛ أضيف `GET /quality/kpis` ووثّق POST الجودة في GF-0014 |
 | قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | `GF-0014-CLOSE`: رفع ومراجعة ودمج PR الجودة والهالك |
-| المرحلة النشطة | Phase 5 — Quality and Waste delivery gate |
-| حالة GF-0014 | التنفيذ مكتمل محليًا، والـPR وCI ودمج main ما زالت معلقة |
+| المهمة النشطة | `GF-0015-RECONCILE`: مراجعة ما تبقى من HR/Payroll بعد attendance المدمج |
+| المرحلة النشطة | بوابة تحديد نطاق GF-0015 قبل التنفيذ |
+| حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | يوجد جزء attendance مدمج في main؛ لا يبدأ تنفيذ HR/Payroll إضافي قبل مراجعة PR #24 مقابل MASTER_BACKLOG |
 | Security blockers | لا P0/P1 جديد معروف ضمن GF-0014؛ actor من JWT، المسارات محمية، وSecret Scan المحلي PASS |
 | Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-014.md` |
-| Next exact action | رفع الفرع وفتح PR مستقل فوق `main@90c37f6`، ثم انتظار CI PostgreSQL/Flutter قبل الدمج |
+| Last handoff | `docs/handoffs/HANDOFF-014.md` — محدث بإغلاق PR #25 في هذا commit التوثيقي |
+| Next exact action | مراجعة PR #24 وملف MASTER_BACKLOG لتحديد ما تبقى من GF-0015، ثم فتح مهمة دقيقة مستقلة دون تكرار attendance |
 
 ## المهام المكتملة على main
 
@@ -39,7 +39,7 @@
 | GF-0011 | المبيعات: منع البيع فوق المتاح وحساب الإجماليات على الخادم وتأمين الخصم | مكتملة |
 | GF-0012 | Pagination موحد لكل القوائم مع data/meta وقيود page/limit | مكتملة |
 | GF-0013 | مراحل الإنتاج، stage runs، المخرجات، الاستهلاك، التكلفة، وposting المنتج التام | مدمجة على main؛ تحتاج متابعة UI/اختبارات تشغيلية لاحقة |
-| GF-0014 | الجودة والهالك وربط stageRun وKPI | غير مدمجة؛ جاهزة للـPR على الفرع الحالي |
+| GF-0014 | الجودة والهالك وربط stageRun وKPI | مكتملة ومُدمجة عبر PR #25؛ migration وCI PostgreSQL ناجحان |
 | GF-0015 | attendance endpoint | جزئية مدمجة عبر PR #24؛ لا تعتبر المرحلة مكتملة |
 
 ## GF-0014 — الحالة التفصيلية
@@ -62,16 +62,16 @@
 | `npm run build` | PASS |
 | Unit tests | PASS — 27 suites / 144 tests |
 | E2E tests | PASS — 3 suites / 46 tests، وتشمل 401 لمسار KPI |
-| Integration محليًا | NOT RUN — 2 suites / 14 tests skipped لغياب `GF_INTEGRATION_DATABASE_URL` وDocker |
-| Migration deploy محليًا | NOT RUN — لا PostgreSQL/Docker متاح |
-| Flutter analyze/test | NOT RUN محليًا — التغيير Backend-only؛ مطلوب في CI |
+| Integration محليًا | NOT RUN — 2 suites / 14 tests skipped لغياب `GF_INTEGRATION_DATABASE_URL` وDocker؛ CI PASS في Run `32926745698` |
+| Migration deploy محليًا | NOT RUN — CI PASS على PostgreSQL 16 في Run `32926745698` |
+| Flutter analyze/test | CI PASS في Run `32926745698`; لم تُشغّل محليًا |
 | Secret Scan | PASS — نفس patterns الخاصة بـCI |
 | `git diff --check` | PASS قبل توثيق الحالة؛ يجب إعادة تشغيله قبل push |
 
 ## الفجوات والقيود المعروفة
 
-1. لم يُفتح أو يُدمج PR GF-0014، لذلك لا يجوز إعلان GF-0014 مكتملة مؤسسيًا.
-2. يجب أن يثبت CI تطبيق migration على PostgreSQL نظيفة وتشغيل 14 حالة integration، بما فيها one-check-per-stageRun وKPI وCHECK constraints.
+1. تم دمج PR #25، ونجح CI على `main@9e8ffcc`؛ GF-0014 مغلقة من ناحية الكود والبوابات، مع بقاء متطلبات التشغيل المؤسسي العامة.
+2. أثبت Run `32926745698` تطبيق migration على PostgreSQL نظيفة وتشغيل integration؛ لا تزال قاعدة بيانات production غير موجودة ضمن المشروع.
 3. اختبارات E2E الحالية mock-backed، وتظل اختبارات PostgreSQL التكاملية المرجع لمسار البيانات الحقيقي.
 4. لا توجد بعد آلية adjustment/reversal لفحص مكتمل؛ أي تصحيح يجب أن يكون مهمة مستقلة مع audit trail.
 5. وجود PR #24 المدمج يعني أن GF-0015 بدأت جزئيًا على main، ولا يجوز تكرار أو استبدال attendance قبل مراجعة scope الفعلي.
@@ -82,4 +82,4 @@
 
 ## آخر تحديث توثيقي
 
-تمت مزامنة هذا الملف على فرع `phase4/gf0014-quality-waste-v2` بعد rebase على `origin/main@90c37f6` وcommit التنفيذ `2a56602` وcommit التوثيق `89e7f5c`. يجب إضافة رقم PR وmerge SHA ونتيجة CI بعد الرفع والدمج، وعدم اعتبار هذه الحالة نهائية قبل ذلك.
+تم تحديث هذا الملف post-merge على فرع `docs/post-gf0014-state` فوق `main@9e8ffcc`، بعد دمج PR #25 والتحقق من CI Run `32926745698`. المهمة التالية هي مراجعة scope GF-0015 الجزئي قبل أي تنفيذ جديد.
