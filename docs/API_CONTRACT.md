@@ -166,6 +166,7 @@
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
 | GET | `/accounting/accounts` | شجرة الحسابات | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
+| GET | `/accounting/treasuries` | الخزائن النشطة مع الرصيد | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/accounts` | حساب جديد | 🔒 JWT | ACCOUNTANT |
 | GET | `/accounting/vouchers` | أوامر الصرف | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/vouchers` | أمر صرف جديد | 🔒 JWT | ACCOUNTANT, CASHIER |
@@ -174,7 +175,7 @@
 | PATCH | `/accounting/fiscal-periods/:id/close` | إغلاق فترة مالية | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/journal-entries` | إنشاء قيد متعدد البنود داخل فترة مفتوحة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 
-يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
+يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة. يعتمد نموذج الهاتف على خزينة نشطة من `GET /accounting/treasuries`، ويقتصر الطرف المقابل التشغيلي في السند على `CUSTOMER` و`SUPPLIER`؛ صرف العمال يتم عبر دورة Payroll المخصصة.
 
 الفترات المالية لا تتداخل، ويُمنع الترحيل في فترة CLOSED أو بتاريخ خارج حدود الفترة. يقبل `POST /accounting/journal-entries` `description`, `reference`, `fiscalPeriodId`, `date` الاختياري، و`lines[]` الموجبة؛ يتحقق المحرك من الحسابات النشطة وتوازن المدين/الدائن ويأخذ `createdById` من JWT. إغلاق الفترة مشروط بحالتها الحالية ويسجل ActivityLog، ولا توجد كتابة دفع أو VAT آلية في هذا المسار.
 

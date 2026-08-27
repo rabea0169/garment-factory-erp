@@ -71,6 +71,28 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
     });
   });
 
+  it('يجلب الخزائن النشطة بترقيم صفحات محدود', async () => {
+    const treasuries = [
+      { id: 't-1', name: 'الصندوق الرئيسي', type: 'CASH', balance: 100 },
+    ];
+    prisma.treasury.findMany.mockResolvedValue(treasuries);
+    prisma.treasury.count.mockResolvedValue(1);
+
+    const result = await service.getTreasuries({ page: 1, limit: 20 });
+
+    expect(result.data).toEqual(treasuries);
+    expect(prisma.treasury.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { isActive: true, deletedAt: null },
+        skip: 0,
+        take: 20,
+      }),
+    );
+    expect(prisma.treasury.count).toHaveBeenCalledWith({
+      where: { isActive: true, deletedAt: null },
+    });
+  });
+
   it('يجلب السندات مع اسم منشئها + رابط القيد + الخزينة', async () => {
     const vouchers = [
       {

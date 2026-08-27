@@ -50,6 +50,24 @@ export class AccountingService {
     });
   }
 
+  async getTreasuries(pagination: PaginationDto = new PaginationDto()) {
+    const page = pagination.page ?? 1;
+    const pageSize = pagination.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const where = { isActive: true, deletedAt: null };
+    const [data, total] = await Promise.all([
+      this.prisma.treasury.findMany({
+        where,
+        orderBy: { name: 'asc' },
+        skip,
+        take: pageSize,
+        select: { id: true, name: true, type: true, balance: true },
+      }),
+      this.prisma.treasury.count({ where }),
+    ]);
+    return new PaginatedResult(data, total, page, pageSize);
+  }
+
   async getVouchers(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
     const pageSize = pagination.limit ?? 20;

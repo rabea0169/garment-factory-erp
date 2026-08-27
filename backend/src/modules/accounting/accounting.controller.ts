@@ -69,6 +69,13 @@ export class AccountingController {
     return this.accountingService.createJournalEntry(body, userId);
   }
 
+  @Get('treasuries')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'الخزائن النشطة' })
+  async getTreasuries(@Query() pagination: PaginationDto) {
+    return this.accountingService.getTreasuries(pagination);
+  }
+
   @Get('vouchers')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'أوامر الصرف والقبض' })
