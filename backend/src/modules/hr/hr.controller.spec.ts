@@ -1,5 +1,5 @@
 import 'reflect-metadata';
-import { UserRole } from '@prisma/client';
+import { UserRole, WorkerSpecialty } from '@prisma/client';
 import { HrController } from './hr.controller';
 import { HrService } from './hr.service';
 import { ROLES_KEY } from '../auth/roles.guard';
@@ -10,6 +10,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
   let service: {
     getAllWorkers: jest.Mock;
     getWorkerDetails: jest.Mock;
+    createWorker: jest.Mock;
     recordDailyProduction: jest.Mock;
     recordAttendance: jest.Mock;
     recordAdvance: jest.Mock;
@@ -22,6 +23,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     service = {
       getAllWorkers: jest.fn().mockResolvedValue([]),
       getWorkerDetails: jest.fn().mockResolvedValue({ id: 'w-1' }),
+      createWorker: jest.fn().mockResolvedValue({ id: 'w-1' }),
       recordDailyProduction: jest.fn().mockResolvedValue({ id: 'dp-1' }),
       recordAttendance: jest.fn().mockResolvedValue({ id: 'att-1' }),
       recordAdvance: jest.fn().mockResolvedValue({ id: 'adv-1' }),
@@ -37,6 +39,32 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     await controller.getWorkerDetails('w-1');
     expect(service.getAllWorkers).toHaveBeenCalledTimes(1);
     expect(service.getWorkerDetails).toHaveBeenCalledWith('w-1');
+  });
+
+  it('إنشاء عامل يمرر تاريخ التعيين إلى الخدمة', async () => {
+    const body = {
+      name: 'أحمد محمود',
+      phone: '01000000000',
+      specialty: WorkerSpecialty.SEWING,
+      pieceRate: 5.5,
+      hireDate: '2026-08-27',
+    };
+
+    await controller.createWorker(body);
+
+    expect(service.createWorker).toHaveBeenCalledWith({
+      ...body,
+      hireDate: new Date(body.hireDate),
+    });
+  });
+
+  it('إنشاء عامل مقيّد بـ HR_MANAGER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      HrController.prototype,
+      'createWorker',
+    );
+    expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
   });
 
   it('تسجيل حضور يمرر workerId وDate إلى الخدمة', async () => {

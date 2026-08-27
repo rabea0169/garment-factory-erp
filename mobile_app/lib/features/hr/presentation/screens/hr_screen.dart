@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/hr_cubit.dart';
 import '../cubit/hr_state.dart';
+import '../widgets/create_worker_dialog.dart';
 
 class HrScreen extends StatelessWidget {
   const HrScreen({super.key});
@@ -25,19 +27,21 @@ class HrScreen extends StatelessWidget {
         ),
         body: BlocBuilder<HrCubit, HrState>(
           builder: (context, state) {
-            if (state is HrLoading) {
-              return const Center(child: CircularProgressIndicator());
+            if (state is HrLoading || state is HrInitial) {
+              return const AppLoadingView();
             } else if (state is HrError) {
-              return Center(
-                  child: Text(state.message,
-                      style: const TextStyle(
-                          color: AppColors.error, fontFamily: 'Cairo')));
+              return AppErrorView(
+                message: state.message,
+                onRetry: () => context.read<HrCubit>().fetchWorkers(),
+              );
             } else if (state is HrLoaded) {
               final workers = state.workers;
               if (workers.isEmpty) {
-                return const Center(
-                    child: Text('لا يوجد عمال مسجلين',
-                        style: TextStyle(fontFamily: 'Cairo')));
+                return AppEmptyView(
+                  title: 'لا يوجد عمال مسجلون',
+                  actionLabel: 'إعادة التحميل',
+                  onAction: () => context.read<HrCubit>().fetchWorkers(),
+                );
               }
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
@@ -58,12 +62,11 @@ class HrScreen extends StatelessWidget {
                       subtitle: Text(
                           'كود: ${worker['code']} | التخصص: ${_translateSpecialty(worker['specialty'])}'),
                       trailing: IconButton(
-                        icon: const Icon(Icons.add_task, color: AppColors.success),
-                        onPressed: () => _showRecordProductionDialog(context, worker),
+                        icon: const Icon(Icons.add_task,
+                            color: AppColors.success),
+                        onPressed: () =>
+                            _showRecordProductionDialog(context, worker),
                       ),
-                      onTap: () {
-                        // الانتقال لصفحة تفاصيل العامل
-                      },
                     ),
                   );
                 },
@@ -72,9 +75,22 @@ class HrScreen extends StatelessWidget {
             return const SizedBox();
           },
         ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: () {},
-          child: const Icon(Icons.person_add),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () async {
+            final saved = await showDialog<bool>(
+              context: context,
+              builder: (_) => CreateWorkerDialog(
+                cubit: context.read<HrCubit>(),
+              ),
+            );
+            if (saved == true && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('تم حفظ العامل بنجاح')),
+              );
+            }
+          },
+          icon: const Icon(Icons.person_add),
+          label: const Text('إضافة عامل'),
         ),
       ),
     );
@@ -82,53 +98,87 @@ class HrScreen extends StatelessWidget {
 
   String _translateSpecialty(String specialty) {
     switch (specialty) {
-      case 'CUTTING': return 'قص';
-      case 'SEWING': return 'خياطة';
-      case 'FINISHING': return 'تشطيب';
-      case 'PACKAGING': return 'تعبئة';
-      case 'IRONING': return 'كي';
-      default: return specialty;
+      case 'CUTTING':
+        return 'قص';
+      case 'SEWING':
+        return 'خياطة';
+      case 'FINISHING':
+        return 'تشطيب';
+      case 'PACKAGING':
+        return 'تعبئة';
+      case 'IRONING':
+        return 'كي';
+      default:
+        return specialty;
     }
   }
 
-  void _showRecordProductionDialog(BuildContext context, dynamic worker) {
+  Future<void> _showRecordProductionDialog(
+      BuildContext context, dynamic worker) async {
     final piecesController = TextEditingController();
-    final cubit = context.read<HrCubit>(); // Get cubit reference before async
-
-    showDialog(
+    final cubit = context.read<HrCubit>();
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('تسجيل إنتاج - ${worker['name']}', style: const TextStyle(fontFamily: 'Cairo')),
-        content: TextField(
-          controller: piecesController,
-          keyboardType: TextInputType.number,
-          decoration: const InputDecoration(
-            labelText: 'عدد القطع المنجزة',
-            prefixIcon: Icon(Icons.checkroom),
+      builder: (dialogContext) {
+        var isSaving = false;
+        return StatefulBuilder(
+          builder: (context, setState) => AlertDialog(
+            title: Text('تسجيل إنتاج - ${worker['name']}'),
+            content: TextField(
+              controller: piecesController,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'عدد القطع المنجزة *',
+                prefixIcon: Icon(Icons.checkroom),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: isSaving ? null : () => Navigator.pop(dialogContext),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final pieces =
+                            int.tryParse(piecesController.text.trim());
+                        if (pieces == null || pieces <= 0) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('أدخل عددًا صحيحًا موجبًا')),
+                          );
+                          return;
+                        }
+                        setState(() => isSaving = true);
+                        try {
+                          await cubit.recordProduction(
+                            workerId: worker['id'].toString(),
+                            piecesCount: pieces,
+                          );
+                          if (dialogContext.mounted) {
+                            Navigator.pop(dialogContext, true);
+                          }
+                        } catch (_) {
+                          if (!context.mounted) return;
+                          setState(() => isSaving = false);
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('تعذر تسجيل الإنتاج')),
+                          );
+                        }
+                      },
+                child: Text(isSaving ? 'جاري الحفظ...' : 'حفظ'),
+              ),
+            ],
           ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('إلغاء', style: TextStyle(fontFamily: 'Cairo')),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (piecesController.text.isNotEmpty) {
-                cubit.recordProduction(
-                  workerId: worker['id'],
-                  piecesCount: int.parse(piecesController.text),
-                );
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تم تسجيل الإنتاج بنجاح', style: TextStyle(fontFamily: 'Cairo'))),
-                );
-              }
-            },
-            child: const Text('حفظ', style: TextStyle(fontFamily: 'Cairo')),
-          ),
-        ],
-      ),
+        );
+      },
     );
+    piecesController.dispose();
+    if (saved == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تسجيل الإنتاج بنجاح')),
+      );
+    }
   }
 }

@@ -8,25 +8,25 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `0b34949` — دمج PR #56 وإغلاق GF-REMAINING-006؛ CI main run `32952725645` أخضر |
-| فرع العمل الحالي | `phase2/gf-remaining-007-performance` — benchmark أداء قابل للتكرار |
-| آخر commit في فرع العمل | `0b34949` — بداية GF7 فوق main بعد دمج GF6؛ تغييرات الأداء قيد التنفيذ |
-| Pull Requests الأخيرة | PR #55 و#57 و#58 و#60 و#56 مدمجة؛ GF7 قيد التنفيذ |
-| آخر مرحلة مكتملة بالكامل على main | GF-REMAINING-005 + payroll payment؛ CI النهائي أخضر |
-| حالة CI على main | `main@0b34949` بعد دمج PR #56؛ CI run `32952725645` أخضر |
-| حالة قاعدة البيانات | migrations GF-0014 إلى GF-0019 وGF-REMAINING-003 نجحت؛ PR #57 لا يضيف migration جديدة؛ GF6 لا يضيف migration |
-| إصدار API | `1.1`؛ أضيف `/dashboard/stats` و`POST /hr/payrolls/:id/pay` وreceipt/AP idempotency وPOD وfiscal periods/journal entries |
-| قاعدة البيانات المحلية | لا يوجد Docker/PostgreSQL متاح؛ integration وmigration deploy يجب إثباتهما في CI |
-| الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي |
-| المهمة النشطة | GF-REMAINING-007 — اختبار الأداء القابل للتكرار؛ التنفيذ مكتمل في PR #62 |
-| المرحلة النشطة | GF-REMAINING-007 مكتملة على فرع مستقل؛ CI run `32954663324` أخضر؛ Production ما زال No-Go حتى اعتماد thresholds وrelease gates |
-| سبب عدم بدء GF-REMAINING-008 | يجب أولاً اعتماد نتائج GF7 ودمجها، ثم تنفيذ Backup/Restore Drill وUAT وGo/No-Go |
+| آخر commit على main | `bd3c02eefc404a2110c60c31df3ea405214186e6` — baseline متحقق يتضمن إصلاحات Railway |
+| فرع العمل الحالي | `feat/sprint1-navigation-ux` — شريحة Sprint 1 معزولة |
+| آخر commit في فرع العمل | `8d28905` — تنفيذ محلي متتابع لمراحل الخطة، دون رفع التغييرات الجديدة بعد |
+| Pull Requests الأخيرة | PR #71 موجود على GitHub للنسخة السابقة؛ لا تُرفع النسخة الشاملة أو تُدمج قبل Release Gate النهائي |
+| آخر مرحلة مكتملة بالكامل على main | آخر حالة موثقة قبل Sprint 1؛ هذا الفرع لا يغيّر main |
+| حالة CI على main | تُراجع من GitHub قبل الدمج؛ نجاح الفحوص المحلية لا يثبت CI أو جاهزية الإنتاج |
+| حالة قاعدة البيانات | لا توجد migration في Sprint 1؛ إضافة `email` تستعمل عمود Customer الموجود مسبقًا |
+| إصدار API | `1.2-dev`؛ توسعات master data والمبيعات والمشتريات والجودة والمحاسبة |
+| قاعدة البيانات المحلية | `GF_INTEGRATION_DATABASE_URL` غير مضبوط؛ اختبارات PostgreSQL التكاملية لم تُشغّل محليًا |
+| الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي أو إنتاجي |
+| المهمة النشطة | استكمال الخطة الشاملة ثم Release Gate النهائي |
+| المرحلة النشطة | التنفيذ والتحقق المحلي مكتملان مبدئيًا؛ APK Debug نجح، ولا يوجد اختبار جهاز فعلي أو قبول إنتاجي |
+| سبب عدم الإغلاق النهائي | يلزم تدقيق diff والأسرار والوثائق، رفع النسخة الشاملة، انتظار CI، ثم موافقة المستخدم على الدمج |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
-| Security blockers | لا P0/P1 أمني جديد في الإصلاحات المدمجة؛ Secret Scan وCI PASS، لكن Prisma Compute الخارجي وnpm audit وRelease gates ما زالت مفتوحة |
-| Open decisions | adjustment/reversal لفحص مكتمل مؤجل إلى ADR ومهمة مستقلة؛ لا كتابة مخزون/محاسبة في GF-0014 |
-| Last handoff | `docs/handoffs/HANDOFF-GF-REMAINING-007.md` — benchmark ونتائج CI موثقة |
-| Next exact action | مراجعة artifact GF7 مع مالك المنتج واعتماد thresholds، ثم دمج PR #62 بتفويض صريح؛ بعده Backup/Restore Drill وUAT وGo/No-Go |
+| Security blockers | لا أسرار في Sprint 1 حسب المراجعة الحالية؛ بيئة Railway التجريبية لا تعني جاهزية إنتاجية، ويجب تغيير بيانات الحساب التجريبي قبل الاستخدام الحقيقي |
+| Open decisions | إنشاء Supplier API وWorker API وربط Contact Picker بهما مؤجلان؛ إنشاء أمر البيع من الواجهة ودورات ERP الأخرى مؤجلة |
+| Last handoff | `docs/handoffs/HANDOFF-SPRINT1-NAVIGATION-UX.md`؛ يلزم handoff نهائي بعد اكتمال كل المراحل |
+| Next exact action | إكمال audit النهائي وUAT وقيود الإنتاج، ثم رفع النسخة الشاملة وفتح PR؛ لا دمج قبل موافقة صريحة |
 
 ## المهام المكتملة على main
 
@@ -89,3 +89,11 @@
 ## آخر تحديث توثيقي
 
 تم تحديث هذا الملف على فرع `docs/post-merge-release-state` فوق `main@e32f745` بعد دمج PR #57 وPR #58. Run `32950963418` أخضر وحقق Backend وPostgreSQL integration وE2E وFlutter وSecret Scan. ما زال Production No-Go حتى إغلاق Prisma Compute/npm audit وBackup/Restore/UAT.
+
+## سجل التنفيذ الشامل — 2026-08-27
+
+على فرع `feat/sprint1-navigation-ux` تم تنفيذ شرائح إضافية فوق Sprint 1: Supplier وWorker master-data APIs مع RBAC، ربط Contact Picker بنماذج العميل والمورد والعامل مع شاشة مراجعة، دورة المبيعات والتحصيل والإلغاء والمرتجعات، دورة الشحن، أوامر الشراء والاستلام، فحص الجودة والهالك، الخزائن والسندات المحاسبية، وتوحيد حالات UX وإصلاح الانتظار غير المتزامن في تسجيل إنتاج العامل.
+
+نتائج بوابات التحقق الأخيرة: Flutter analyze و29 اختبار Flutter وAndroid Debug APK ناجحة؛ Backend Prisma generate وformat وtypecheck وbuild ناجحة؛ 35 suite و241 unit tests ناجحة؛ و3 E2E suites و64 اختبارًا ناجحة. توجد 6 تحذيرات lint قديمة فقط في payroll/inventory specs، ولا توجد أخطاء lint. لم تُشغّل PostgreSQL integration محليًا لغياب `GF_INTEGRATION_DATABASE_URL`، ولم يُنفذ قبول على جهاز Android فعلي أو iOS build في بيئة Linux.
+
+لم تُرفع commits ما بعد `b868087` إلى GitHub حتى الآن، ولم يتم دمج أي تعديل في `main`. يبقى الإصدار `pre-release` إلى أن تُغلق مراجعة الأسرار، وUAT، وsigning/release build، وخطة backup/restore وmonitoring، ثم تُرفع النسخة النهائية ويُراجع CI قبل الدمج.

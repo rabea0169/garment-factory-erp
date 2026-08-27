@@ -4,7 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { PayrollStatus, Prisma } from '@prisma/client';
+import { PayrollStatus, Prisma, WorkerSpecialty } from '@prisma/client';
 import {
   computeRequestHash,
   createIdempotencyKey,
@@ -17,6 +17,18 @@ import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
+import {
+  DocumentCodePrefix,
+  generateDocumentCode,
+} from '../../core/common/codes.util';
+type CreateWorkerInput = {
+  name: string;
+  phone?: string;
+  nationalId?: string;
+  specialty: WorkerSpecialty;
+  pieceRate?: number;
+  hireDate?: Date;
+};
 
 export interface PayrollInput {
   workerId: string;
@@ -91,6 +103,30 @@ export class HrService {
     ]);
 
     return new PaginatedResult(data, total, page, pageSize);
+  }
+
+  async createWorker(input: CreateWorkerInput) {
+    try {
+      return await this.prisma.worker.create({
+        data: {
+          code: generateDocumentCode(DocumentCodePrefix.WORKER),
+          name: input.name.trim(),
+          phone: input.phone?.trim() || undefined,
+          nationalId: input.nationalId?.trim() || undefined,
+          specialty: input.specialty,
+          pieceRate: input.pieceRate ?? 0,
+          hireDate: input.hireDate,
+        },
+      });
+    } catch (error) {
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        throw new ConflictException('بيانات العامل مستخدمة بالفعل');
+      }
+      throw error;
+    }
   }
 
   async getWorkerDetails(id: string) {

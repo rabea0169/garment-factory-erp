@@ -10,8 +10,12 @@ import * as crypto from 'node:crypto';
 function makeService() {
   const prisma = createPrismaMock();
   const issueFinishedGood = jest.fn();
+  const receiveFinishedGood = jest.fn();
   const postJournalEntryInTx = jest.fn();
-  const inventory = { issueFinishedGood } as unknown as InventoryService;
+  const inventory = {
+    issueFinishedGood,
+    receiveFinishedGood,
+  } as unknown as InventoryService;
   const financial = {
     postJournalEntryInTx,
   } as unknown as FinancialPostingService;
@@ -20,6 +24,7 @@ function makeService() {
     inventory,
     financial,
     issueFinishedGood,
+    receiveFinishedGood,
     postJournalEntryInTx,
     service: new SalesService(
       prisma as unknown as PrismaService,
@@ -43,6 +48,249 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
     expect(prisma.customer.count).toHaveBeenCalledWith({
       where: { isActive: true, deletedAt: null },
     });
+  });
+
+  it('persists contact email when creating a customer', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.create.mockResolvedValue({
+      id: 'customer-1',
+      code: 'CUS-0001',
+      name: 'مصنع النور',
+      phone: '+201001234567',
+      email: 'sales@example.com',
+      address: 'القاهرة',
+    });
+
+    await service.createCustomer({
+      name: 'مصنع النور',
+      phone: '+201001234567',
+      email: 'sales@example.com',
+      address: 'القاهرة',
+    });
+
+    const createCalls = prisma.customer.create.mock.calls as unknown as Array<
+      [{ data: Record<string, unknown> }]
+    >;
+    const createCall = createCalls[0]?.[0];
+    expect(createCall).toBeDefined();
+    if (!createCall) throw new Error('customer.create was not called');
+
+    expect(createCall.data).toEqual(
+      expect.objectContaining({
+        name: 'مصنع النور',
+        phone: '+201001234567',
+        email: 'sales@example.com',
+        address: 'القاهرة',
+      }),
+    );
+    expect(typeof createCall.data.code).toBe('string');
+  });
+
+  it('collects a customer payment through cash and receivables posting', async () => {
+    const { prisma, postJournalEntryInTx, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'customer-1',
+      isActive: true,
+      deletedAt: null,
+      balance: 100,
+    });
+    prisma.customerPayment.create.mockResolvedValue({
+      id: 'payment-1',
+      customerId: 'customer-1',
+      amount: 40,
+    });
+
+    await service.createCustomerPayment({
+      customerId: 'customer-1',
+      amount: 40,
+      notes: 'دفعة نقدية',
+      actorId: 'user-1',
+    });
+
+    expect(prisma.customerPayment.create).toHaveBeenCalledWith({
+      data: {
+        customerId: 'customer-1',
+        salesOrderId: undefined,
+        amount: 40,
+        notes: 'دفعة نقدية',
+      },
+    });
+    expect(postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        customerUpdates: [{ customerId: 'customer-1', delta: -40 }],
+      }),
+      'user-1',
+    );
+  });
+
+  it('rejects a customer payment above the outstanding balance', async () => {
+    const { prisma, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'customer-1',
+      isActive: true,
+      deletedAt: null,
+      balance: 25,
+    });
+
+    await expect(
+      service.createCustomerPayment({
+        customerId: 'customer-1',
+        amount: 30,
+        actorId: 'user-1',
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customerPayment.create).not.toHaveBeenCalled();
+  });
+
+  it('cancels a draft order with an optimistic status transition', async () => {
+    const { prisma, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.salesOrder.findUnique
+      .mockResolvedValueOnce({ id: 'so-1', status: SalesOrderStatus.DRAFT })
+      .mockResolvedValueOnce({
+        id: 'so-1',
+        status: SalesOrderStatus.CANCELLED,
+        items: [],
+      });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.CANCELLED,
+      items: [],
+    });
+
+    const result = await service.cancelOrder('so-1', 'user-1');
+
+    expect(result).toMatchObject({ status: SalesOrderStatus.CANCELLED });
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: 'so-1', status: SalesOrderStatus.DRAFT },
+      data: { status: SalesOrderStatus.CANCELLED },
+    });
+  });
+
+  it('rejects cancelling an already confirmed order', async () => {
+    const { prisma, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.CONFIRMED,
+    });
+
+    await expect(service.cancelOrder('so-1', 'user-1')).rejects.toBeInstanceOf(
+      BadRequestException,
+    );
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('creates a sales return, restores finished stock, and reverses financial impact', async () => {
+    const { prisma, receiveFinishedGood, postJournalEntryInTx, service } =
+      makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      code: 'SO-1',
+      customerId: 'customer-1',
+      status: SalesOrderStatus.CONFIRMED,
+      vatRate: 0.14,
+      paidAmount: 100,
+      customer: { id: 'customer-1' },
+      items: [
+        {
+          id: 'item-1',
+          productVariantId: 'variant-1',
+          quantity: 2,
+          unitPrice: 50,
+        },
+      ],
+    });
+    prisma.salesReturnItem.findMany.mockResolvedValue([]);
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'warehouse-fg' });
+    prisma.finishedGoodStock.findUnique.mockResolvedValue({ unitCost: 30 });
+    prisma.salesReturn.create.mockResolvedValue({
+      id: 'return-1',
+      code: 'SRET-1',
+      items: [],
+    });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    receiveFinishedGood.mockResolvedValue({});
+
+    const result = await service.createSalesReturn(
+      'so-1',
+      {
+        actorId: 'user-1',
+        reason: 'عيب تصنيع',
+        items: [{ salesOrderItemId: 'item-1', quantity: 1 }],
+      },
+      'return-key',
+    );
+
+    expect(result).toMatchObject({ id: 'return-1' });
+    expect(receiveFinishedGood).toHaveBeenCalledWith(
+      expect.objectContaining({
+        productVariantId: 'variant-1',
+        warehouseId: 'warehouse-fg',
+        quantity: 1,
+        reference: 'RETURN-SO-1',
+      }),
+      'user-1',
+      prisma,
+    );
+    expect(postJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      expect.objectContaining({
+        reference: 'SRET-1',
+        customerUpdates: undefined,
+      }),
+      'user-1',
+    );
+  });
+
+  it('rejects a sales return above the remaining item quantity', async () => {
+    const { prisma, receiveFinishedGood, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      code: 'SO-1',
+      customerId: 'customer-1',
+      status: SalesOrderStatus.CONFIRMED,
+      vatRate: 0,
+      paidAmount: 0,
+      customer: { id: 'customer-1' },
+      items: [
+        {
+          id: 'item-1',
+          productVariantId: 'variant-1',
+          quantity: 2,
+          unitPrice: 50,
+        },
+      ],
+    });
+    prisma.salesReturnItem.findMany.mockResolvedValue([
+      { salesOrderItemId: 'item-1', quantity: 2 },
+    ]);
+
+    await expect(
+      service.createSalesReturn('so-1', {
+        actorId: 'user-1',
+        items: [{ salesOrderItemId: 'item-1', quantity: 1 }],
+      }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(receiveFinishedGood).not.toHaveBeenCalled();
   });
 
   it('calculates VAT on the server and rejects invalid discounts', async () => {

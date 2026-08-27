@@ -3,11 +3,13 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
 import '../../features/inventory/presentation/screens/inventory_screen.dart';
+import '../../features/purchasing/presentation/screens/purchasing_screen.dart';
 import '../../features/production/presentation/screens/production_screen.dart';
 import '../../features/products/presentation/screens/products_screen.dart';
 import '../../features/quality/presentation/screens/quality_screen.dart';
 import '../../features/hr/presentation/screens/hr_screen.dart';
 import '../../features/sales/presentation/screens/sales_screen.dart';
+import '../../features/suppliers/presentation/screens/suppliers_screen.dart';
 import '../../features/shipping/presentation/screens/shipping_screen.dart';
 import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
@@ -20,10 +22,12 @@ class AppRouter {
   static const String login = '/login';
   static const String dashboard = '/dashboard';
   static const String inventory = '/inventory';
+  static const String purchasing = '/purchasing';
   static const String production = '/production';
   static const String quality = '/quality';
   static const String hr = '/hr';
   static const String sales = '/sales';
+  static const String suppliers = '/suppliers';
   static const String shipping = '/shipping';
   static const String accounting = '/accounting';
   static const String reports = '/reports';
@@ -76,6 +80,11 @@ class AppRouter {
         builder: (context, state) => const InventoryScreen(),
       ),
       GoRoute(
+        path: purchasing,
+        name: 'purchasing',
+        builder: (context, state) => const PurchasingScreen(),
+      ),
+      GoRoute(
         path: '/products',
         builder: (context, state) => const ProductsScreen(),
       ),
@@ -98,6 +107,11 @@ class AppRouter {
         path: sales,
         name: 'sales',
         builder: (context, state) => const SalesScreen(),
+      ),
+      GoRoute(
+        path: suppliers,
+        name: 'suppliers',
+        builder: (context, state) => const SuppliersScreen(),
       ),
       GoRoute(
         path: shipping,

@@ -94,6 +94,7 @@
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
 | GET | `/hr/workers` | العمال | 🔒 JWT | أي مستخدم موثّق |
+| POST | `/hr/workers` | إنشاء عامل جديد | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
 | GET | `/hr/workers/:id` | عامل واحد | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/hr/production` | تسجيل إنتاج يومي | 🔒 JWT | PRODUCTION_MANAGER, HR_MANAGER, GENERAL_MANAGER |
 | POST | `/hr/advances` | صرف سلفة | 🔒 JWT | HR_MANAGER |
@@ -104,6 +105,15 @@
 `POST /hr/payrolls` يستقبل `workerId`, `periodStart`, `periodEnd`, و`notes` فقط. يحسب الخادم `grossAmount` من مجموع `DailyProduction.totalAmount` داخل الفترة، ويحسب `advanceDeduct` من السلف داخل الفترة بحد أقصى gross، ويجعل `absenceDeduct = 0` في MVP وفق ADR-0015. لا يقبل `grossAmount` أو `netAmount` أو الخصومات من العميل، و`netAmount = grossAmount - advanceDeduct - absenceDeduct`. الفترة شاملة لطرفيها، وسجل العامل والفترة فريد.
 
 يدعم الإنشاء والاعتماد والدفع رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان الاستجابة المخزنة دون أثر ثانٍ، والمحتوى المختلف أو التكرار المتزامن يُرفض بـ409. الإنشاء يسجل `createdById` والاعتماد يسجل `approvedById` و`approvedAt` من JWT. لا يسمح اعتماد سجل معتمد. يتطلب الدفع كشفًا بحالة `APPROVED` وغير مدفوع، و`treasuryId` لخزينة نشطة، ويحسب الخادم المبلغ من `netAmount` ولا يقبل مبلغًا من العميل. ينشئ الدفع قيدًا مزدوجًا `GENERAL_EXPENSE → CASH` ويخفض الخزينة ويسجل `PAYROLL_PAID` داخل transaction واحدة. لا تُقبل دفعة لصافي مبلغ غير موجب ولا يُعاد تنفيذ الأثر عند replay.
+
+## الموردون — `/suppliers`
+
+| Method | Path | الوظيفة | الحماية | الأدوار |
+|---|---|---|---|---|
+| GET | `/suppliers` | الموردون النشطون مع pagination | 🔒 JWT | أي مستخدم موثّق |
+| POST | `/suppliers` | إنشاء مورد جديد | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
+
+يستقبل `POST /suppliers` الحقول `name` الإلزامي، و`phone` و`email` و`address` و`notes` الاختيارية. يتحقق الخادم من البريد الإلكتروني، يطبع النصوص، يولد code يبدأ بـ`SUP-`، ولا يغير `balance` عند الإنشاء. تستخدم القائمة `page` و`limit` وتستبعد الموردين ذوي `deletedAt` أو `isActive = false`.
 
 ## المشتريات — `/purchasing`
 
@@ -125,8 +135,17 @@
 | POST | `/sales/customers` | عميل جديد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/cancel` | إلغاء أمر بيع مسودة قبل التأكيد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/return` | مرتجع جزئي أو كامل لأمر بيع مؤكد/مشحون | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/customer-payments` | تحصيل دفعة من العميل | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409.
+يستقبل `POST /sales/customers` body بالحقول `name` الإلزامي، و`phone` و`email` و`address` الاختيارية، وجميعها نصوص؛ لا تُقبل الحقول غير المعروفة. يحفظ الخادم `email` كما يصل من Contact Picker أو الإدخال اليدوي. في Sprint 1 يقتصر تدفق الهاتف على إنشاء العميل الفعلي؛ استيراد جهات الاتصال للموردين والموظفين مؤجل حتى توفير APIs حقيقية لإنشائهم.
+
+يدعم `POST /sales/orders` و`POST /sales/orders/:id/cancel` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان النتيجة نفسها، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. الإلغاء متاح للمسودة فقط قبل التأكيد؛ أما الأمر المؤكد فلا يُلغى بهذا المسار حفاظًا على المخزون والـLedger.
+
+يستقبل `POST /sales/orders/:id/return` قائمة `items` تحتوي `salesOrderItemId` و`quantity`، مع `reason` اختياري. يتحقق الخادم من حالة الأمر ومن الكمية التي لم تُرجع سابقًا، ويعيد الكمية إلى مخزن المنتج التام عبر `InventoryService`، وينشئ `SalesReturn` و`SalesReturnItem`، ويعكس إيراد/VAT/COGS ويرد المدفوع نقدًا أو يخفض الذمم بحسب ما تم تحصيله، داخل transaction واحدة. يدعم `Idempotency-Key` ويمنع تكرار البند أو تجاوز الكمية.
+
+يستقبل `POST /sales/customer-payments` `customerId` و`amount` الموجب، مع `salesOrderId` و`notes` اختياريين. يتحقق الخادم من العميل النشط ومن الرصيد المتبقي، ويحدّث `CustomerPayment` و`SalesOrder.paidAmount` عند ربط الدفعة بأمر، ثم يرحل قيدًا متوازنًا `Dr CASH / Cr ACCOUNTS_RECEIVABLE` ويخفض رصيد العميل داخل transaction واحدة. لا تقبل الدفعة الزائدة أو أمر البيع غير المؤكد، وتُحفظ هوية الفاعل من JWT في القيد.
 
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
 
@@ -138,7 +157,7 @@
 | POST | `/shipping` | إنشاء شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | PATCH | `/shipping/:id/status` | انتقال حالة شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام عبر InventoryService داخل نفس transaction، وفشل أي عنصر يعيد العملية كاملة.
+تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. يتم صرف المنتج التام عند تأكيد أمر البيع في `POST /sales/orders/:id/confirm`؛ مسارات الشحن الحالية تغيّر lifecycle الشحنة فقط ولا تصرف المخزون مرة أخرى.
 
 يدعم `POST /shipping` رأس `Idempotency-Key` اختياريًا. نفس المفتاح مع نفس body وactor يعيد الشحنة دون إنشاء جديد، وإعادة استخدامه بمحتوى مختلف تُرفض بـ409. actor مأخوذ من JWT ولا يُقبل من body.
 
@@ -147,6 +166,7 @@
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
 | GET | `/accounting/accounts` | شجرة الحسابات | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
+| GET | `/accounting/treasuries` | الخزائن النشطة مع الرصيد | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/accounts` | حساب جديد | 🔒 JWT | ACCOUNTANT |
 | GET | `/accounting/vouchers` | أوامر الصرف | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/vouchers` | أمر صرف جديد | 🔒 JWT | ACCOUNTANT, CASHIER |
@@ -155,7 +175,7 @@
 | PATCH | `/accounting/fiscal-periods/:id/close` | إغلاق فترة مالية | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/journal-entries` | إنشاء قيد متعدد البنود داخل فترة مفتوحة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 
-يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
+يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة. يعتمد نموذج الهاتف على خزينة نشطة من `GET /accounting/treasuries`، ويقتصر الطرف المقابل التشغيلي في السند على `CUSTOMER` و`SUPPLIER`؛ صرف العمال يتم عبر دورة Payroll المخصصة.
 
 الفترات المالية لا تتداخل، ويُمنع الترحيل في فترة CLOSED أو بتاريخ خارج حدود الفترة. يقبل `POST /accounting/journal-entries` `description`, `reference`, `fiscalPeriodId`, `date` الاختياري، و`lines[]` الموجبة؛ يتحقق المحرك من الحسابات النشطة وتوازن المدين/الدائن ويأخذ `createdById` من JWT. إغلاق الفترة مشروط بحالتها الحالية ويسجل ActivityLog، ولا توجد كتابة دفع أو VAT آلية في هذا المسار.
 
@@ -244,6 +264,7 @@
 // POST /production/work-orders/:uuid/cost/finalize
 // Body: {}
 // POST /inventory/raw-materials/:uuid/add-stock  { "quantity": 50, "costPerUnit": 45.5 }
+// POST /hr/workers  { "name": "أحمد محمود", "phone": "01000000000", "nationalId": "اختياري", "specialty": "SEWING", "pieceRate": 5.5, "hireDate": "2026-08-27" }
 // POST /hr/production  { "workerId": "uuid", "workOrderId": "uuid?", "date": "2026-08-25T00:00:00.000Z", "piecesCount": 100 }
 // POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
 // POST /hr/payrolls  { "workerId": "uuid", "periodStart": "2026-08-01", "periodEnd": "2026-08-31", "notes": "اختياري" }
@@ -252,7 +273,8 @@
 // Body: { "treasuryId": "uuid", "paymentDate": "2026-08-31", "notes": "اختياري" }
 // POST /quality  { "workOrderId": "uuid", "stage": "SEWING", "checkedQty": 100, "passedQty": 95, "rejectedQty": 5 }
 // POST /products  { "code": "PRD-T01", "name": "تيشيرت", "category": "تيشيرت", "retailPrice": 250, "wholesalePrice": 180, "seasonId": "uuid?" }
-// POST /sales/customers  { "name": "عميل", "phone": "اختياري", "address": "اختياري" }
+// POST /suppliers  { "name": "شركة النسيج", "phone": "01000000000", "email": "supplier@example.com", "address": "القاهرة", "notes": "اختياري" }
+// POST /sales/customers  { "name": "عميل", "phone": "اختياري", "email": "customer@example.com", "address": "اختياري" }
 // POST /shipping  { "salesOrderId": "uuid", "shippingCost": 75, "trackingNumber": "اختياري" }
 // POST /accounting/accounts  { "code": "1000", "name": "الصندوق", "type": "ASSET", "parentId": "uuid?", "isGroup": false }
 ```

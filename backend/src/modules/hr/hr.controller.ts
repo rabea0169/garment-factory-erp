@@ -15,6 +15,7 @@ import { Roles } from '../auth/roles.guard';
 import { CreateAdvanceDto } from './dto/create-advance.dto';
 import { CreateAttendanceDto } from './dto/create-attendance.dto';
 import { CreatePayrollDto } from './dto/create-payroll.dto';
+import { CreateWorkerDto } from './dto/create-worker.dto';
 import { PayPayrollDto } from './dto/pay-payroll.dto';
 import { RecordProductionDto } from './dto/record-production.dto';
 import { HrService } from './hr.service';
@@ -28,6 +29,17 @@ export class HrController {
   @ApiOperation({ summary: 'قائمة جميع العمال' })
   async getWorkers(@Query() pagination: PaginationDto = new PaginationDto()) {
     return this.hrService.getAllWorkers(pagination);
+  }
+
+  @Post('workers')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'إنشاء عامل جديد' })
+  async createWorker(@Body() body: CreateWorkerDto) {
+    const { hireDate, ...workerData } = body;
+    return this.hrService.createWorker({
+      ...workerData,
+      hireDate: hireDate ? new Date(hireDate) : undefined,
+    });
   }
 
   @Get('workers/:id')

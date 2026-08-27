@@ -13,7 +13,9 @@ import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
@@ -32,6 +34,20 @@ export class SalesController {
   @ApiOperation({ summary: 'إضافة عميل جديد' })
   async createCustomer(@Body() body: CreateCustomerDto) {
     return this.salesService.createCustomer(body);
+  }
+
+  @Post('customer-payments')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تحصيل دفعة من العميل' })
+  async createCustomerPayment(
+    @Body() body: CreateCustomerPaymentDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return this.salesService.createCustomerPayment(
+      { ...body, actorId },
+      idempotencyKey,
+    );
   }
 
   @Get('orders')
@@ -55,6 +71,33 @@ export class SalesController {
       userId,
       idempotencyKey,
     );
+  }
+
+  @Post('orders/:id/return')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تسجيل مرتجع لأمر بيع مؤكد أو مشحون' })
+  async createSalesReturn(
+    @Param('id') id: string,
+    @Body() body: CreateSalesReturnDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return this.salesService.createSalesReturn(
+      id,
+      { ...body, actorId },
+      idempotencyKey,
+    );
+  }
+
+  @Post('orders/:id/cancel')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'إلغاء أمر بيع مسودة' })
+  async cancelOrder(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return this.salesService.cancelOrder(id, userId, idempotencyKey);
   }
 
   @Post('orders/:id/confirm')

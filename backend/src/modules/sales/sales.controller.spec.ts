@@ -5,28 +5,62 @@ import { SalesService } from './sales.service';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
+import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
 
 describe('SalesController — هوية الجلسة والصلاحيات (GF-0011)', () => {
   let controller: SalesController;
   let service: {
     getCustomers: jest.Mock;
     createCustomer: jest.Mock;
+    createCustomerPayment: jest.Mock;
+    createSalesReturn: jest.Mock;
     getSalesOrders: jest.Mock;
     createSalesOrder: jest.Mock;
     confirmOrder: jest.Mock;
+    cancelOrder: jest.Mock;
   };
 
   beforeEach(() => {
     service = {
       getCustomers: jest.fn().mockResolvedValue([]),
       createCustomer: jest.fn().mockResolvedValue({ id: 'c-1' }),
+      createCustomerPayment: jest.fn().mockResolvedValue({ id: 'payment-1' }),
+      createSalesReturn: jest.fn().mockResolvedValue({ id: 'return-1' }),
       getSalesOrders: jest.fn().mockResolvedValue([]),
       createSalesOrder: jest.fn().mockResolvedValue({ id: 'so-1' }),
       confirmOrder: jest
         .fn()
         .mockResolvedValue({ id: 'so-1', status: 'CONFIRMED' }),
+      cancelOrder: jest
+        .fn()
+        .mockResolvedValue({ id: 'so-1', status: 'CANCELLED' }),
     };
     controller = new SalesController(service as unknown as SalesService);
+  });
+
+  it('تحصيل دفعة يمرر actor من الجلسة وIdempotency-Key', async () => {
+    const body = {
+      customerId: 'c-1',
+      amount: 100,
+      notes: 'تحصيل نقدي',
+    } as unknown as CreateCustomerPaymentDto;
+
+    await controller.createCustomerPayment(body, 'user-1', 'payment-key');
+
+    expect(service.createCustomerPayment).toHaveBeenCalledWith(
+      { ...body, actorId: 'user-1' },
+      'payment-key',
+    );
+  });
+
+  it('تحصيل الدفعات مقيّد بـ CASHIER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'createCustomerPayment',
+    );
+    expect(roles).toEqual([UserRole.CASHIER, UserRole.GENERAL_MANAGER]);
   });
 
   it('إنشاء أمر بيع يمرر هوية الجلسة ولا يقبل userId من الطلب', async () => {
@@ -44,6 +78,48 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
       'user-1',
       undefined,
     );
+  });
+
+  it('مرتجع البيع يمرر العناصر وactor وIdempotency-Key', async () => {
+    const body = {
+      items: [{ salesOrderItemId: 'item-1', quantity: 1 }],
+      reason: 'عيب تصنيع',
+    } as unknown as CreateSalesReturnDto;
+
+    await controller.createSalesReturn('so-1', body, 'user-1', 'return-key');
+
+    expect(service.createSalesReturn).toHaveBeenCalledWith(
+      'so-1',
+      { ...body, actorId: 'user-1' },
+      'return-key',
+    );
+  });
+
+  it('مرتجع البيع مقيّد بـ CASHIER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'createSalesReturn',
+    );
+    expect(roles).toEqual([UserRole.CASHIER, UserRole.GENERAL_MANAGER]);
+  });
+
+  it('إلغاء أمر البيع يمرر actor وIdempotency-Key', async () => {
+    await controller.cancelOrder('so-1', 'user-1', 'cancel-key');
+    expect(service.cancelOrder).toHaveBeenCalledWith(
+      'so-1',
+      'user-1',
+      'cancel-key',
+    );
+  });
+
+  it('إلغاء أمر البيع مقيّد بـ CASHIER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'cancelOrder',
+    );
+    expect(roles).toEqual([UserRole.CASHIER, UserRole.GENERAL_MANAGER]);
   });
 
   it('تأكيد أمر البيع يتطلب صلاحيات CASHIER أو GENERAL_MANAGER', () => {
