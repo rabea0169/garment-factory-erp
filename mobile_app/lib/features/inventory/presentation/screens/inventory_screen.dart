@@ -29,6 +29,8 @@ class _InventoryScreenView extends StatefulWidget {
 class _InventoryScreenViewState extends State<_InventoryScreenView>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  final _searchController = TextEditingController();
+  var _searchQuery = '';
 
   @override
   void initState() {
@@ -39,6 +41,7 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
   @override
   void dispose() {
     _tabController.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -81,12 +84,41 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
                   context.read<InventoryCubit>().fetchInventoryData(),
             );
           } else if (state is InventoryLoaded) {
-            return TabBarView(
-              controller: _tabController,
+            return Column(
               children: [
-                _buildRawMaterialsTab(state.rawMaterials),
-                _buildFinishedGoodsTab(state.finishedGoods),
-                _buildLowStockTab(state.lowStockMaterials),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: TextField(
+                    controller: _searchController,
+                    decoration: InputDecoration(
+                      labelText: 'بحث في المخزون',
+                      hintText: 'الاسم أو الكود',
+                      prefixIcon: const Icon(Icons.search),
+                      suffixIcon: _searchQuery.isEmpty
+                          ? null
+                          : IconButton(
+                              tooltip: 'مسح البحث',
+                              onPressed: () {
+                                _searchController.clear();
+                                setState(() => _searchQuery = '');
+                              },
+                              icon: const Icon(Icons.clear),
+                            ),
+                    ),
+                    onChanged: (value) => setState(
+                        () => _searchQuery = value.trim().toLowerCase()),
+                  ),
+                ),
+                Expanded(
+                  child: TabBarView(
+                    controller: _tabController,
+                    children: [
+                      _buildRawMaterialsTab(_filterItems(state.rawMaterials)),
+                      _buildFinishedGoodsTab(_filterItems(state.finishedGoods)),
+                      _buildLowStockTab(_filterItems(state.lowStockMaterials)),
+                    ],
+                  ),
+                ),
               ],
             );
           }
@@ -99,6 +131,17 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
         label: const Text('إضافة رصيد', style: TextStyle(fontFamily: 'Cairo')),
       ),
     );
+  }
+
+  List<dynamic> _filterItems(List<dynamic> items) {
+    if (_searchQuery.isEmpty) return items;
+    return items.where((item) {
+      if (item is! Map) return false;
+      final values = [item['name'], item['code'], item['sku']]
+          .whereType<Object>()
+          .map((value) => value.toString().toLowerCase());
+      return values.any((value) => value.contains(_searchQuery));
+    }).toList();
   }
 
   Widget _buildRawMaterialsTab(List<dynamic> materials) {
