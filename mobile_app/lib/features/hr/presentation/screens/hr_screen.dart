@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/hr_cubit.dart';
 import '../cubit/hr_state.dart';
+import '../widgets/create_worker_dialog.dart';
 
 class HrScreen extends StatelessWidget {
   const HrScreen({super.key});
@@ -58,8 +59,10 @@ class HrScreen extends StatelessWidget {
                       subtitle: Text(
                           'كود: ${worker['code']} | التخصص: ${_translateSpecialty(worker['specialty'])}'),
                       trailing: IconButton(
-                        icon: const Icon(Icons.add_task, color: AppColors.success),
-                        onPressed: () => _showRecordProductionDialog(context, worker),
+                        icon: const Icon(Icons.add_task,
+                            color: AppColors.success),
+                        onPressed: () =>
+                            _showRecordProductionDialog(context, worker),
                       ),
                       onTap: () {
                         // الانتقال لصفحة تفاصيل العامل
@@ -72,9 +75,22 @@ class HrScreen extends StatelessWidget {
             return const SizedBox();
           },
         ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: () {},
-          child: const Icon(Icons.person_add),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () async {
+            final saved = await showDialog<bool>(
+              context: context,
+              builder: (_) => CreateWorkerDialog(
+                cubit: context.read<HrCubit>(),
+              ),
+            );
+            if (saved == true && context.mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text('تم حفظ العامل بنجاح')),
+              );
+            }
+          },
+          icon: const Icon(Icons.person_add),
+          label: const Text('إضافة عامل'),
         ),
       ),
     );
@@ -82,12 +98,18 @@ class HrScreen extends StatelessWidget {
 
   String _translateSpecialty(String specialty) {
     switch (specialty) {
-      case 'CUTTING': return 'قص';
-      case 'SEWING': return 'خياطة';
-      case 'FINISHING': return 'تشطيب';
-      case 'PACKAGING': return 'تعبئة';
-      case 'IRONING': return 'كي';
-      default: return specialty;
+      case 'CUTTING':
+        return 'قص';
+      case 'SEWING':
+        return 'خياطة';
+      case 'FINISHING':
+        return 'تشطيب';
+      case 'PACKAGING':
+        return 'تعبئة';
+      case 'IRONING':
+        return 'كي';
+      default:
+        return specialty;
     }
   }
 
@@ -98,7 +120,8 @@ class HrScreen extends StatelessWidget {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('تسجيل إنتاج - ${worker['name']}', style: const TextStyle(fontFamily: 'Cairo')),
+        title: Text('تسجيل إنتاج - ${worker['name']}',
+            style: const TextStyle(fontFamily: 'Cairo')),
         content: TextField(
           controller: piecesController,
           keyboardType: TextInputType.number,
@@ -121,7 +144,9 @@ class HrScreen extends StatelessWidget {
                 );
                 Navigator.pop(ctx);
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('تم تسجيل الإنتاج بنجاح', style: TextStyle(fontFamily: 'Cairo'))),
+                  const SnackBar(
+                      content: Text('تم تسجيل الإنتاج بنجاح',
+                          style: TextStyle(fontFamily: 'Cairo'))),
                 );
               }
             },

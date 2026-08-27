@@ -8,6 +8,7 @@ import '../../features/products/presentation/screens/products_screen.dart';
 import '../../features/quality/presentation/screens/quality_screen.dart';
 import '../../features/hr/presentation/screens/hr_screen.dart';
 import '../../features/sales/presentation/screens/sales_screen.dart';
+import '../../features/suppliers/presentation/screens/suppliers_screen.dart';
 import '../../features/shipping/presentation/screens/shipping_screen.dart';
 import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
@@ -24,6 +25,7 @@ class AppRouter {
   static const String quality = '/quality';
   static const String hr = '/hr';
   static const String sales = '/sales';
+  static const String suppliers = '/suppliers';
   static const String shipping = '/shipping';
   static const String accounting = '/accounting';
   static const String reports = '/reports';
@@ -98,6 +100,11 @@ class AppRouter {
         path: sales,
         name: 'sales',
         builder: (context, state) => const SalesScreen(),
+      ),
+      GoRoute(
+        path: suppliers,
+        name: 'suppliers',
+        builder: (context, state) => const SuppliersScreen(),
       ),
       GoRoute(
         path: shipping,

@@ -16,6 +16,26 @@ class HrCubit extends Cubit<HrState> {
     }
   }
 
+  Future<void> createWorker({
+    required String name,
+    String? phone,
+    String? nationalId,
+    required String specialty,
+    double? pieceRate,
+    DateTime? hireDate,
+  }) async {
+    final dio = ApiClient.instance.dio;
+    await dio.post('/hr/workers', data: {
+      'name': name,
+      if (phone != null && phone.isNotEmpty) 'phone': phone,
+      if (nationalId != null && nationalId.isNotEmpty) 'nationalId': nationalId,
+      'specialty': specialty,
+      if (pieceRate != null) 'pieceRate': pieceRate,
+      if (hireDate != null) 'hireDate': hireDate.toIso8601String(),
+    });
+    await fetchWorkers();
+  }
+
   Future<void> recordProduction({
     required String workerId,
     required int piecesCount,

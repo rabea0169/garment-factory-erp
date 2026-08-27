@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
+import { Prisma, WorkerSpecialty } from '@prisma/client';
 import { HrService } from './hr.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -28,6 +28,55 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
     expect(prisma.worker.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ orderBy: { createdAt: 'desc' } }),
     );
+  });
+
+  it('ينشئ عاملًا ببيانات master data وكود مولد', async () => {
+    const hireDate = new Date('2026-08-27');
+    prisma.worker.create.mockResolvedValue({ id: 'w-1' });
+
+    await service.createWorker({
+      name: '  أحمد محمود  ',
+      phone: ' 01000000000 ',
+      nationalId: ' 29801011234567 ',
+      specialty: WorkerSpecialty.SEWING,
+      pieceRate: 5.5,
+      hireDate,
+    });
+
+    const calls = prisma.worker.create.mock.calls as unknown as Array<
+      [{ data: Record<string, unknown> }]
+    >;
+    const createCall = calls[0]?.[0];
+    expect(createCall).toBeDefined();
+    if (!createCall) throw new Error('worker.create was not called');
+
+    expect(createCall.data).toEqual(
+      expect.objectContaining({
+        name: 'أحمد محمود',
+        phone: '01000000000',
+        nationalId: '29801011234567',
+        specialty: WorkerSpecialty.SEWING,
+        pieceRate: 5.5,
+        hireDate,
+      }),
+    );
+    expect(String(createCall.data.code)).toMatch(/^WRK-/);
+  });
+
+  it('يحّول تعارض الرقم القومي أو code إلى 409', async () => {
+    prisma.worker.create.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('duplicate', {
+        code: 'P2002',
+        clientVersion: '7.9.1',
+      }),
+    );
+
+    await expect(
+      service.createWorker({
+        name: 'عامل مكرر',
+        specialty: WorkerSpecialty.CUTTING,
+      }),
+    ).rejects.toBeInstanceOf(ConflictException);
   });
 
   it('تفاصيل العامل تشمل آخر 10 إنتاجات وآخر 5 سلف', async () => {

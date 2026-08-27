@@ -105,6 +105,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _MenuItem('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
       _MenuItem(
           'المبيعات والمشتريات', Icons.receipt_long_rounded, AppRouter.sales),
+      _MenuItem('الموردون', Icons.business_center_rounded, AppRouter.suppliers),
       _MenuItem(
           'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
       _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),

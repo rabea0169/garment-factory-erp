@@ -94,6 +94,7 @@
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
 | GET | `/hr/workers` | العمال | 🔒 JWT | أي مستخدم موثّق |
+| POST | `/hr/workers` | إنشاء عامل جديد | 🔒 JWT | HR_MANAGER, GENERAL_MANAGER |
 | GET | `/hr/workers/:id` | عامل واحد | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/hr/production` | تسجيل إنتاج يومي | 🔒 JWT | PRODUCTION_MANAGER, HR_MANAGER, GENERAL_MANAGER |
 | POST | `/hr/advances` | صرف سلفة | 🔒 JWT | HR_MANAGER |
@@ -104,6 +105,15 @@
 `POST /hr/payrolls` يستقبل `workerId`, `periodStart`, `periodEnd`, و`notes` فقط. يحسب الخادم `grossAmount` من مجموع `DailyProduction.totalAmount` داخل الفترة، ويحسب `advanceDeduct` من السلف داخل الفترة بحد أقصى gross، ويجعل `absenceDeduct = 0` في MVP وفق ADR-0015. لا يقبل `grossAmount` أو `netAmount` أو الخصومات من العميل، و`netAmount = grossAmount - advanceDeduct - absenceDeduct`. الفترة شاملة لطرفيها، وسجل العامل والفترة فريد.
 
 يدعم الإنشاء والاعتماد والدفع رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان الاستجابة المخزنة دون أثر ثانٍ، والمحتوى المختلف أو التكرار المتزامن يُرفض بـ409. الإنشاء يسجل `createdById` والاعتماد يسجل `approvedById` و`approvedAt` من JWT. لا يسمح اعتماد سجل معتمد. يتطلب الدفع كشفًا بحالة `APPROVED` وغير مدفوع، و`treasuryId` لخزينة نشطة، ويحسب الخادم المبلغ من `netAmount` ولا يقبل مبلغًا من العميل. ينشئ الدفع قيدًا مزدوجًا `GENERAL_EXPENSE → CASH` ويخفض الخزينة ويسجل `PAYROLL_PAID` داخل transaction واحدة. لا تُقبل دفعة لصافي مبلغ غير موجب ولا يُعاد تنفيذ الأثر عند replay.
+
+## الموردون — `/suppliers`
+
+| Method | Path | الوظيفة | الحماية | الأدوار |
+|---|---|---|---|---|
+| GET | `/suppliers` | الموردون النشطون مع pagination | 🔒 JWT | أي مستخدم موثّق |
+| POST | `/suppliers` | إنشاء مورد جديد | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
+
+يستقبل `POST /suppliers` الحقول `name` الإلزامي، و`phone` و`email` و`address` و`notes` الاختيارية. يتحقق الخادم من البريد الإلكتروني، يطبع النصوص، يولد code يبدأ بـ`SUP-`، ولا يغير `balance` عند الإنشاء. تستخدم القائمة `page` و`limit` وتستبعد الموردين ذوي `deletedAt` أو `isActive = false`.
 
 ## المشتريات — `/purchasing`
 
@@ -246,6 +256,7 @@
 // POST /production/work-orders/:uuid/cost/finalize
 // Body: {}
 // POST /inventory/raw-materials/:uuid/add-stock  { "quantity": 50, "costPerUnit": 45.5 }
+// POST /hr/workers  { "name": "أحمد محمود", "phone": "01000000000", "nationalId": "اختياري", "specialty": "SEWING", "pieceRate": 5.5, "hireDate": "2026-08-27" }
 // POST /hr/production  { "workerId": "uuid", "workOrderId": "uuid?", "date": "2026-08-25T00:00:00.000Z", "piecesCount": 100 }
 // POST /hr/advances  { "workerId": "uuid", "amount": 200, "notes": "اختياري" }
 // POST /hr/payrolls  { "workerId": "uuid", "periodStart": "2026-08-01", "periodEnd": "2026-08-31", "notes": "اختياري" }
@@ -254,6 +265,7 @@
 // Body: { "treasuryId": "uuid", "paymentDate": "2026-08-31", "notes": "اختياري" }
 // POST /quality  { "workOrderId": "uuid", "stage": "SEWING", "checkedQty": 100, "passedQty": 95, "rejectedQty": 5 }
 // POST /products  { "code": "PRD-T01", "name": "تيشيرت", "category": "تيشيرت", "retailPrice": 250, "wholesalePrice": 180, "seasonId": "uuid?" }
+// POST /suppliers  { "name": "شركة النسيج", "phone": "01000000000", "email": "supplier@example.com", "address": "القاهرة", "notes": "اختياري" }
 // POST /sales/customers  { "name": "عميل", "phone": "اختياري", "email": "customer@example.com", "address": "اختياري" }
 // POST /shipping  { "salesOrderId": "uuid", "shippingCost": 75, "trackingNumber": "اختياري" }
 // POST /accounting/accounts  { "code": "1000", "name": "الصندوق", "type": "ASSET", "parentId": "uuid?", "isGroup": false }
