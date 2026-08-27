@@ -1,4 +1,6 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_parsing.dart';
 
@@ -53,6 +55,38 @@ class SalesCubit extends Cubit<SalesState> {
       response.data,
       context: 'المنتجات',
     );
+  }
+
+  Future<void> confirmOrder(String orderId) async {
+    await ApiClient.instance.dio.post(
+      '/sales/orders/$orderId/confirm',
+      options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+    );
+    await fetchOrders();
+  }
+
+  Future<void> cancelOrder(String orderId) async {
+    await ApiClient.instance.dio.post(
+      '/sales/orders/$orderId/cancel',
+      options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+    );
+    await fetchOrders();
+  }
+
+  Future<void> createSalesReturn({
+    required String orderId,
+    required List<Map<String, dynamic>> items,
+    String? reason,
+  }) async {
+    await ApiClient.instance.dio.post(
+      '/sales/orders/$orderId/return',
+      data: {
+        'items': items,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+    );
+    await fetchOrders();
   }
 
   Future<void> createCustomerPayment({

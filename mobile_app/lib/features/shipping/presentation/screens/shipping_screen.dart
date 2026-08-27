@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/shipping_cubit.dart';
 import '../cubit/shipping_state.dart';
@@ -119,14 +120,34 @@ class ShippingScreen extends StatelessWidget {
   }
 
   Future<void> _showCreateShipmentDialog(BuildContext context) async {
-    final saved = await showDialog<bool>(
-      context: context,
-      builder: (_) =>
-          _CreateShipmentDialog(cubit: context.read<ShippingCubit>()),
-    );
-    if (saved == true && context.mounted) {
+    final cubit = context.read<ShippingCubit>();
+    try {
+      final orders = await cubit.fetchConfirmedSalesOrders();
+      if (!context.mounted) return;
+      if (orders.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('لا توجد أوامر بيع مؤكدة جاهزة للشحن')),
+        );
+        return;
+      }
+      final saved = await showDialog<bool>(
+        context: context,
+        builder: (_) => _CreateShipmentDialog(
+          cubit: cubit,
+          confirmedOrders: orders,
+        ),
+      );
+      if (saved == true && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم إنشاء الشحنة بنجاح')),
+        );
+      }
+    } catch (error) {
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إنشاء الشحنة بنجاح')),
+        SnackBar(
+            content: Text(
+                'تعذر تحميل أوامر البيع: ${ApiClient.instance.messageFor(error)}')),
       );
     }
   }
@@ -174,9 +195,13 @@ class ShippingScreen extends StatelessWidget {
 }
 
 class _CreateShipmentDialog extends StatefulWidget {
-  const _CreateShipmentDialog({required this.cubit});
+  const _CreateShipmentDialog({
+    required this.cubit,
+    required this.confirmedOrders,
+  });
 
   final ShippingCubit cubit;
+  final List<Map<String, dynamic>> confirmedOrders;
 
   @override
   State<_CreateShipmentDialog> createState() => _CreateShipmentDialogState();
@@ -184,7 +209,7 @@ class _CreateShipmentDialog extends StatefulWidget {
 
 class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
   final _formKey = GlobalKey<FormState>();
-  final _salesOrderIdController = TextEditingController();
+  String? _selectedSalesOrderId;
   final _shippingCompanyIdController = TextEditingController();
   final _shippingCostController = TextEditingController();
   final _trackingController = TextEditingController();
@@ -193,7 +218,6 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
 
   @override
   void dispose() {
-    _salesOrderIdController.dispose();
     _shippingCompanyIdController.dispose();
     _shippingCostController.dispose();
     _trackingController.dispose();
@@ -206,7 +230,7 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
     setState(() => _isSaving = true);
     try {
       await widget.cubit.createShipment(
-        salesOrderId: _salesOrderIdController.text.trim(),
+        salesOrderId: _selectedSalesOrderId!,
         shippingCompanyId: _shippingCompanyIdController.text.trim(),
         shippingCost: double.tryParse(_shippingCostController.text.trim()),
         trackingNumber: _trackingController.text.trim(),
@@ -236,15 +260,28 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-                TextFormField(
-                  controller: _salesOrderIdController,
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedSalesOrderId,
                   decoration: const InputDecoration(
-                    labelText: 'معرف أمر البيع *',
-                    helperText: 'استخدم معرف أمر بيع بحالة CONFIRMED',
+                    labelText: 'أمر البيع المؤكد *',
+                    helperText: 'اختر أمرًا مؤكدًا من القائمة',
                   ),
-                  validator: (value) => value == null || value.trim().isEmpty
-                      ? 'معرف أمر البيع مطلوب'
-                      : null,
+                  items: widget.confirmedOrders
+                      .where((order) => order['id'] != null)
+                      .map(
+                        (order) => DropdownMenuItem<String>(
+                          value: '${order['id']}',
+                          child: Text(
+                            '${order['code'] ?? order['id']} — ${order['customer']?['name'] ?? 'عميل'}',
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving
+                      ? null
+                      : (value) =>
+                          setState(() => _selectedSalesOrderId = value),
+                  validator: (value) => value == null ? 'اختر أمر البيع' : null,
                 ),
                 const SizedBox(height: 10),
                 TextFormField(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/network/api_client.dart';
 import '../../../../core/contacts/contact_import_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
@@ -96,6 +97,46 @@ class SalesScreen extends StatelessWidget {
                             }).toList(),
                           ),
                         ),
+                        if ('${order['status'] ?? ''}' == 'DRAFT')
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: OutlinedButton.icon(
+                                    onPressed: () =>
+                                        _confirmOrder(screenContext, order),
+                                    icon:
+                                        const Icon(Icons.check_circle_outline),
+                                    label: const Text('تأكيد'),
+                                  ),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: TextButton.icon(
+                                    onPressed: () =>
+                                        _cancelOrder(screenContext, order),
+                                    icon: const Icon(Icons.cancel_outlined),
+                                    label: const Text('إلغاء'),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        if (_canReturnOrder(order))
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                              child: OutlinedButton.icon(
+                                onPressed: () =>
+                                    _showReturnDialog(screenContext, order),
+                                icon: const Icon(
+                                    Icons.assignment_return_outlined),
+                                label: const Text('تسجيل مرتجع'),
+                              ),
+                            ),
+                          ),
                         if (_canCollectPayment(order, customer))
                           Align(
                             alignment: AlignmentDirectional.centerStart,
@@ -152,6 +193,104 @@ class SalesScreen extends StatelessWidget {
       create: (_) => SalesCubit()..fetchOrders(),
       child: content,
     );
+  }
+
+  bool _canReturnOrder(Map<String, dynamic> order) {
+    final status = '${order['status'] ?? ''}';
+    return order['id'] != null &&
+        (status == 'CONFIRMED' || status == 'SHIPPED');
+  }
+
+  Future<bool> _confirmAction(BuildContext context, String title) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(title),
+            content: const Text('هل تريد تنفيذ هذه العملية؟'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('إلغاء'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: const Text('تأكيد'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
+  Future<void> _confirmOrder(
+    BuildContext context,
+    Map<String, dynamic> order,
+  ) async {
+    final salesCubit = context.read<SalesCubit>();
+    if (!await _confirmAction(context, 'تأكيد أمر البيع')) return;
+    try {
+      await salesCubit.confirmOrder('${order['id']}');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تأكيد أمر البيع وصرف المخزون')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ApiClient.instance.messageFor(error))),
+      );
+    }
+  }
+
+  Future<void> _cancelOrder(
+    BuildContext context,
+    Map<String, dynamic> order,
+  ) async {
+    final salesCubit = context.read<SalesCubit>();
+    if (!await _confirmAction(context, 'إلغاء أمر البيع')) return;
+    try {
+      await salesCubit.cancelOrder('${order['id']}');
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم إلغاء أمر البيع')),
+      );
+    } catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ApiClient.instance.messageFor(error))),
+      );
+    }
+  }
+
+  Future<void> _showReturnDialog(
+    BuildContext context,
+    Map<String, dynamic> order,
+  ) async {
+    final items = (order['items'] as List?)
+            ?.whereType<Map>()
+            .map((item) => Map<String, dynamic>.from(item))
+            .where((item) => item['id'] != null)
+            .toList() ??
+        const <Map<String, dynamic>>[];
+    if (items.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('لا توجد بنود صالحة لتسجيل المرتجع')),
+      );
+      return;
+    }
+    final returned = await showDialog<bool>(
+      context: context,
+      builder: (_) => _SalesReturnDialog(
+        salesCubit: context.read<SalesCubit>(),
+        orderId: '${order['id']}',
+        items: items,
+      ),
+    );
+    if (returned == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تسجيل المرتجع بنجاح')),
+      );
+    }
   }
 
   Future<void> _showCreateSalesOrderDialog(BuildContext context) async {
@@ -711,6 +850,153 @@ class _CustomerPaymentDialogState extends State<_CustomerPaymentDialog> {
                 )
               : const Icon(Icons.payments_outlined),
           label: Text(_isSaving ? 'جاري الحفظ...' : 'تحصيل'),
+        ),
+      ],
+    );
+  }
+}
+
+class _SalesReturnDialog extends StatefulWidget {
+  const _SalesReturnDialog({
+    required this.salesCubit,
+    required this.orderId,
+    required this.items,
+  });
+
+  final SalesCubit salesCubit;
+  final String orderId;
+  final List<Map<String, dynamic>> items;
+
+  @override
+  State<_SalesReturnDialog> createState() => _SalesReturnDialogState();
+}
+
+class _SalesReturnDialogState extends State<_SalesReturnDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _reasonController = TextEditingController();
+  late final List<TextEditingController> _quantityControllers;
+  bool _isSaving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _quantityControllers = widget.items
+        .map((_) => TextEditingController(text: '0'))
+        .toList(growable: false);
+  }
+
+  @override
+  void dispose() {
+    _reasonController.dispose();
+    for (final controller in _quantityControllers) {
+      controller.dispose();
+    }
+    super.dispose();
+  }
+
+  int _availableQuantity(Map<String, dynamic> item) {
+    final quantity = int.tryParse('${item['quantity'] ?? 0}') ?? 0;
+    final returned = int.tryParse('${item['returnedQuantity'] ?? 0}') ?? 0;
+    return (quantity - returned).clamp(0, quantity);
+  }
+
+  Future<void> _save() async {
+    if (_isSaving || !(_formKey.currentState?.validate() ?? false)) return;
+    final payload = <Map<String, dynamic>>[];
+    for (var index = 0; index < widget.items.length; index++) {
+      final quantity = int.parse(_quantityControllers[index].text.trim());
+      if (quantity > 0) {
+        payload.add({
+          'salesOrderItemId': '${widget.items[index]['id']}',
+          'quantity': quantity,
+        });
+      }
+    }
+    if (payload.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أدخل كمية مرتجعة لبند واحد على الأقل')),
+      );
+      return;
+    }
+
+    setState(() => _isSaving = true);
+    try {
+      await widget.salesCubit.createSalesReturn(
+        orderId: widget.orderId,
+        items: payload,
+        reason: _reasonController.text.trim(),
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(ApiClient.instance.messageFor(error))),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('تسجيل مرتجع بيع'),
+      content: SizedBox(
+        width: 440,
+        child: Form(
+          key: _formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ...List.generate(widget.items.length, (index) {
+                  final item = widget.items[index];
+                  final available = _availableQuantity(item);
+                  return TextFormField(
+                    controller: _quantityControllers[index],
+                    enabled: !_isSaving && available > 0,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      labelText:
+                          'كمية مرتجعة للبند ${index + 1} (المتاح $available)',
+                    ),
+                    validator: (value) {
+                      final quantity = int.tryParse(value?.trim() ?? '');
+                      if (quantity == null || quantity < 0) {
+                        return 'أدخل عددًا صحيحًا غير سالب';
+                      }
+                      if (quantity > available) {
+                        return 'الكمية تتجاوز المتاح للمرتجع';
+                      }
+                      return null;
+                    },
+                  );
+                }),
+                TextFormField(
+                  controller: _reasonController,
+                  enabled: !_isSaving,
+                  decoration:
+                      const InputDecoration(labelText: 'سبب المرتجع (اختياري)'),
+                  maxLines: 2,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton(
+          onPressed: _isSaving ? null : _save,
+          child: _isSaving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('حفظ المرتجع'),
         ),
       ],
     );
