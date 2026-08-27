@@ -14,6 +14,8 @@ import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { ConfirmSalesOrderDto } from './dto/confirm-sales-order.dto';
+import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
@@ -63,9 +65,32 @@ export class SalesController {
   async confirmOrder(
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
+    @Body() body: ConfirmSalesOrderDto = {},
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<unknown> {
     // A8: Idempotency-Key على التأكيد — يمنع صرفًا مزدوجًا عند إعادة المحاولة.
-    return await this.salesService.confirmOrder(id, userId, idempotencyKey);
+    return await this.salesService.confirmOrder(
+      id,
+      userId,
+      idempotencyKey,
+      body?.treasuryId,
+    );
+  }
+
+  @Post('orders/:id/payments')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تحصيل دفعة من عميل على أمر بيع' })
+  async recordCustomerPayment(
+    @Param('id') id: string,
+    @Body() body: CreateCustomerPaymentDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return this.salesService.recordCustomerPayment(
+      id,
+      body,
+      actorId,
+      idempotencyKey,
+    );
   }
 }

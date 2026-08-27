@@ -42,7 +42,10 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
   };
 
   const mockFinancial = {
-    postJournalEntryInTx: jest.fn(),
+    postJournalEntryInTx: jest.fn().mockResolvedValue({
+      entryCode: 'JE-RETURN-001',
+      entryId: 'je-return-001',
+    }),
   };
 
   beforeEach(async () => {
@@ -66,6 +69,7 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       const order = {
         id: orderId,
         code: 'PO-001',
+        supplierId: 'sup-1',
         items: [
           { id: 'item-1', quantity: 10, rawMaterialId: 'rm-1', unitCost: 5 },
         ],
@@ -119,6 +123,8 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       const itemId = 'item-1';
       const order = {
         id: orderId,
+        code: 'PO-001',
+        supplierId: 'sup-1',
         status: PurchaseOrderStatus.RECEIVED,
         items: [{ id: itemId, rawMaterialId: 'rm-1' }],
       };
@@ -152,6 +158,8 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       const itemId = 'item-1';
       const order = {
         id: orderId,
+        code: 'PO-001',
+        supplierId: 'sup-1',
         status: PurchaseOrderStatus.RECEIVED,
         items: [{ id: itemId, rawMaterialId: 'rm-1' }],
       };
@@ -168,7 +176,10 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       mockPrisma.stockLedgerEntry.aggregate.mockResolvedValue({
         _sum: { quantityDelta: -5 },
       });
-      mockInventory.issue.mockResolvedValue({ entryCode: 'SLE-001' });
+      mockInventory.issue.mockResolvedValue({
+        entryCode: 'SLE-001',
+        totalValue: 89.04,
+      });
 
       const result = (await service.returnToSupplier(
         orderId,
@@ -184,6 +195,21 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
         }),
         'user-1',
         expect.anything(),
+      );
+      expect(mockFinancial.postJournalEntryInTx).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          reference: expect.stringContaining('PURCHASE_RETURN:PO-'),
+          lines: [
+            expect.objectContaining({
+              debitAccountId: '20000000-0000-0000-0000-000000000021',
+              creditAccountId: '10000000-0000-0000-0000-000000000031',
+              amount: 89.04,
+            }),
+          ],
+          supplierUpdates: [{ supplierId: 'sup-1', delta: -89.04 }],
+        }),
+        'user-1',
       );
     });
   });

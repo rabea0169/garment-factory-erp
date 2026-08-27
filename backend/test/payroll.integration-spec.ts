@@ -269,7 +269,37 @@ integrationDescribe('GF-0015 payroll integration', () => {
       await prisma.journalEntry.count({
         where: { reference: `PAYROLL:${payroll.id}` },
       }),
-    ).toBe(2); // WAVE2-C2 (COMM-F03): one approval entry + one payment entry
+    ).toBe(2); // one approval entry + one payment entry
+
+    const approvalEntry = await prisma.journalEntry.findUnique({
+      where: { postingKey: `payroll-approval:${payroll.id}` },
+      include: { lines: true },
+    });
+    expect(approvalEntry?.lines).toEqual([
+      expect.objectContaining({
+        debitAccountId: CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+        creditAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+        amount: new Prisma.Decimal('660.00'),
+      }),
+    ]);
+
+    const paymentEntry = await prisma.journalEntry.findUnique({
+      where: { postingKey: `hr-payroll-pay:${payroll.id}` },
+      include: { lines: true },
+    });
+    expect(paymentEntry?.lines).toEqual([
+      expect.objectContaining({
+        debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+        creditAccountId: CHART_OF_ACCOUNTS.CASH,
+        amount: new Prisma.Decimal('410.00'),
+      }),
+      expect.objectContaining({
+        debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+        creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+        amount: new Prisma.Decimal('250.00'),
+      }),
+    ]);
+
     const treasury = await prisma.treasury.findUnique({
       where: { id: treasuryId },
     });

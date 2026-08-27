@@ -128,6 +128,10 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       ]),
       treasuryUpdates: [{ treasuryId: 'treasury-001', delta: 500 }],
       customerUpdates: [{ customerId: 'cust-001', delta: -500 }],
+      metadata: expect.objectContaining({
+        treasuryUpdates: [{ treasuryId: 'treasury-001', delta: 500 }],
+        customerUpdates: [{ customerId: 'cust-001', delta: -500 }],
+      }) as Record<string, unknown>,
       userId: 'user-from-session',
     };
     expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
@@ -184,6 +188,10 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       ]),
       treasuryUpdates: [{ treasuryId: 'treasury-002', delta: -300 }],
       supplierUpdates: [{ supplierId: 'sup-001', delta: -300 }],
+      metadata: expect.objectContaining({
+        treasuryUpdates: [{ treasuryId: 'treasury-002', delta: -300 }],
+        supplierUpdates: [{ supplierId: 'sup-001', delta: -300 }],
+      }) as Record<string, unknown>,
       userId: 'user-from-session',
     };
     expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(

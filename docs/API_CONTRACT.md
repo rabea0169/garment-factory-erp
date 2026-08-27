@@ -115,7 +115,7 @@
 | PUT | `/purchasing/:id/receive` | استلام legacy كامل | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
 | POST | `/purchasing/:id/return` | مرتجع إلى المورد | 🔒 JWT | INVENTORY_MANAGER, GENERAL_MANAGER |
 
-يتطلب `POST /purchasing/:id/receipts` قائمة غير فارغة بلا تكرار لبند أمر الشراء. يتحقق الخادم من الكمية المتبقية، وينشئ receipt وحركات `RECEIVE` في `StockLedgerEntry`، ويرحل قيداً آلياً متوازناً (مدين مخزون / دائن حسابات دائنة) ويحدّث رصيد المورد وحالة الأمر داخل transaction واحدة؛ لا تُؤخذ الكمية أو التكلفة من حقيقة يرسلها العميل خارج عناصر أمر الشراء. يدعم الرأس الاختياري `Idempotency-Key`، وتكرار المفتاح مع نفس المحتوى يعيد الاستجابة دون receipt أو ledger أو قيد إضافي، بينما المحتوى المختلف يُرفض بـ409. مسار المرتجع يعكس المخزون والقيد والذمم داخل transaction واحدة، ويمنع سباق مرتجعين يتجاوزان الكمية المستلمة. يجب إثبات اختبارات PostgreSQL على CI قبل التشغيل المشترك.
+يتطلب `POST /purchasing/:id/receipts` قائمة غير فارغة بلا تكرار لبند أمر الشراء. يتحقق الخادم من الكمية المتبقية، وينشئ receipt وحركات `RECEIVE` في `StockLedgerEntry`، ويرحل قيداً آلياً متوازناً (مدين مخزون / دائن حسابات دائنة) ويحدّث رصيد المورد وحالة الأمر داخل transaction واحدة؛ لا تُؤخذ الكمية أو التكلفة من حقيقة يرسلها العميل خارج عناصر أمر الشراء. يدعم الرأس الاختياري `Idempotency-Key`، وتكرار المفتاح مع نفس المحتوى يعيد الاستجابة دون receipt أو ledger أو قيد إضافي، بينما المحتوى المختلف يُرفض بـ409. مسار المرتجع يخرج المخزون عبر weighted-average `totalValue`، ويرحل قيدًا مدينًا لـAP ودائنًا للمخزون ويخفض رصيد المورد بنفس transaction؛ فشل posting يلغي الأثر المخزني. يمنع سباق مرتجعين يتجاوزان الكمية المستلمة. يجب إثبات اختبارات PostgreSQL على CI قبل التشغيل المشترك.
 
 ## المبيعات — `/sales`
 
@@ -125,8 +125,12 @@
 | POST | `/sales/customers` | عميل جديد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/confirm` | تأكيد البيع وتسجيل الإيراد/الذمم؛ لا يصرف المنتج التام | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/payments` | تحصيل دفعة من العميل وربطها بالخزينة والذمم | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409.
+يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. عند تأكيد أمر `CASH` يجب إرسال body بالشكل `{ "treasuryId": "uuid" }`. يتحقق الخادم من الخزينة النشطة ويحسب قيمة القبض من `SalesOrder.totalAmount` فقط، ثم يمرر `treasuryUpdates` إلى محرك الترحيل داخل نفس transaction مع تسجيل الإيراد. لا يصرف تأكيد البيع المنتج التام ولا يرحل COGS؛ يتولى ذلك مسار الشحن فقط. لا يُسمح بـ`treasuryId` في البيع الآجل. يستخدم تأكيد البيع رأس `Idempotency-Key` اختياريًا، ويشمل hash قيمة الخزينة لمنع replay بخزينة مختلفة.
+
+يستقبل `POST /sales/orders/:id/payments` body بالشكل `{ "amount": 40, "treasuryId": "uuid", "notes": "اختياري" }` مع رأس `Idempotency-Key` اختياري. يسمح الخادم بالتحصيل لأمر `CONFIRMED` أو `SHIPPED` غير المسدد، ويرفض المبلغ الذي يتجاوز الرصيد المستحق. داخل transaction واحدة ينشئ `CustomerPayment`، يزيد `SalesOrder.paidAmount`، يرفع الخزينة، يخفض رصيد العميل، ويرحل `CASH → ACCOUNTS_RECEIVABLE`. التكرار بالمفتاح نفسه يعيد الاستجابة دون دفعة أو قيد ثانٍ.
 
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
 
@@ -138,7 +142,7 @@
 | POST | `/shipping` | إنشاء شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | PATCH | `/shipping/:id/status` | انتقال حالة شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام عبر InventoryService داخل نفس transaction، وفشل أي عنصر يعيد العملية كاملة.
+تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام ويرحل `COGS → INVENTORY` عبر InventoryService وFinancialPostingService داخل نفس transaction، ثم يحول أمر البيع إلى `SHIPPED`. لا يحدث الصرف عند التأكيد، وفشل أي عنصر أو الترحيل المالي يعيد انتقال الشحنة وأمر البيع والـledger والقيد كاملة. يدعم تغيير الحالة رأس `Idempotency-Key` اختياريًا.
 
 يدعم `POST /shipping` رأس `Idempotency-Key` اختياريًا. نفس المفتاح مع نفس body وactor يعيد الشحنة دون إنشاء جديد، وإعادة استخدامه بمحتوى مختلف تُرفض بـ409. actor مأخوذ من JWT ولا يُقبل من body.
 
@@ -155,7 +159,7 @@
 | PATCH | `/accounting/fiscal-periods/:id/close` | إغلاق فترة مالية | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 | POST | `/accounting/journal-entries` | إنشاء قيد متعدد البنود داخل فترة مفتوحة | 🔒 JWT | ACCOUNTANT, GENERAL_MANAGER |
 
-يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة.
+يدعم إنشاء السند رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس المحتوى يعيدان النتيجة دون إنشاء قيد أو سند مكرر، أما إعادة استخدام المفتاح بمحتوى مختلف فتُرفض بـ409. إنشاء الـVoucher والقيد وتحديث الخزينة والذمم يتم داخل transaction واحدة. تُحفظ `treasuryUpdates` و`customerUpdates` أو `supplierUpdates` داخل `JournalEntry.metadata` حتى يستطيع مسار العكس قلب الأرصدة التشغيلية بنفس الذرية.
 
 الفترات المالية لا تتداخل، ويُمنع الترحيل في فترة CLOSED أو بتاريخ خارج حدود الفترة. يقبل `POST /accounting/journal-entries` `description`, `reference`, `fiscalPeriodId`, `date` الاختياري، و`lines[]` الموجبة؛ يتحقق المحرك من الحسابات النشطة وتوازن المدين/الدائن ويأخذ `createdById` من JWT. إغلاق الفترة مشروط بحالتها الحالية ويسجل ActivityLog، ولا توجد كتابة دفع أو VAT آلية في هذا المسار.
 
@@ -230,6 +234,9 @@
   "customerId": "uuid", "paymentType": "CASH", "discount": 0,
   "items": [{ "productVariantId": "uuid", "quantity": 2 }]
 }
+// POST /sales/orders/:id/confirm — CASH: Body { "treasuryId": "uuid" }
+// POST /sales/orders/:id/payments
+// Body: { "amount": 40, "treasuryId": "uuid", "notes": "تحصيل جزئي" }
 // POST /accounting/vouchers  { "type": "PAYMENT", "amount": 500, "description": "صرف نثريات" }
 // POST /production/work-orders  { "productVariantId": "uuid", "bomVersionId": "uuid", "quantity": 100 }
 // PATCH /production/work-orders/:uuid/status  { "status": "SEWING" }

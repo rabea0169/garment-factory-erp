@@ -98,6 +98,14 @@ function isUniqueConstraintViolation(error: unknown): boolean {
   return (error as { code?: unknown }).code === 'P2002';
 }
 
+function isReplayableRaceError(error: unknown): boolean {
+  return (
+    isUniqueConstraintViolation(error) ||
+    error instanceof BadRequestException ||
+    error instanceof ConflictException
+  );
+}
+
 function assertNonNegativeQuantities(values: Record<string, number>): void {
   for (const [name, value] of Object.entries(values)) {
     if (!Number.isFinite(value) || value < 0) {
@@ -231,7 +239,7 @@ export class ProductionWorkflowService {
     } catch (error) {
       // Two identical requests can pass the pre-check concurrently. Once the
       // winner commits the unique idempotency key, return its committed result.
-      if (input.idempotencyKey && isUniqueConstraintViolation(error)) {
+      if (input.idempotencyKey && isReplayableRaceError(error)) {
         const replay = await this.findTransitionReplay(
           input.idempotencyKey,
           hash,
@@ -608,7 +616,7 @@ export class ProductionWorkflowService {
         return result;
       });
     } catch (error) {
-      if (input.idempotencyKey && isUniqueConstraintViolation(error)) {
+      if (input.idempotencyKey && isReplayableRaceError(error)) {
         const replay = await this.findStageOutputReplay(
           input.idempotencyKey,
           hash,

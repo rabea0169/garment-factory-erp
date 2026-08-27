@@ -1,4 +1,5 @@
 import {
+  AccountType,
   PaymentType,
   Prisma,
   SalesOrderStatus,
@@ -7,6 +8,10 @@ import {
   WarehouseType,
 } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
+import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { ShippingService } from '../src/modules/shipping/shipping.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 
@@ -26,13 +31,19 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    service = new ShippingService(prisma);
+    const financial = new FinancialPostingService(prisma);
+    const inventory = new InventoryService(
+      prisma,
+      new EventEmitter2(),
+      financial,
+    );
+    service = new ShippingService(prisma, inventory, financial);
   });
 
   beforeEach(async () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
-      TRUNCATE TABLE "activity_logs", "stock_ledger_entries", "finished_good_stocks", "shipments", "sales_order_items", "sales_orders", "product_variants", "products", "customers", "warehouses", "users" CASCADE
+      TRUNCATE TABLE "journal_lines", "journal_entries", "accounts", "activity_logs", "stock_ledger_entries", "finished_good_stocks", "shipments", "sales_order_items", "sales_orders", "product_variants", "products", "customers", "warehouses", "users" CASCADE
     `);
     const user = await prisma.user.create({
       data: {
@@ -43,6 +54,22 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
       },
     });
     userId = user.id;
+    await prisma.account.createMany({
+      data: [
+        {
+          id: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+          code: `5100-GF17-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0017 COGS',
+          type: AccountType.EXPENSE,
+        },
+        {
+          id: CHART_OF_ACCOUNTS.INVENTORY,
+          code: `1300-GF17-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0017 Inventory',
+          type: AccountType.ASSET,
+        },
+      ],
+    });
     const warehouse = await prisma.warehouse.create({
       data: {
         code: 'WH-FG',
@@ -145,15 +172,30 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
         where: { action: 'SHIPMENT_STATUS_CHANGED', userId },
       }),
     ).toBe(3);
-    const stock = await prisma.finishedGoodStock.findFirst({
-      where: { quantity: 5 },
+    const order = await prisma.salesOrder.findUnique({
+      where: { id: shipment?.salesOrderId },
     });
-    expect(stock).toBeTruthy();
+    expect(order?.status).toBe(SalesOrderStatus.SHIPPED);
+    const actualStock = await prisma.finishedGoodStock.findFirst({
+      where: { quantity: 3 },
+    });
+    expect(actualStock).toBeTruthy();
     expect(
       await prisma.stockLedgerEntry.count({
         where: { type: 'ISSUE', reference: shipmentCode },
       }),
-    ).toBe(0);
+    ).toBe(1);
+    const cogsJournal = await prisma.journalEntry.findUnique({
+      where: { postingKey: `shipment-cogs:${shipmentId}` },
+      include: { lines: true },
+    });
+    expect(cogsJournal?.lines).toEqual([
+      expect.objectContaining({
+        debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+        creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+        amount: new Prisma.Decimal('80.00'),
+      }),
+    ]);
   });
 
   it('rejects delivery without proof and does not mutate the shipment', async () => {

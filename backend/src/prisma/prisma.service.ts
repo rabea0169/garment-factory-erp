@@ -64,6 +64,10 @@ export class PrismaService
       process.env['DB_POOL_TIMEOUT_MS'] ?? '30000',
       10,
     );
+    const transactionTimeoutMs = parseInt(
+      process.env['DB_TX_TIMEOUT_MS'] ?? '10000',
+      10,
+    );
     const pool = new Pool({
       connectionString,
       max: Number.isFinite(max) && max > 0 ? max : 20,
@@ -77,7 +81,15 @@ export class PrismaService
           : 30000,
     });
     const adapter = new PrismaPg(pool);
-    super({ adapter });
+    super({
+      adapter,
+      transactionOptions: {
+        timeout:
+          Number.isFinite(transactionTimeoutMs) && transactionTimeoutMs > 0
+            ? transactionTimeoutMs
+            : 10000,
+      },
+    });
 
     // B6: عتبة الـ slow query من البيئة. معطّل في test.
     const slowThresholdMs = parseInt(
@@ -97,6 +109,7 @@ export class PrismaService
       `Connected (pool max=${process.env['DB_POOL_MAX'] ?? '20'}, ` +
         `idle=${process.env['DB_POOL_IDLE'] ?? '5000'}ms, ` +
         `timeout=${process.env['DB_POOL_TIMEOUT_MS'] ?? '30000'}ms, ` +
+        `tx_timeout=${process.env['DB_TX_TIMEOUT_MS'] ?? '10000'}ms, ` +
         `slow_query_threshold=${this._slowQueryThresholdMs || 'disabled'}ms)`,
     );
 
