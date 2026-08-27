@@ -28,6 +28,8 @@ class _ContactImportButtonState extends State<ContactImportButton> {
     try {
       final imported = await widget.service.pickContact();
       if (!mounted || imported == null) return;
+      final shouldApply = await _confirmImportedContact(imported);
+      if (!mounted || shouldApply != true) return;
       widget.onImported(imported);
     } on ContactImportException catch (error) {
       if (!mounted) return;
@@ -55,6 +57,44 @@ class _ContactImportButtonState extends State<ContactImportButton> {
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<bool?> _confirmImportedContact(ImportedContactData data) {
+    final preview = <String>[
+      if (data.name.isNotEmpty) 'الاسم: ${data.name}',
+      if (data.phone.isNotEmpty) 'الهاتف: ${data.phone}',
+      if (data.email.isNotEmpty) 'البريد: ${data.email}',
+      if (data.address != null) 'العنوان: ${data.address}',
+    ];
+
+    return showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('مراجعة بيانات جهة الاتصال'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('راجع البيانات قبل تعبئة النموذج:'),
+            const SizedBox(height: 12),
+            ...preview.map((item) => Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(item),
+                )),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('إلغاء'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('استخدام البيانات'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override

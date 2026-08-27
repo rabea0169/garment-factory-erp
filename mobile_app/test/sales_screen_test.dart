@@ -132,6 +132,9 @@ void main() {
     await _openCustomerDialog(tester);
 
     await tester.tap(find.text('استيراد من جهات الاتصال'));
+    await tester.pump();
+    expect(find.text('مراجعة بيانات جهة الاتصال'), findsOneWidget);
+    await tester.tap(find.text('استخدام البيانات'));
     await tester.pumpAndSettle();
 
     final fields = tester.widgetList<TextFormField>(find.byType(TextFormField));
