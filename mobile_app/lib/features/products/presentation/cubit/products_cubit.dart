@@ -1,5 +1,6 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_parsing.dart';
 import 'products_state.dart';
 
 class ProductsCubit extends Cubit<ProductsState> {
@@ -10,9 +11,16 @@ class ProductsCubit extends Cubit<ProductsState> {
     try {
       final dio = ApiClient.instance.dio;
       final response = await dio.get('/products');
-      emit(ProductsLoaded(ApiClient.extractPaginatedData(response.data)));
-    } catch (e) {
-      emit(ProductsError('حدث خطأ أثناء تحميل المنتجات: $e'));
+      emit(
+        ProductsLoaded(
+          ApiParsing.paginatedMaps(
+            response.data,
+            context: 'المنتجات',
+          ),
+        ),
+      );
+    } catch (error) {
+      emit(ProductsError(ApiClient.instance.messageFor(error)));
     }
   }
 
@@ -21,26 +29,18 @@ class ProductsCubit extends Cubit<ProductsState> {
     required List<Map<String, dynamic>> variants,
     required List<Map<String, dynamic>> bomItems,
   }) async {
+    emit(ProductsSaving());
     try {
-      final dio = ApiClient.instance.dio;
-      // 1. Create Product
-      final pRes = await dio.post('/products', data: productData);
-      final productId = pRes.data['id'];
-
-      // 2. Create Variants
-      for (var v in variants) {
-        await dio.post('/products/$productId/variants', data: v);
-      }
-
-      // 3. Add BOM Items
-      for (var b in bomItems) {
-        await dio.post('/products/$productId/bom', data: b);
-      }
-
-      // Refresh list
-      fetchProducts();
-    } catch (e) {
-      emit(ProductsError('فشل في إضافة المنتج وتفاصيله'));
+      final payload = <String, dynamic>{
+        ...productData,
+        'variants': variants,
+        'bomItems': bomItems,
+      };
+      await ApiClient.instance.dio.post('/products/full', data: payload);
+      await fetchProducts();
+    } catch (error) {
+      emit(ProductsError(ApiClient.instance.messageFor(error)));
+      rethrow;
     }
   }
 }

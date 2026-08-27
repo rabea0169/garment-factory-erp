@@ -66,7 +66,8 @@ class ApiClient {
         onRequest: (options, handler) async {
           // D1: لا نقرأ التوكن من SharedPreferences ولا من body؛ مصدره Keystore/Keychain.
           final token = await _authStorage.readAccessToken();
-          if (token != null && token.isNotEmpty &&
+          if (token != null &&
+              token.isNotEmpty &&
               options.headers['Authorization'] == null) {
             options.headers['Authorization'] = 'Bearer $token';
           }
@@ -101,12 +102,13 @@ class ApiClient {
           // D5: Retry على 5xx + connection/timeout errors — exponential backoff.
           // لا نعيد retry على 4xx (خطأ عميل) ولا على 401 (تمت معالجته أعلاه).
           final status = error.response?.statusCode;
-          final isRetryable = error.type == DioExceptionType.connectionTimeout ||
-              error.type == DioExceptionType.sendTimeout ||
-              error.type == DioExceptionType.receiveTimeout ||
-              error.type == DioExceptionType.connectionError ||
-              error.type == DioExceptionType.unknown ||
-              (status != null && status >= 500 && status < 600);
+          final isRetryable =
+              error.type == DioExceptionType.connectionTimeout ||
+                  error.type == DioExceptionType.sendTimeout ||
+                  error.type == DioExceptionType.receiveTimeout ||
+                  error.type == DioExceptionType.connectionError ||
+                  error.type == DioExceptionType.unknown ||
+                  (status != null && status >= 500 && status < 600);
           if (isRetryable && !isLoginRequest) {
             // قراءة عدد المحاولات السابق من extra — نبدأ من 0 لو غير مضبوط.
             final attempt =
@@ -134,6 +136,21 @@ class ApiClient {
   }
 
   Dio get dio => _dio;
+
+  Future<bool> checkReadiness() async {
+    try {
+      final response = await _dio.get<dynamic>(
+        '/health/ready',
+        options: Options(
+          connectTimeout: const Duration(seconds: 3),
+          receiveTimeout: const Duration(seconds: 3),
+        ),
+      );
+      return response.statusCode == 200;
+    } catch (_) {
+      return false;
+    }
+  }
 
   Future<void> clearSession() async {
     await _authStorage.deleteSession();

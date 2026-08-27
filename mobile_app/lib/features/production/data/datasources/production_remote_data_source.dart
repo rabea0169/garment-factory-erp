@@ -16,6 +16,21 @@ class ProductionRemoteDataSource {
     return response.data;
   }
 
+  Future<void> createWorkOrder({
+    required String productVariantId,
+    required String bomVersionId,
+    required int quantity,
+  }) async {
+    await dio.post<dynamic>(
+      '/production/work-orders',
+      data: {
+        'productVariantId': productVariantId,
+        'bomVersionId': bomVersionId,
+        'quantity': quantity,
+      },
+    );
+  }
+
   Future<dynamic> transitionStage({
     required String workOrderId,
     required String toStage,
@@ -40,6 +55,7 @@ class ProductionRemoteDataSource {
     required int acceptedQty,
     required int rejectedQty,
     required int wasteQty,
+    required String idempotencyKey,
     String? notes,
   }) async {
     final response = await dio.post<dynamic>(
@@ -52,6 +68,7 @@ class ProductionRemoteDataSource {
         'wasteQty': wasteQty,
         if (notes != null && notes.isNotEmpty) 'notes': notes,
       },
+      options: Options(headers: {'Idempotency-Key': idempotencyKey}),
     );
     return response.data;
   }

@@ -40,6 +40,23 @@ class ProductionRepositoryImpl implements ProductionRepository {
   }
 
   @override
+  Future<void> createWorkOrder(CreateWorkOrderCommand command) async {
+    try {
+      await remote.createWorkOrder(
+        productVariantId: command.productVariantId,
+        bomVersionId: command.bomVersionId,
+        quantity: command.quantity,
+      );
+    } on DioException catch (error) {
+      throw mapProductionFailure(error);
+    } on ProductionFailure {
+      rethrow;
+    } catch (_) {
+      throw const ProductionServerFailure();
+    }
+  }
+
+  @override
   Future<StageTransition> transitionStage({
     required String workOrderId,
     required ProductionStage toStage,
@@ -77,6 +94,7 @@ class ProductionRepositoryImpl implements ProductionRepository {
         acceptedQty: command.acceptedQty,
         rejectedQty: command.rejectedQty,
         wasteQty: command.wasteQty,
+        idempotencyKey: command.idempotencyKey,
         notes: command.notes,
       );
       return StageOutputResultModel.fromJson(_requiredMap(payload)).toEntity();
@@ -110,7 +128,8 @@ class ProductionRepositoryImpl implements ProductionRepository {
         reference: command.reference,
         notes: command.notes,
       );
-      return MaterialConsumptionModel.fromJson(_requiredMap(payload)).toEntity();
+      return MaterialConsumptionModel.fromJson(_requiredMap(payload))
+          .toEntity();
     } on DioException catch (error) {
       throw mapProductionFailure(error);
     } on FormatException catch (error) {
@@ -128,7 +147,8 @@ class ProductionRepositoryImpl implements ProductionRepository {
   }) async {
     try {
       final payload = await remote.finalizeCost(workOrderId: workOrderId);
-      return ProductionCostSnapshotModel.fromJson(_requiredMap(payload)).toEntity();
+      return ProductionCostSnapshotModel.fromJson(_requiredMap(payload))
+          .toEntity();
     } on DioException catch (error) {
       throw mapProductionFailure(error);
     } on FormatException catch (error) {
@@ -163,7 +183,9 @@ ProductionFailure mapProductionFailure(DioException error) {
 
 String? _serverMessage(DioException error) {
   final data = error.response?.data;
-  if (data is Map && data['message'] is String) return data['message'] as String;
+  if (data is Map && data['message'] is String) {
+    return data['message'] as String;
+  }
   return null;
 }
 

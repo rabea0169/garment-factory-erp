@@ -20,7 +20,8 @@
 
 | Method | Path | الوظيفة | الحماية | الأدوار |
 |---|---|---|---|---|
-| POST | `/auth/login` | تسجيل دخول | 🌐 **عام** | — |
+| POST | `/auth/login` | تسجيل دخول وإرجاع token وuser | 🌐 **عام** | — |
+| GET | `/auth/me` | إرجاع profile المستخدم الحالي والتحقق من الجلسة | 🔒 JWT | — |
 
 ## المنتجات — `/products`
 
@@ -30,6 +31,7 @@
 | GET | `/products/:id` | منتج واحد | 🔒 JWT | أي مستخدم موثّق |
 | GET | `/products/seasons` | المواسم | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/products` | إنشاء منتج | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER |
+| POST | `/products/full` | إنشاء منتج مع المتغيرات وBOM داخل transaction واحدة | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER |
 | POST | `/products/:id/variants` | إضافة مقاس/لون | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER؛ `:id` UUID |
 | POST | `/products/:id/bom` | إضافة/تحديث مادة في BOM | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER؛ `:id` UUID |
 | POST | `/products/bom/:bomId/delete` | حذف مادة من BOM | 🔒 JWT | GENERAL_MANAGER, PRODUCTION_MANAGER؛ `:bomId` UUID |

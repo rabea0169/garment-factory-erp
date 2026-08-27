@@ -1,7 +1,9 @@
-import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:dio/dio.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_parsing.dart';
 
 abstract class AccountingState {}
 
@@ -23,7 +25,11 @@ class AccountingError extends AccountingState {
 }
 
 class AccountingCubit extends Cubit<AccountingState> {
-  AccountingCubit() : super(AccountingInitial());
+  AccountingCubit({Uuid? uuid})
+      : _uuid = uuid ?? const Uuid(),
+        super(AccountingInitial());
+
+  final Uuid _uuid;
 
   Future<void> fetchData() async {
     emit(AccountingLoading());
@@ -36,13 +42,22 @@ class AccountingCubit extends Cubit<AccountingState> {
       ]);
       emit(
         AccountingLoaded(
-          ApiClient.extractPaginatedData(responses[0].data),
-          ApiClient.extractPaginatedData(responses[1].data),
-          ApiClient.extractPaginatedData(responses[2].data),
+          ApiParsing.paginatedMaps(
+            responses[0].data,
+            context: 'السندات',
+          ),
+          ApiParsing.paginatedMaps(
+            responses[1].data,
+            context: 'الحسابات',
+          ),
+          ApiParsing.paginatedMaps(
+            responses[2].data,
+            context: 'الخزائن',
+          ),
         ),
       );
-    } catch (e) {
-      emit(AccountingError('حدث خطأ أثناء تحميل الحسابات: $e'));
+    } catch (error) {
+      emit(AccountingError(ApiClient.instance.messageFor(error)));
     }
   }
 
@@ -69,9 +84,7 @@ class AccountingCubit extends Cubit<AccountingState> {
           if (counterpartyId != null && counterpartyId.isNotEmpty)
             'counterpartyId': counterpartyId,
         },
-        options: Options(headers: {
-          'Idempotency-Key': DateTime.now().microsecondsSinceEpoch.toString()
-        }),
+        options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
       );
       await fetchData();
     } catch (_) {

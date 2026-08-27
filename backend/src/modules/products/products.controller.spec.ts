@@ -12,6 +12,7 @@ describe('ProductsController — التفويض والتحقق من المسار
     getAllProducts: jest.Mock;
     getProductDetails: jest.Mock;
     createProduct: jest.Mock;
+    createFullProduct: jest.Mock;
     createVariant: jest.Mock;
     addBomItem: jest.Mock;
     deleteBomItem: jest.Mock;
@@ -25,6 +26,7 @@ describe('ProductsController — التفويض والتحقق من المسار
       getAllProducts: jest.fn().mockResolvedValue([]),
       getProductDetails: jest.fn().mockResolvedValue({ id: 'p-1' }),
       createProduct: jest.fn().mockResolvedValue({ id: 'p-2' }),
+      createFullProduct: jest.fn().mockResolvedValue({ id: 'p-full' }),
       createVariant: jest.fn().mockResolvedValue({ id: 'v-1' }),
       addBomItem: jest.fn().mockResolvedValue({ id: 'bom-1' }),
       deleteBomItem: jest.fn().mockResolvedValue({ id: 'bom-1' }),
@@ -43,6 +45,26 @@ describe('ProductsController — التفويض والتحقق من المسار
     );
   });
 
+  it('يفوّض إنشاء المنتج الكامل إلى الخدمة بنفس body', async () => {
+    const body = {
+      code: 'PRD-FULL',
+      name: 'تيشيرت',
+      category: 'قمصان',
+      retailPrice: 300,
+      wholesalePrice: 220,
+      variants: [{ size: 'L', color: 'أسود' }],
+      bomItems: [
+        {
+          rawMaterialId: '223e4567-e89b-12d3-a456-426614174000',
+          quantity: 1.2,
+          unit: 'METER',
+        },
+      ],
+    };
+    await controller.createFullProduct(body);
+    expect(service.createFullProduct).toHaveBeenCalledWith(body);
+  });
+
   it('ينشئ منتجًا عبر الخدمة ببيانات الطلب كما هي', async () => {
     const body = {
       code: 'PRD-T02',
@@ -57,6 +79,7 @@ describe('ProductsController — التفويض والتحقق من المسار
 
   it.each([
     ['createProduct', 'إنشاء المنتج'],
+    ['createFullProduct', 'إنشاء المنتج الكامل'],
     ['createVariant', 'إضافة المتغير'],
     ['addBomItem', 'إضافة مادة BOM'],
     ['deleteBomItem', 'حذف مادة BOM'],

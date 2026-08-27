@@ -14,6 +14,13 @@ class _FakeShippingCubit extends ShippingCubit {
   int updateCalls = 0;
 
   @override
+  Future<List<Map<String, dynamic>>> fetchConfirmedSalesOrders() async {
+    return [
+      {'id': 'order-1', 'code': 'SO-1', 'status': 'CONFIRMED'},
+    ];
+  }
+
+  @override
   Future<void> createShipment({
     required String salesOrderId,
     String? shippingCompanyId,
@@ -45,10 +52,13 @@ Future<void> _pump(
 }
 
 void main() {
-  testWidgets('validates the sales order id before creating a shipment', (
+  testWidgets(
+      'requires selecting a confirmed sales order before creating a shipment', (
     tester,
   ) async {
-    final cubit = _FakeShippingCubit(const []);
+    final cubit = _FakeShippingCubit(const [
+      {'id': 'order-1', 'code': 'SO-1', 'status': 'CONFIRMED'},
+    ]);
     await _pump(tester, cubit);
 
     await tester.tap(find.text('شحنة جديدة'));
@@ -56,7 +66,7 @@ void main() {
     await tester.tap(find.text('حفظ'));
     await tester.pump();
 
-    expect(find.text('معرف أمر البيع مطلوب'), findsOneWidget);
+    expect(find.text('اختر أمر البيع'), findsOneWidget);
     expect(cubit.createCalls, 0);
   });
 

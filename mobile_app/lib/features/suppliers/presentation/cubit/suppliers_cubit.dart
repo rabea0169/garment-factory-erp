@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_parsing.dart';
 
 abstract class SuppliersState {}
 
@@ -11,7 +12,7 @@ class SuppliersLoading extends SuppliersState {}
 class SuppliersLoaded extends SuppliersState {
   SuppliersLoaded(this.suppliers);
 
-  final List<dynamic> suppliers;
+  final List<Map<String, dynamic>> suppliers;
 }
 
 class SuppliersError extends SuppliersState {
@@ -27,9 +28,16 @@ class SuppliersCubit extends Cubit<SuppliersState> {
     emit(SuppliersLoading());
     try {
       final response = await ApiClient.instance.dio.get('/suppliers');
-      emit(SuppliersLoaded(ApiClient.extractPaginatedData(response.data)));
+      emit(
+        SuppliersLoaded(
+          ApiParsing.paginatedMaps(
+            response.data,
+            context: 'الموردين',
+          ),
+        ),
+      );
     } catch (error) {
-      emit(SuppliersError('حدث خطأ أثناء تحميل الموردين: $error'));
+      emit(SuppliersError(ApiClient.instance.messageFor(error)));
     }
   }
 

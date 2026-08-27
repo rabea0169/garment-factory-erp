@@ -96,6 +96,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
   }
 
   Widget _buildDrawer(BuildContext context) {
+    final authState = context.watch<AuthCubit>().state;
+    final user = authState is AuthAuthenticated
+        ? authState.user
+        : const <String, dynamic>{};
+    final role = user['role']?.toString() ?? '';
+    final displayName = _displayValue(user['name'], 'المستخدم');
+    final email = _displayValue(user['email'], 'البريد غير متاح');
     final menuItems = [
       _MenuItem('لوحة التحكم', Icons.dashboard_rounded, AppRouter.dashboard),
       _MenuItem('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
@@ -103,13 +110,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           AppRouter.production),
       _MenuItem('الجودة', Icons.verified_rounded, AppRouter.quality),
       _MenuItem('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
-      _MenuItem('المبيعات والعملاء', Icons.receipt_long_rounded, AppRouter.sales),
+      _MenuItem(
+          'المبيعات والعملاء', Icons.receipt_long_rounded, AppRouter.sales),
       _MenuItem('المشتريات والاستلام', Icons.add_business_rounded,
           AppRouter.purchasing),
       _MenuItem('الموردون', Icons.business_center_rounded, AppRouter.suppliers),
       _MenuItem(
           'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
-      _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
+      if (_canViewAccounting(role))
+        _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
       _MenuItem(
           'التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
     ];
@@ -132,10 +141,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     crossAxisAlignment: CrossAxisAlignment.start,
-                    children: const [
+                    children: [
                       Text(
-                        'مدير المصنع',
-                        style: TextStyle(
+                        displayName,
+                        style: const TextStyle(
                           color: Colors.white,
                           fontFamily: 'Cairo',
                           fontWeight: FontWeight.w700,
@@ -143,15 +152,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                         ),
                       ),
                       Text(
-                        'admin@factory.com',
-                        style: TextStyle(
+                        email,
+                        style: const TextStyle(
                           color: Colors.white70,
                           fontFamily: 'Cairo',
                           fontSize: 12,
                         ),
                       ),
-                      SizedBox(height: 6),
-                      _RoleBadge(),
+                      const SizedBox(height: 6),
+                      _RoleBadge(label: _roleLabel(role)),
                     ],
                   ),
                 ),
@@ -200,6 +209,39 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ),
     );
   }
+
+  static String _displayValue(dynamic value, String fallback) {
+    final text = value?.toString().trim() ?? '';
+    return text.isEmpty ? fallback : text;
+  }
+
+  static bool _canViewAccounting(String role) =>
+      role == 'ACCOUNTANT' || role == 'GENERAL_MANAGER' || role == 'ADMIN';
+
+  static String _roleLabel(String role) {
+    switch (role) {
+      case 'GENERAL_MANAGER':
+        return 'مدير عام';
+      case 'ACCOUNTANT':
+        return 'محاسب';
+      case 'HR_MANAGER':
+        return 'مدير الموارد البشرية';
+      case 'INVENTORY_MANAGER':
+        return 'مدير المخزون';
+      case 'PRODUCTION_MANAGER':
+        return 'مدير الإنتاج';
+      case 'SALES_MANAGER':
+        return 'مدير المبيعات';
+      case 'QUALITY_MANAGER':
+        return 'مدير الجودة';
+      case 'ADMIN':
+        return 'مدير النظام';
+      case 'VIEWER':
+        return 'مشاهد';
+      default:
+        return role.isEmpty ? 'مستخدم' : role;
+    }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -235,6 +277,14 @@ class _DashboardContent extends StatelessWidget {
   }
 
   Widget _buildGreetingHeader(BuildContext context) {
+    final authState = context.watch<AuthCubit>().state;
+    final user = authState is AuthAuthenticated
+        ? authState.user
+        : const <String, dynamic>{};
+    final displayName = _DashboardScreenState._displayValue(
+      user['name'],
+      'المستخدم',
+    );
     // التاريخ يُحسب من DateTime.now() بصيغة عربية عبر intl.
     final now = DateTime.now();
     final dateText = DateFormat.yMMMd('ar').format(now);
@@ -245,7 +295,7 @@ class _DashboardContent extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'مرحباً، مدير المصنع 👋',
+                'مرحباً، $displayName 👋',
                 style: Theme.of(context).textTheme.titleLarge,
               ),
               Text(
@@ -266,7 +316,7 @@ class _DashboardContent extends StatelessWidget {
             children: [
               Icon(Icons.circle, size: 8, color: AppColors.success),
               SizedBox(width: 6),
-              Text('متصل',
+              Text('الخادم استجاب',
                   style: TextStyle(
                       color: AppColors.success,
                       fontFamily: 'Cairo',
@@ -558,7 +608,9 @@ class _DashboardContent extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _RoleBadge extends StatelessWidget {
-  const _RoleBadge();
+  const _RoleBadge({required this.label});
+
+  final String label;
 
   @override
   Widget build(BuildContext context) {
@@ -568,10 +620,10 @@ class _RoleBadge extends StatelessWidget {
         color: Colors.white.withValues(alpha: 0.2),
         borderRadius: BorderRadius.circular(10),
       ),
-      child: const Text(
-        'مدير عام',
-        style:
-            TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 10),
+      child: Text(
+        label,
+        style: const TextStyle(
+            color: Colors.white, fontFamily: 'Cairo', fontSize: 10),
       ),
     );
   }

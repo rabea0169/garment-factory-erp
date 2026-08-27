@@ -3,7 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:garment_factory_erp/features/production/domain/entities/production_commands.dart';
 import 'package:garment_factory_erp/features/production/domain/entities/stage_transition.dart';
 import 'package:garment_factory_erp/features/production/domain/entities/work_order.dart';
-import 'package:garment_factory_erp/features/production/domain/failures/production_failure.dart' as failures;
+import 'package:garment_factory_erp/features/production/domain/failures/production_failure.dart'
+    as failures;
 import 'package:garment_factory_erp/features/production/domain/repositories/production_repository.dart';
 import 'package:garment_factory_erp/features/production/domain/usecases/production_usecases.dart';
 import 'package:garment_factory_erp/features/production/presentation/cubit/production_cubit.dart';
@@ -85,6 +86,11 @@ class FakeProductionRepository implements ProductionRepository {
   }) async {
     if (failure != null) throw failure!;
     return workOrders;
+  }
+
+  @override
+  Future<void> createWorkOrder(CreateWorkOrderCommand command) async {
+    if (failure != null) throw failure!;
   }
 
   @override

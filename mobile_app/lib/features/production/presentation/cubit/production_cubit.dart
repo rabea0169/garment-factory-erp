@@ -14,12 +14,14 @@ class ProductionCubit extends Cubit<ProductionState> {
     required RecordProductionStageOutput recordStageOutput,
     required ConsumeProductionMaterial consumeMaterial,
     required FinalizeProductionCost finalizeCost,
+    CreateWorkOrder? createWorkOrder,
     Uuid? uuid,
   })  : _getWorkOrders = getWorkOrders,
         _transitionStage = transitionStage,
         _recordStageOutput = recordStageOutput,
         _consumeMaterial = consumeMaterial,
         _finalizeCost = finalizeCost,
+        _createWorkOrder = createWorkOrder,
         _uuid = uuid ?? const Uuid(),
         super(const ProductionInitial());
 
@@ -28,6 +30,7 @@ class ProductionCubit extends Cubit<ProductionState> {
   final RecordProductionStageOutput _recordStageOutput;
   final ConsumeProductionMaterial _consumeMaterial;
   final FinalizeProductionCost _finalizeCost;
+  final CreateWorkOrder? _createWorkOrder;
   final Uuid _uuid;
   int _page = 1;
   int _limit = 20;
@@ -35,7 +38,8 @@ class ProductionCubit extends Cubit<ProductionState> {
   Future<void> fetchWorkOrders({bool refresh = false}) async {
     if (refresh && state is ProductionLoaded) {
       final current = state as ProductionLoaded;
-      emit(ProductionLoaded(workOrders: current.workOrders, isRefreshing: true));
+      emit(
+          ProductionLoaded(workOrders: current.workOrders, isRefreshing: true));
     } else {
       emit(const ProductionLoading());
     }
@@ -56,6 +60,25 @@ class ProductionCubit extends Cubit<ProductionState> {
     } catch (_) {
       emit(const ProductionFailure(failures.ProductionServerFailure()));
     }
+  }
+
+  Future<bool> createWorkOrder(CreateWorkOrderCommand command) async {
+    final createWorkOrder = _createWorkOrder;
+    if (createWorkOrder == null) return false;
+    try {
+      await createWorkOrder(command);
+      await fetchWorkOrders(refresh: true);
+      return true;
+    } on failures.ProductionUnauthorizedFailure {
+      emit(const ProductionUnauthorized());
+    } on failures.ProductionNetworkFailure {
+      emit(const ProductionOffline());
+    } on failures.ProductionFailure catch (failure) {
+      emit(ProductionFailure(failure));
+    } catch (_) {
+      emit(const ProductionFailure(failures.ProductionServerFailure()));
+    }
+    return false;
   }
 
   Future<void> transitionStage({
@@ -84,7 +107,9 @@ class ProductionCubit extends Cubit<ProductionState> {
     RecordStageOutputCommand command,
   ) async {
     try {
-      return await _recordStageOutput(command);
+      final result = await _recordStageOutput(command);
+      await fetchWorkOrders(refresh: true);
+      return result;
     } on failures.ProductionUnauthorizedFailure {
       emit(const ProductionUnauthorized());
     } on failures.ProductionNetworkFailure {

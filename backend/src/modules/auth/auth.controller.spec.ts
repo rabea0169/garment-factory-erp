@@ -26,6 +26,16 @@ describe('AuthController — الوصول العام والتفويض (GF-0003)'
     expect(result.access_token).toBe('t');
   });
 
+  it('يعيد profile المستخدم الحالي من سياق JWT', () => {
+    const user = {
+      id: 'u-1',
+      email: 'viewer@factory.com',
+      role: 'VIEWER',
+    };
+
+    expect(controller.me(user)).toEqual(user);
+  });
+
   it('مسار login معلّم @Public — يجب أن يبقى عامًا وإلا انكسرت المصادقة كلها', () => {
     const isPublic = getMethodMetadata<boolean>(
       IS_PUBLIC_KEY,

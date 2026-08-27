@@ -1,5 +1,8 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_parsing.dart';
 
 abstract class SalesState {}
 
@@ -8,7 +11,7 @@ class SalesInitial extends SalesState {}
 class SalesLoading extends SalesState {}
 
 class SalesLoaded extends SalesState {
-  final List<dynamic> orders;
+  final List<Map<String, dynamic>> orders;
   SalesLoaded(this.orders);
 }
 
@@ -25,20 +28,65 @@ class SalesCubit extends Cubit<SalesState> {
     try {
       final dio = ApiClient.instance.dio;
       final response = await dio.get('/sales/orders');
-      emit(SalesLoaded(ApiClient.extractPaginatedData(response.data)));
-    } catch (e) {
-      emit(SalesError('حدث خطأ أثناء تحميل المبيعات: $e'));
+      emit(
+        SalesLoaded(
+          ApiParsing.paginatedMaps(
+            response.data,
+            context: 'المبيعات',
+          ),
+        ),
+      );
+    } catch (error) {
+      emit(SalesError(ApiClient.instance.messageFor(error)));
     }
   }
 
-  Future<List<dynamic>> fetchCustomers() async {
+  Future<List<Map<String, dynamic>>> fetchCustomers() async {
     final response = await ApiClient.instance.dio.get('/sales/customers');
-    return ApiClient.extractPaginatedData(response.data);
+    return ApiParsing.paginatedMaps(
+      response.data,
+      context: 'العملاء',
+    );
   }
 
-  Future<List<dynamic>> fetchProducts() async {
+  Future<List<Map<String, dynamic>>> fetchProducts() async {
     final response = await ApiClient.instance.dio.get('/products');
-    return ApiClient.extractPaginatedData(response.data);
+    return ApiParsing.paginatedMaps(
+      response.data,
+      context: 'المنتجات',
+    );
+  }
+
+  Future<void> confirmOrder(String orderId) async {
+    await ApiClient.instance.dio.post(
+      '/sales/orders/$orderId/confirm',
+      options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+    );
+    await fetchOrders();
+  }
+
+  Future<void> cancelOrder(String orderId) async {
+    await ApiClient.instance.dio.post(
+      '/sales/orders/$orderId/cancel',
+      options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+    );
+    await fetchOrders();
+  }
+
+  Future<void> createSalesReturn({
+    required String orderId,
+    required List<Map<String, dynamic>> items,
+    String? reason,
+  }) async {
+    await ApiClient.instance.dio.post(
+      '/sales/orders/$orderId/return',
+      data: {
+        'items': items,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+      },
+      options: Options(headers: {'Idempotency-Key': const Uuid().v4()}),
+    );
+    await fetchOrders();
   }
 
   Future<void> createCustomerPayment({

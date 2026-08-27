@@ -1,6 +1,9 @@
+import 'package:dio/dio.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../../core/network/api_client.dart';
+import '../../../../core/network/api_parsing.dart';
 
 abstract class PurchasingState {}
 
@@ -27,7 +30,11 @@ class PurchasingError extends PurchasingState {
 }
 
 class PurchasingCubit extends Cubit<PurchasingState> {
-  PurchasingCubit() : super(PurchasingInitial());
+  PurchasingCubit({Uuid? uuid})
+      : _uuid = uuid ?? const Uuid(),
+        super(PurchasingInitial());
+
+  final Uuid _uuid;
 
   Future<void> fetchData() async {
     emit(PurchasingLoading());
@@ -39,13 +46,22 @@ class PurchasingCubit extends Cubit<PurchasingState> {
       ]);
       emit(
         PurchasingLoaded(
-          orders: ApiClient.extractPaginatedData(responses[0].data),
-          suppliers: ApiClient.extractPaginatedData(responses[1].data),
-          rawMaterials: ApiClient.extractPaginatedData(responses[2].data),
+          orders: ApiParsing.paginatedMaps(
+            responses[0].data,
+            context: 'أوامر الشراء',
+          ),
+          suppliers: ApiParsing.paginatedMaps(
+            responses[1].data,
+            context: 'الموردين',
+          ),
+          rawMaterials: ApiParsing.paginatedMaps(
+            responses[2].data,
+            context: 'المواد الخام',
+          ),
         ),
       );
-    } catch (_) {
-      emit(PurchasingError('تعذر تحميل أوامر الشراء والموردين والخامات'));
+    } catch (error) {
+      emit(PurchasingError(ApiClient.instance.messageFor(error)));
     }
   }
 
@@ -56,13 +72,35 @@ class PurchasingCubit extends Cubit<PurchasingState> {
     String? notes,
     required List<Map<String, dynamic>> items,
   }) async {
-    await ApiClient.instance.dio.post('/purchasing', data: {
-      'supplierId': supplierId,
-      'paymentType': paymentType,
-      if (dueDate != null) 'dueDate': dueDate.toUtc().toIso8601String(),
-      if (notes != null && notes.isNotEmpty) 'notes': notes,
-      'items': items,
-    });
+    await ApiClient.instance.dio.post(
+      '/purchasing',
+      data: {
+        'supplierId': supplierId,
+        'paymentType': paymentType,
+        if (dueDate != null) 'dueDate': dueDate.toUtc().toIso8601String(),
+        if (notes != null && notes.isNotEmpty) 'notes': notes,
+        'items': items,
+      },
+      options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+    );
+    await fetchData();
+  }
+
+  Future<void> returnToSupplier({
+    required String purchaseOrderId,
+    required String purchaseOrderItemId,
+    required double quantity,
+    String? notes,
+  }) async {
+    await ApiClient.instance.dio.post(
+      '/purchasing/$purchaseOrderId/return',
+      data: {
+        'purchaseOrderItemId': purchaseOrderItemId,
+        'quantity': quantity,
+        if (notes != null && notes.trim().isNotEmpty) 'notes': notes.trim(),
+      },
+      options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+    );
     await fetchData();
   }
 
@@ -77,6 +115,7 @@ class PurchasingCubit extends Cubit<PurchasingState> {
         'items': items,
         if (notes != null && notes.isNotEmpty) 'notes': notes,
       },
+      options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
     );
     await fetchData();
   }

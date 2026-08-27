@@ -1,5 +1,17 @@
 import 'work_order.dart';
 
+class CreateWorkOrderCommand {
+  const CreateWorkOrderCommand({
+    required this.productVariantId,
+    required this.bomVersionId,
+    required this.quantity,
+  });
+
+  final String productVariantId;
+  final String bomVersionId;
+  final int quantity;
+}
+
 class RecordStageOutputCommand {
   const RecordStageOutputCommand({
     required this.workOrderId,
@@ -8,6 +20,7 @@ class RecordStageOutputCommand {
     required this.acceptedQty,
     required this.rejectedQty,
     required this.wasteQty,
+    required this.idempotencyKey,
     this.notes,
   });
 
@@ -17,6 +30,7 @@ class RecordStageOutputCommand {
   final int acceptedQty;
   final int rejectedQty;
   final int wasteQty;
+  final String idempotencyKey;
   final String? notes;
 }
 
