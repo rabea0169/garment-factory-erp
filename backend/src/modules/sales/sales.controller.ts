@@ -15,6 +15,7 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
 import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
+import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
@@ -68,6 +69,22 @@ export class SalesController {
     return await this.salesService.createSalesOrder(
       body,
       userId,
+      idempotencyKey,
+    );
+  }
+
+  @Post('orders/:id/return')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تسجيل مرتجع لأمر بيع مؤكد أو مشحون' })
+  async createSalesReturn(
+    @Param('id') id: string,
+    @Body() body: CreateSalesReturnDto,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return this.salesService.createSalesReturn(
+      id,
+      { ...body, actorId },
       idempotencyKey,
     );
   }

@@ -36,12 +36,19 @@ const IDEMPOTENCY_SCOPE_SALES_ORDER_CREATE = 'sales-order-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM = 'sales-order-confirm';
 const IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE = 'customer-payment-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL = 'sales-order-cancel';
+const IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE = 'sales-return-create';
 
 type CustomerPaymentInput = {
   customerId: string;
   salesOrderId?: string;
   amount: number;
   notes?: string;
+  actorId: string;
+};
+
+type SalesReturnInput = {
+  items: { salesOrderItemId: string; quantity: number }[];
+  reason?: string;
   actorId: string;
 };
 
@@ -222,6 +229,260 @@ export class SalesService {
           this.prisma,
           idempotencyKey,
           IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
+  }
+
+  async createSalesReturn(
+    orderId: string,
+    input: SalesReturnInput,
+    idempotencyKey?: string,
+  ) {
+    if (
+      !input.items.length ||
+      input.items.some(
+        (item) => !Number.isInteger(item.quantity) || item.quantity <= 0,
+      )
+    ) {
+      throw new BadRequestException('كل بند مرتجع يجب أن يحتوي على كمية موجبة');
+    }
+    if (
+      new Set(input.items.map((item) => item.salesOrderItemId)).size !==
+      input.items.length
+    ) {
+      throw new BadRequestException('لا يجوز تكرار بند أمر البيع في المرتجع');
+    }
+
+    const requestHash = computeRequestHash({
+      operation: IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE,
+      orderId,
+      items: input.items,
+      reason: input.reason ?? null,
+      actorId: input.actorId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        const idempotencyKeyId = await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE,
+          requestHash,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM sales_orders WHERE id = ${orderId} FOR UPDATE`,
+        );
+        const order = await tx.salesOrder.findUnique({
+          where: { id: orderId },
+          include: { items: true, customer: true },
+        });
+        if (!order) throw new NotFoundException('أمر البيع غير موجود');
+        if (
+          order.status !== SalesOrderStatus.CONFIRMED &&
+          order.status !== SalesOrderStatus.SHIPPED
+        ) {
+          throw new BadRequestException(
+            'لا يمكن إرجاع إلا أمر بيع مؤكد أو مشحون',
+          );
+        }
+
+        const previousReturns = await tx.salesReturnItem.findMany({
+          where: { salesOrderItem: { salesOrderId: orderId } },
+          select: { salesOrderItemId: true, quantity: true },
+        });
+        const returnedByItem = new Map<string, number>();
+        for (const returned of previousReturns) {
+          returnedByItem.set(
+            returned.salesOrderItemId,
+            (returnedByItem.get(returned.salesOrderItemId) ?? 0) +
+              returned.quantity,
+          );
+        }
+
+        const fgWarehouse = await tx.warehouse.findFirst({
+          where: {
+            code: 'WH-FG',
+            type: WarehouseType.FINISHED_GOODS,
+            isActive: true,
+          },
+        });
+        if (!fgWarehouse) {
+          throw new BadRequestException(
+            'مخزن المنتج التام الافتراضي غير موجود',
+          );
+        }
+
+        let merchandiseAmount = 0;
+        let cogsAmount = 0;
+        const returnItems: {
+          salesOrderItemId: string;
+          quantity: number;
+          unitPrice: number;
+          totalPrice: number;
+        }[] = [];
+        for (const requested of input.items) {
+          const orderItem = order.items.find(
+            (item) => item.id === requested.salesOrderItemId,
+          );
+          if (!orderItem) {
+            throw new NotFoundException('بند أمر البيع غير موجود');
+          }
+          const alreadyReturned = returnedByItem.get(orderItem.id) ?? 0;
+          if (requested.quantity > orderItem.quantity - alreadyReturned) {
+            throw new BadRequestException(
+              `الكمية المرتجعة تتجاوز المتاح للبند ${orderItem.id}`,
+            );
+          }
+          const stock = await tx.finishedGoodStock.findUnique({
+            where: {
+              warehouseId_productVariantId: {
+                warehouseId: fgWarehouse.id,
+                productVariantId: orderItem.productVariantId,
+              },
+            },
+            select: { unitCost: true },
+          });
+          const unitCost = Number(stock?.unitCost ?? 0);
+          await this.inventoryService.receiveFinishedGood(
+            {
+              productVariantId: orderItem.productVariantId,
+              warehouseId: fgWarehouse.id,
+              quantity: requested.quantity,
+              unitCost,
+              reference: `RETURN-${order.code}`,
+              notes: `مرتجع مبيعات ${order.code}`,
+            },
+            input.actorId,
+            tx,
+          );
+          const totalPrice = round2(
+            Number(orderItem.unitPrice) * requested.quantity,
+          );
+          merchandiseAmount += totalPrice;
+          cogsAmount += round2(unitCost * requested.quantity);
+          returnItems.push({
+            salesOrderItemId: orderItem.id,
+            quantity: requested.quantity,
+            unitPrice: Number(orderItem.unitPrice),
+            totalPrice,
+          });
+        }
+
+        const vatAmount = round2(
+          merchandiseAmount * Number(order.vatRate ?? 0),
+        );
+        const refundAmount = round2(merchandiseAmount + vatAmount);
+        const cashRefund = Math.min(Number(order.paidAmount), refundAmount);
+        const receivableReduction = round2(refundAmount - cashRefund);
+        const returnData = {
+          code: generateDocumentCode(DocumentCodePrefix.SALES_RETURN),
+          salesOrderId: order.id,
+          customerId: order.customerId,
+          userId: input.actorId,
+          totalAmount: refundAmount,
+          reason: input.reason?.trim() || undefined,
+          idempotencyKeyId,
+          items: { create: returnItems },
+        };
+        const created = await tx.salesReturn.create({
+          data: returnData,
+          include: { items: true },
+        });
+
+        if (cashRefund > 0) {
+          const paymentUpdate = await tx.salesOrder.updateMany({
+            where: { id: order.id, paidAmount: order.paidAmount },
+            data: { paidAmount: { decrement: cashRefund } },
+          });
+          if (paymentUpdate.count !== 1) {
+            throw new ConflictException('تم تحديث دفعة الأمر بالتزامن');
+          }
+        }
+
+        const lines = [
+          ...(merchandiseAmount > 0
+            ? [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.SALES_REVENUE,
+                  creditAccountId:
+                    receivableReduction > 0
+                      ? CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE
+                      : CHART_OF_ACCOUNTS.CASH,
+                  amount: merchandiseAmount,
+                  description: `عكس إيراد المرتجع ${order.code}`,
+                },
+              ]
+            : []),
+          ...(vatAmount > 0
+            ? [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.VAT_PAYABLE,
+                  creditAccountId:
+                    receivableReduction > 0
+                      ? CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE
+                      : CHART_OF_ACCOUNTS.CASH,
+                  amount: vatAmount,
+                  description: `عكس ضريبة المرتجع ${order.code}`,
+                },
+              ]
+            : []),
+          ...(cogsAmount > 0
+            ? [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  creditAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+                  amount: cogsAmount,
+                  description: `عكس تكلفة المرتجع ${order.code}`,
+                },
+              ]
+            : []),
+        ];
+        await this.financial.postJournalEntryInTx(
+          tx,
+          {
+            description: `ترحيل مرتجع ${order.code}`,
+            reference: created.code,
+            postingKey: `sales-return:${created.id}`,
+            isAuto: true,
+            lines,
+            userId: input.actorId,
+            customerUpdates:
+              receivableReduction > 0
+                ? [
+                    {
+                      customerId: order.customerId,
+                      delta: -receivableReduction,
+                    },
+                  ]
+                : undefined,
+            metadata: {
+              source: 'sales.return',
+              salesReturnId: created.id,
+              salesOrderId: order.id,
+            },
+          },
+          input.actorId,
+        );
+        await storeIdempotencyResponse(tx, idempotencyKey, created);
+        return created;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE,
           requestHash,
         );
         if (replayed) return replayed;

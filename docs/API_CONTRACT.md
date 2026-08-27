@@ -136,11 +136,14 @@
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | POST | `/sales/orders/:id/cancel` | إلغاء أمر بيع مسودة قبل التأكيد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/return` | مرتجع جزئي أو كامل لأمر بيع مؤكد/مشحون | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | POST | `/sales/customer-payments` | تحصيل دفعة من العميل | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
 يستقبل `POST /sales/customers` body بالحقول `name` الإلزامي، و`phone` و`email` و`address` الاختيارية، وجميعها نصوص؛ لا تُقبل الحقول غير المعروفة. يحفظ الخادم `email` كما يصل من Contact Picker أو الإدخال اليدوي. في Sprint 1 يقتصر تدفق الهاتف على إنشاء العميل الفعلي؛ استيراد جهات الاتصال للموردين والموظفين مؤجل حتى توفير APIs حقيقية لإنشائهم.
 
 يدعم `POST /sales/orders` و`POST /sales/orders/:id/cancel` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان النتيجة نفسها، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. الإلغاء متاح للمسودة فقط قبل التأكيد؛ أما الأمر المؤكد فلا يُلغى بهذا المسار حفاظًا على المخزون والـLedger.
+
+يستقبل `POST /sales/orders/:id/return` قائمة `items` تحتوي `salesOrderItemId` و`quantity`، مع `reason` اختياري. يتحقق الخادم من حالة الأمر ومن الكمية التي لم تُرجع سابقًا، ويعيد الكمية إلى مخزن المنتج التام عبر `InventoryService`، وينشئ `SalesReturn` و`SalesReturnItem`، ويعكس إيراد/VAT/COGS ويرد المدفوع نقدًا أو يخفض الذمم بحسب ما تم تحصيله، داخل transaction واحدة. يدعم `Idempotency-Key` ويمنع تكرار البند أو تجاوز الكمية.
 
 يستقبل `POST /sales/customer-payments` `customerId` و`amount` الموجب، مع `salesOrderId` و`notes` اختياريين. يتحقق الخادم من العميل النشط ومن الرصيد المتبقي، ويحدّث `CustomerPayment` و`SalesOrder.paidAmount` عند ربط الدفعة بأمر، ثم يرحل قيدًا متوازنًا `Dr CASH / Cr ACCOUNTS_RECEIVABLE` ويخفض رصيد العميل داخل transaction واحدة. لا تقبل الدفعة الزائدة أو أمر البيع غير المؤكد، وتُحفظ هوية الفاعل من JWT في القيد.
 

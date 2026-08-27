@@ -38,6 +38,7 @@ export const DocumentCodePrefix = {
   PURCHASE_RECEIPT: 'GRN',
   CUSTOMER_PAYMENT: 'CP',
   SUPPLIER_PAYMENT: 'SP',
+  SALES_RETURN: 'SRET',
   SUPPLIER: 'SUP',
   WORKER: 'WRK',
   IDENTITY_DOC: 'ID',

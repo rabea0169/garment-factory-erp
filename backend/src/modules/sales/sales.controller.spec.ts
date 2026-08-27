@@ -6,6 +6,7 @@ import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
+import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
 
 describe('SalesController — هوية الجلسة والصلاحيات (GF-0011)', () => {
   let controller: SalesController;
@@ -13,6 +14,7 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
     getCustomers: jest.Mock;
     createCustomer: jest.Mock;
     createCustomerPayment: jest.Mock;
+    createSalesReturn: jest.Mock;
     getSalesOrders: jest.Mock;
     createSalesOrder: jest.Mock;
     confirmOrder: jest.Mock;
@@ -24,6 +26,7 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
       getCustomers: jest.fn().mockResolvedValue([]),
       createCustomer: jest.fn().mockResolvedValue({ id: 'c-1' }),
       createCustomerPayment: jest.fn().mockResolvedValue({ id: 'payment-1' }),
+      createSalesReturn: jest.fn().mockResolvedValue({ id: 'return-1' }),
       getSalesOrders: jest.fn().mockResolvedValue([]),
       createSalesOrder: jest.fn().mockResolvedValue({ id: 'so-1' }),
       confirmOrder: jest
@@ -75,6 +78,30 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
       'user-1',
       undefined,
     );
+  });
+
+  it('مرتجع البيع يمرر العناصر وactor وIdempotency-Key', async () => {
+    const body = {
+      items: [{ salesOrderItemId: 'item-1', quantity: 1 }],
+      reason: 'عيب تصنيع',
+    } as unknown as CreateSalesReturnDto;
+
+    await controller.createSalesReturn('so-1', body, 'user-1', 'return-key');
+
+    expect(service.createSalesReturn).toHaveBeenCalledWith(
+      'so-1',
+      { ...body, actorId: 'user-1' },
+      'return-key',
+    );
+  });
+
+  it('مرتجع البيع مقيّد بـ CASHIER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'createSalesReturn',
+    );
+    expect(roles).toEqual([UserRole.CASHIER, UserRole.GENERAL_MANAGER]);
   });
 
   it('إلغاء أمر البيع يمرر actor وIdempotency-Key', async () => {
