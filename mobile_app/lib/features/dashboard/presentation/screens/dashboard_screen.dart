@@ -316,7 +316,7 @@ class _DashboardContent extends StatelessWidget {
             children: [
               Icon(Icons.circle, size: 8, color: AppColors.success),
               SizedBox(width: 6),
-              Text('الخادم متصل',
+              Text('الخادم استجاب',
                   style: TextStyle(
                       color: AppColors.success,
                       fontFamily: 'Cairo',
