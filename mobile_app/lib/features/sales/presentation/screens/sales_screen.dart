@@ -55,7 +55,7 @@ class SalesScreen extends StatelessWidget {
                 padding: const EdgeInsets.all(16),
                 itemCount: orders.length,
                 itemBuilder: (context, index) {
-                  final order = orders[index] as Map<String, dynamic>;
+                  final order = orders[index];
                   final customer = order['customer'] as Map?;
                   final items = order['items'] as List? ?? const [];
                   return Card(

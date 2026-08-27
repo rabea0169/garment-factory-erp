@@ -20,12 +20,12 @@ class _FakeSalesCubit extends SalesCubit {
   }
 
   @override
-  Future<List<dynamic>> fetchCustomers() async => [
+  Future<List<Map<String, dynamic>>> fetchCustomers() async => [
         {'id': 'customer-1', 'name': 'مصنع النور'},
       ];
 
   @override
-  Future<List<dynamic>> fetchProducts() async => [
+  Future<List<Map<String, dynamic>>> fetchProducts() async => [
         {
           'id': 'product-1',
           'name': 'تيشيرت',
