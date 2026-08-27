@@ -34,6 +34,16 @@ import {
 
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CREATE = 'sales-order-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM = 'sales-order-confirm';
+const IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE = 'customer-payment-create';
+const IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL = 'sales-order-cancel';
+
+type CustomerPaymentInput = {
+  customerId: string;
+  salesOrderId?: string;
+  amount: number;
+  notes?: string;
+  actorId: string;
+};
 
 @Injectable()
 export class SalesService {
@@ -71,6 +81,213 @@ export class SalesService {
         code: generateDocumentCode(DocumentCodePrefix.CUSTOMER),
       },
     });
+  }
+
+  async createCustomerPayment(
+    input: CustomerPaymentInput,
+    idempotencyKey?: string,
+  ) {
+    if (!Number.isFinite(input.amount) || input.amount <= 0) {
+      throw new BadRequestException('قيمة الدفعة يجب أن تكون أكبر من صفر');
+    }
+
+    const requestHash = computeRequestHash({
+      operation: IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE,
+      customerId: input.customerId,
+      salesOrderId: input.salesOrderId ?? null,
+      amount: input.amount,
+      notes: input.notes ?? null,
+      actorId: input.actorId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE,
+          requestHash,
+        );
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM customers WHERE id = ${input.customerId} FOR UPDATE`,
+        );
+
+        const customer = await tx.customer.findUnique({
+          where: { id: input.customerId },
+          select: { id: true, isActive: true, deletedAt: true, balance: true },
+        });
+        if (!customer || !customer.isActive || customer.deletedAt) {
+          throw new NotFoundException('العميل غير موجود أو غير نشط');
+        }
+
+        let order: {
+          id: string;
+          customerId: string;
+          status: SalesOrderStatus;
+          totalAmount: Prisma.Decimal;
+          paidAmount: Prisma.Decimal;
+        } | null = null;
+        if (input.salesOrderId) {
+          order = await tx.salesOrder.findUnique({
+            where: { id: input.salesOrderId },
+            select: {
+              id: true,
+              customerId: true,
+              status: true,
+              totalAmount: true,
+              paidAmount: true,
+            },
+          });
+          if (!order || order.customerId !== input.customerId) {
+            throw new NotFoundException('أمر البيع غير موجود لهذا العميل');
+          }
+          if (
+            order.status !== SalesOrderStatus.CONFIRMED &&
+            order.status !== SalesOrderStatus.SHIPPED
+          ) {
+            throw new BadRequestException(
+              'لا يمكن تحصيل دفعة إلا لأمر بيع مؤكد أو مشحون',
+            );
+          }
+        }
+
+        const outstanding = order
+          ? Number(order.totalAmount) - Number(order.paidAmount)
+          : Number(customer.balance);
+        if (input.amount > outstanding + 0.0001) {
+          throw new BadRequestException(
+            `قيمة الدفعة تتجاوز المتبقي (${round2(outstanding)})`,
+          );
+        }
+
+        if (order) {
+          const updated = await tx.salesOrder.updateMany({
+            where: { id: order.id, paidAmount: order.paidAmount },
+            data: { paidAmount: { increment: input.amount } },
+          });
+          if (updated.count !== 1) {
+            throw new ConflictException('تم تحديث دفعة أمر البيع بالتزامن');
+          }
+        }
+
+        const payment = await tx.customerPayment.create({
+          data: {
+            customerId: input.customerId,
+            salesOrderId: input.salesOrderId,
+            amount: input.amount,
+            notes: input.notes?.trim() || undefined,
+          },
+        });
+        await this.financial.postJournalEntryInTx(
+          tx,
+          {
+            description: `تحصيل من العميل ${input.customerId}`,
+            reference: input.salesOrderId ?? payment.id,
+            postingKey: `customer-payment:${payment.id}`,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.CASH,
+                creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+                amount: input.amount,
+                description: 'تحصيل ذمم مدينة',
+              },
+            ],
+            userId: input.actorId,
+            customerUpdates: [
+              { customerId: input.customerId, delta: -input.amount },
+            ],
+            metadata: {
+              source: 'sales.customer-payment',
+              customerPaymentId: payment.id,
+              customerId: input.customerId,
+              salesOrderId: input.salesOrderId ?? null,
+            },
+          },
+          input.actorId,
+        );
+        await storeIdempotencyResponse(tx, idempotencyKey, payment);
+        return payment;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
+  }
+
+  async cancelOrder(orderId: string, userId: string, idempotencyKey?: string) {
+    const requestHash = computeRequestHash({
+      operation: IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL,
+      orderId,
+      userId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL,
+          requestHash,
+        );
+        const order = await tx.salesOrder.findUnique({
+          where: { id: orderId },
+          select: { id: true, status: true },
+        });
+        if (!order) throw new NotFoundException('أمر البيع غير موجود');
+        if (order.status !== SalesOrderStatus.DRAFT) {
+          throw new BadRequestException(
+            'لا يمكن إلغاء إلا أمر بيع مسودة قبل التأكيد',
+          );
+        }
+        const transition = await tx.salesOrder.updateMany({
+          where: { id: orderId, status: SalesOrderStatus.DRAFT },
+          data: { status: SalesOrderStatus.CANCELLED },
+        });
+        if (transition.count !== 1) {
+          throw new ConflictException('تم تغيير أمر البيع بالتزامن');
+        }
+        const cancelled = await tx.salesOrder.findUniqueOrThrow({
+          where: { id: orderId },
+          include: { items: true },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, cancelled);
+        return cancelled;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 
   async getSalesOrders(pagination: PaginationDto) {

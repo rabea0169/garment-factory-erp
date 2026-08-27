@@ -12,10 +12,38 @@ class _FakeSalesCubit extends SalesCubit {
 
   final Future<void> Function()? onCreate;
   int createCalls = 0;
+  int orderCreateCalls = 0;
 
   @override
   Future<void> fetchOrders() async {
     emit(SalesLoaded(const []));
+  }
+
+  @override
+  Future<List<dynamic>> fetchCustomers() async => [
+        {'id': 'customer-1', 'name': 'مصنع النور'},
+      ];
+
+  @override
+  Future<List<dynamic>> fetchProducts() async => [
+        {
+          'id': 'product-1',
+          'name': 'تيشيرت',
+          'retailPrice': 100,
+          'variants': [
+            {'id': 'variant-1', 'size': 'L', 'color': 'أبيض'},
+          ],
+        },
+      ];
+
+  @override
+  Future<void> createSalesOrder({
+    required String customerId,
+    required String paymentType,
+    required double discount,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    orderCreateCalls++;
   }
 
   @override
@@ -62,6 +90,23 @@ Future<void> _openCustomerDialog(WidgetTester tester) async {
 }
 
 void main() {
+  testWidgets('validates customer and product before creating an order',
+      (tester) async {
+    final cubit = _FakeSalesCubit();
+    await _pumpSalesScreen(tester, cubit: cubit);
+
+    await tester.tap(find.text('أمر بيع جديد'));
+    await tester.pumpAndSettle();
+    expect(find.text('إنشاء أمر بيع جديد'), findsOneWidget);
+
+    await tester.tap(find.text('حفظ'));
+    await tester.pump();
+
+    expect(find.text('اختر العميل'), findsOneWidget);
+    expect(find.text('اختر المنتج'), findsOneWidget);
+    expect(cubit.orderCreateCalls, 0);
+  });
+
   testWidgets('requires a customer name before submitting', (tester) async {
     final cubit = _FakeSalesCubit();
     await _pumpSalesScreen(tester, cubit: cubit);

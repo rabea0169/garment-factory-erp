@@ -135,10 +135,14 @@
 | POST | `/sales/customers` | عميل جديد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/orders/:id/cancel` | إلغاء أمر بيع مسودة قبل التأكيد | 🔒 JWT | CASHIER, GENERAL_MANAGER |
+| POST | `/sales/customer-payments` | تحصيل دفعة من العميل | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
 يستقبل `POST /sales/customers` body بالحقول `name` الإلزامي، و`phone` و`email` و`address` الاختيارية، وجميعها نصوص؛ لا تُقبل الحقول غير المعروفة. يحفظ الخادم `email` كما يصل من Contact Picker أو الإدخال اليدوي. في Sprint 1 يقتصر تدفق الهاتف على إنشاء العميل الفعلي؛ استيراد جهات الاتصال للموردين والموظفين مؤجل حتى توفير APIs حقيقية لإنشائهم.
 
-يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409.
+يدعم `POST /sales/orders` و`POST /sales/orders/:id/cancel` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان النتيجة نفسها، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409. الإلغاء متاح للمسودة فقط قبل التأكيد؛ أما الأمر المؤكد فلا يُلغى بهذا المسار حفاظًا على المخزون والـLedger.
+
+يستقبل `POST /sales/customer-payments` `customerId` و`amount` الموجب، مع `salesOrderId` و`notes` اختياريين. يتحقق الخادم من العميل النشط ومن الرصيد المتبقي، ويحدّث `CustomerPayment` و`SalesOrder.paidAmount` عند ربط الدفعة بأمر، ثم يرحل قيدًا متوازنًا `Dr CASH / Cr ACCOUNTS_RECEIVABLE` ويخفض رصيد العميل داخل transaction واحدة. لا تقبل الدفعة الزائدة أو أمر البيع غير المؤكد، وتُحفظ هوية الفاعل من JWT في القيد.
 
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
 
@@ -150,7 +154,7 @@
 | POST | `/shipping` | إنشاء شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 | PATCH | `/shipping/:id/status` | انتقال حالة شحنة | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
-تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. عند الانتقال إلى `SHIPPED` يصرف الخادم عناصر أمر البيع من مخزن المنتج التام عبر InventoryService داخل نفس transaction، وفشل أي عنصر يعيد العملية كاملة.
+تُقبل انتقالات الشحنة فقط وفق `PREPARING → SHIPPED → IN_TRANSIT → DELIVERED`، مع `IN_TRANSIT → RETURNED` أو `DELIVERED → RETURNED`. يتطلب `DELIVERED` حقل `proofOfDelivery` غير فارغ، ويأخذ الخادم `deliveredById` و`deliveredAt` من الجلسة/الخادم. التحديث الذري المشروط بالحالة السابقة يمنع سباق الانتقالات ويسجل ActivityLog. يتم صرف المنتج التام عند تأكيد أمر البيع في `POST /sales/orders/:id/confirm`؛ مسارات الشحن الحالية تغيّر lifecycle الشحنة فقط ولا تصرف المخزون مرة أخرى.
 
 يدعم `POST /shipping` رأس `Idempotency-Key` اختياريًا. نفس المفتاح مع نفس body وactor يعيد الشحنة دون إنشاء جديد، وإعادة استخدامه بمحتوى مختلف تُرفض بـ409. actor مأخوذ من JWT ولا يُقبل من body.
 

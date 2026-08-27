@@ -31,6 +31,46 @@ class SalesCubit extends Cubit<SalesState> {
     }
   }
 
+  Future<List<dynamic>> fetchCustomers() async {
+    final response = await ApiClient.instance.dio.get('/sales/customers');
+    return ApiClient.extractPaginatedData(response.data);
+  }
+
+  Future<List<dynamic>> fetchProducts() async {
+    final response = await ApiClient.instance.dio.get('/products');
+    return ApiClient.extractPaginatedData(response.data);
+  }
+
+  Future<void> createCustomerPayment({
+    required String customerId,
+    String? salesOrderId,
+    required double amount,
+    String? notes,
+  }) async {
+    await ApiClient.instance.dio.post('/sales/customer-payments', data: {
+      'customerId': customerId,
+      if (salesOrderId != null) 'salesOrderId': salesOrderId,
+      'amount': amount,
+      if (notes != null && notes.isNotEmpty) 'notes': notes,
+    });
+    await fetchOrders();
+  }
+
+  Future<void> createSalesOrder({
+    required String customerId,
+    required String paymentType,
+    required double discount,
+    required List<Map<String, dynamic>> items,
+  }) async {
+    await ApiClient.instance.dio.post('/sales/orders', data: {
+      'customerId': customerId,
+      'paymentType': paymentType,
+      'discount': discount,
+      'items': items,
+    });
+    await fetchOrders();
+  }
+
   Future<void> createCustomer({
     required String name,
     String? phone,
