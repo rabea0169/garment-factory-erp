@@ -9,6 +9,10 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    prisma.$transaction.mockImplementation(
+      async (callback: (tx: typeof prisma) => Promise<unknown>) =>
+        callback(prisma),
+    );
     service = new ProductsService(prisma as unknown as PrismaService);
   });
 
@@ -68,6 +72,61 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
 
     expect(result.id).toBe('p-2');
     expect(prisma.product.create).toHaveBeenCalledWith({ data });
+  });
+
+  it('ينشئ منتجًا كاملًا ومتغيراته وBOM داخل transaction واحدة', async () => {
+    prisma.product.create.mockResolvedValue({ id: 'p-full' });
+    prisma.productVariant.createMany.mockResolvedValue({ count: 1 });
+    prisma.bomVersion.create.mockResolvedValue({ id: 'bom-1' });
+    prisma.bomLine.createMany.mockResolvedValue({ count: 1 });
+    prisma.product.findUnique.mockResolvedValue({
+      id: 'p-full',
+      variants: [{ size: 'L', color: 'أسود' }],
+      bomVersions: [{ lines: [{ rawMaterialId: 'rm-1' }] }],
+    });
+
+    const result = await service.createFullProduct({
+      code: ' PRD-FULL ',
+      name: ' تيشيرت ',
+      category: ' ملابس ',
+      retailPrice: 300,
+      wholesalePrice: 220,
+      variants: [{ size: ' L ', color: ' أسود ' }],
+      bomItems: [{ rawMaterialId: 'rm-1', quantity: 1.2, unit: ' متر ' }],
+    });
+
+    expect(result).toEqual(expect.objectContaining({ id: 'p-full' }));
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.productVariant.createMany).toHaveBeenCalledWith({
+      data: [{ productId: 'p-full', size: 'L', color: 'أسود' }],
+    });
+    expect(prisma.bomLine.createMany).toHaveBeenCalledWith({
+      data: [
+        {
+          bomVersionId: 'bom-1',
+          rawMaterialId: 'rm-1',
+          quantity: 1.2,
+          unit: 'متر',
+        },
+      ],
+    });
+  });
+
+  it('يرفض تكرار المتغير قبل بدء transaction', async () => {
+    await expect(
+      service.createFullProduct({
+        code: 'PRD-DUP',
+        name: 'تيشيرت',
+        category: 'ملابس',
+        retailPrice: 300,
+        wholesalePrice: 220,
+        variants: [
+          { size: 'L', color: 'أسود' },
+          { size: ' l ', color: ' أسود ' },
+        ],
+      }),
+    ).rejects.toThrow('لا يمكن تكرار المقاس واللون');
+    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('ينشئ variant بمنتج ومقاس ولون محددين', async () => {

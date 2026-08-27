@@ -63,6 +63,7 @@ export function createPrismaMock() {
     season: { findMany: jest.fn(), create: jest.fn(), count: jest.fn() },
     productVariant: {
       create: jest.fn(),
+      createMany: jest.fn(),
       findFirst: jest.fn(),
       findMany: jest.fn(),
     },
@@ -120,7 +121,11 @@ export function createPrismaMock() {
       findUnique: jest.fn(),
       create: jest.fn(),
     },
-    bomLine: { upsert: jest.fn(), delete: jest.fn() },
+    bomLine: {
+      upsert: jest.fn(),
+      createMany: jest.fn(),
+      delete: jest.fn(),
+    },
     stockLedgerEntry: {
       create: jest.fn(),
       findMany: jest.fn(),

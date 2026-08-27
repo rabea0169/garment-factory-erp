@@ -14,6 +14,7 @@ import { Roles } from '../auth/roles.guard';
 import { CreateProductDto } from './dto/create-product.dto';
 import { CreateProductVariantDto } from './dto/create-product-variant.dto';
 import { CreateBomLineDto } from './dto/create-bom-line.dto';
+import { CreateFullProductDto } from './dto/create-full-product.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Products (المنتجات)')
@@ -42,6 +43,13 @@ export class ProductsController {
   })
   async getProduct(@Param('id', new ParseUUIDPipe()) id: string) {
     return this.productsService.getProductDetails(id);
+  }
+
+  @Post('full')
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
+  @ApiOperation({ summary: 'إضافة منتج كامل مع المتغيرات وBOM ذرّيًا' })
+  async createFullProduct(@Body() body: CreateFullProductDto) {
+    return this.productsService.createFullProduct(body);
   }
 
   @Post()
