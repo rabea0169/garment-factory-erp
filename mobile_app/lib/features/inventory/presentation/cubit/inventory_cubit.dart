@@ -11,7 +11,7 @@ class InventoryCubit extends Cubit<InventoryState> {
     emit(InventoryLoading());
     try {
       final dio = ApiClient.instance.dio;
-      
+
       // جلب البيانات من الـ API بشكل متوازي
       final responses = await Future.wait([
         dio.get('/inventory/raw-materials'),
@@ -29,7 +29,8 @@ class InventoryCubit extends Cubit<InventoryState> {
     }
   }
 
-  Future<void> addRawMaterialStock(String id, double quantity, double cost) async {
+  Future<void> addRawMaterialStock(
+      String id, double quantity, double cost) async {
     try {
       final dio = ApiClient.instance.dio;
       await dio.post('/inventory/raw-materials/$id/add-stock', data: {
@@ -40,6 +41,7 @@ class InventoryCubit extends Cubit<InventoryState> {
       await fetchInventoryData();
     } catch (e) {
       emit(InventoryError('فشل في إضافة المخزون: $e'));
+      rethrow;
     }
   }
 }

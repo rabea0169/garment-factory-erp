@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/router/app_router.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
 
@@ -23,7 +25,8 @@ class _InventoryScreenView extends StatefulWidget {
   State<_InventoryScreenView> createState() => _InventoryScreenViewState();
 }
 
-class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleTickerProviderStateMixin {
+class _InventoryScreenViewState extends State<_InventoryScreenView>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
 
   @override
@@ -48,7 +51,8 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
           indicatorColor: AppColors.secondary,
-          labelStyle: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+          labelStyle:
+              const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
           unselectedLabelStyle: const TextStyle(fontFamily: 'Cairo'),
           tabs: const [
             Tab(text: 'المواد الخام'),
@@ -58,16 +62,11 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
         ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.qr_code_scanner), 
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('سيتم تفعيل الكاميرا للمسح...', style: TextStyle(fontFamily: 'Cairo'))),
-              );
-            }
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () =>
+                context.read<InventoryCubit>().fetchInventoryData(),
           ),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: () {
-            context.read<InventoryCubit>().fetchInventoryData();
-          }),
         ],
       ),
       body: BlocBuilder<InventoryCubit, InventoryState>(
@@ -79,12 +78,16 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const Icon(Icons.error_outline, color: AppColors.error, size: 60),
+                  const Icon(Icons.error_outline,
+                      color: AppColors.error, size: 60),
                   const SizedBox(height: 16),
-                  Text(state.message, style: const TextStyle(fontFamily: 'Cairo', color: AppColors.error)),
+                  Text(state.message,
+                      style: const TextStyle(
+                          fontFamily: 'Cairo', color: AppColors.error)),
                   const SizedBox(height: 16),
                   ElevatedButton(
-                    onPressed: () => context.read<InventoryCubit>().fetchInventoryData(),
+                    onPressed: () =>
+                        context.read<InventoryCubit>().fetchInventoryData(),
                     child: const Text('إعادة المحاولة'),
                   )
                 ],
@@ -113,24 +116,31 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
 
   Widget _buildRawMaterialsTab(List<dynamic> materials) {
     if (materials.isEmpty) {
-      return const Center(child: Text('لا توجد مواد خام', style: TextStyle(fontFamily: 'Cairo')));
+      return const Center(
+          child:
+              Text('لا توجد مواد خام', style: TextStyle(fontFamily: 'Cairo')));
     }
-    
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: materials.length,
       itemBuilder: (context, index) {
         final item = materials[index];
-        final isLow = double.parse(item['currentStock'].toString()) <= double.parse(item['minStockLevel'].toString());
-        
+        final isLow = double.parse(item['currentStock'].toString()) <=
+            double.parse(item['minStockLevel'].toString());
+
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
             leading: CircleAvatar(
-              backgroundColor: isLow ? AppColors.error.withValues(alpha: 0.1) : AppColors.primary.withValues(alpha: 0.1),
-              child: Icon(Icons.category, color: isLow ? AppColors.error : AppColors.primary),
+              backgroundColor: isLow
+                  ? AppColors.error.withValues(alpha: 0.1)
+                  : AppColors.primary.withValues(alpha: 0.1),
+              child: Icon(Icons.category,
+                  color: isLow ? AppColors.error : AppColors.primary),
             ),
-            title: Text(item['name'], style: Theme.of(context).textTheme.titleMedium),
+            title: Text(item['name'],
+                style: Theme.of(context).textTheme.titleMedium),
             subtitle: Text('الكود: ${item['code']}'),
             trailing: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -146,7 +156,11 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
                   ),
                 ),
                 if (isLow)
-                  const Text('مخزون منخفض', style: TextStyle(color: AppColors.error, fontSize: 10, fontFamily: 'Cairo')),
+                  const Text('مخزون منخفض',
+                      style: TextStyle(
+                          color: AppColors.error,
+                          fontSize: 10,
+                          fontFamily: 'Cairo')),
               ],
             ),
           ),
@@ -157,7 +171,9 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
 
   Widget _buildFinishedGoodsTab(List<dynamic> goods) {
     if (goods.isEmpty) {
-      return const Center(child: Text('لا توجد منتجات تامة', style: TextStyle(fontFamily: 'Cairo')));
+      return const Center(
+          child: Text('لا توجد منتجات تامة',
+              style: TextStyle(fontFamily: 'Cairo')));
     }
 
     return ListView.builder(
@@ -167,7 +183,7 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
         final item = goods[index];
         final variant = item['variant'];
         final product = variant['product'];
-        
+
         return Card(
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
@@ -175,8 +191,10 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
               backgroundColor: AppColors.secondary.withValues(alpha: 0.1),
               child: const Icon(Icons.checkroom, color: AppColors.secondary),
             ),
-            title: Text(product['name'], style: Theme.of(context).textTheme.titleMedium),
-            subtitle: Text('المقاس: ${variant['size']} | اللون: ${variant['color']}'),
+            title: Text(product['name'],
+                style: Theme.of(context).textTheme.titleMedium),
+            subtitle:
+                Text('المقاس: ${variant['size']} | اللون: ${variant['color']}'),
             trailing: Text(
               '${item['quantity']} قطعة',
               style: const TextStyle(
@@ -198,14 +216,19 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.check_circle_outline, color: AppColors.success, size: 60),
+            Icon(Icons.check_circle_outline,
+                color: AppColors.success, size: 60),
             SizedBox(height: 16),
-            Text('جميع الأرصدة في مستويات آمنة', style: TextStyle(fontFamily: 'Cairo', color: AppColors.success, fontSize: 16)),
+            Text('جميع الأرصدة في مستويات آمنة',
+                style: TextStyle(
+                    fontFamily: 'Cairo',
+                    color: AppColors.success,
+                    fontSize: 16)),
           ],
         ),
       );
     }
-    
+
     return ListView.builder(
       padding: const EdgeInsets.all(16),
       itemCount: lowStock.length,
@@ -215,13 +238,23 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
           color: AppColors.error.withValues(alpha: 0.05),
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
-            leading: const Icon(Icons.warning_amber_rounded, color: AppColors.error),
-            title: Text(item['name'], style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold, color: AppColors.error)),
-            subtitle: Text('الرصيد: ${item['currentStock']} | الحد الأدنى: ${item['minStockLevel']}', style: const TextStyle(fontFamily: 'Cairo')),
+            leading:
+                const Icon(Icons.warning_amber_rounded, color: AppColors.error),
+            title: Text(item['name'],
+                style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontWeight: FontWeight.bold,
+                    color: AppColors.error)),
+            subtitle: Text(
+                'الرصيد: ${item['currentStock']} | الحد الأدنى: ${item['minStockLevel']}',
+                style: const TextStyle(fontFamily: 'Cairo')),
             trailing: ElevatedButton(
-              style: ElevatedButton.styleFrom(backgroundColor: AppColors.error, padding: const EdgeInsets.symmetric(horizontal: 12)),
-              onPressed: () {},
-              child: const Text('طلب شراء', style: TextStyle(fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                  padding: const EdgeInsets.symmetric(horizontal: 12)),
+              onPressed: () => context.push(AppRouter.purchasing),
+              child:
+                  const Text('فتح المشتريات', style: TextStyle(fontSize: 12)),
             ),
           ),
         );
@@ -229,79 +262,140 @@ class _InventoryScreenViewState extends State<_InventoryScreenView> with SingleT
     );
   }
 
-  void _showAddStockDialog(BuildContext context) {
-    // This assumes context has the cubit, but dialogs create a new context root.
-    // We pass the cubit explicitly.
+  Future<void> _showAddStockDialog(BuildContext context) async {
     final cubit = context.read<InventoryCubit>();
-    
-    if (cubit.state is! InventoryLoaded) return;
-    
-    final materials = (cubit.state as InventoryLoaded).rawMaterials;
-    String? selectedId;
-    final qtyController = TextEditingController();
-    final costController = TextEditingController();
+    final state = cubit.state;
+    if (state is! InventoryLoaded) return;
 
-    showDialog(
+    final saved = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) {
-        return StatefulBuilder(
-          builder: (context, setState) {
-            return AlertDialog(
-              title: const Text('إضافة رصيد مادة خام', style: TextStyle(fontFamily: 'Cairo', fontSize: 18, fontWeight: FontWeight.bold)),
-              content: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<String>(
-                    decoration: const InputDecoration(labelText: 'اختر المادة'),
-                    initialValue: selectedId,
-                    items: materials.map<DropdownMenuItem<String>>((m) {
-                      return DropdownMenuItem<String>(
-                        value: m['id'],
-                        child: Text(m['name'], style: const TextStyle(fontFamily: 'Cairo')),
-                      );
-                    }).toList(),
-                    onChanged: (v) => setState(() => selectedId = v),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: qtyController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'الكمية المضافة'),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: costController,
-                    keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(labelText: 'سعر الوحدة (ج.م)'),
-                  ),
-                ],
-              ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(dialogContext),
-                  child: const Text('إلغاء', style: TextStyle(fontFamily: 'Cairo', color: AppColors.textSecondary)),
-                ),
-                ElevatedButton(
-                  onPressed: () {
-                    if (selectedId != null && qtyController.text.isNotEmpty && costController.text.isNotEmpty) {
-                      cubit.addRawMaterialStock(
-                        selectedId!,
-                        double.parse(qtyController.text),
-                        double.parse(costController.text),
-                      );
-                      Navigator.pop(dialogContext);
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('تمت الإضافة بنجاح', style: TextStyle(fontFamily: 'Cairo'))),
-                      );
-                    }
-                  },
-                  child: const Text('إضافة', style: TextStyle(fontFamily: 'Cairo')),
-                ),
-              ],
-            );
-          }
-        );
-      },
+      builder: (_) => _AddRawMaterialStockDialog(
+        cubit: cubit,
+        materials: state.rawMaterials,
+      ),
+    );
+    if (saved == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تمت إضافة الرصيد بنجاح')),
+      );
+    }
+  }
+}
+
+class _AddRawMaterialStockDialog extends StatefulWidget {
+  const _AddRawMaterialStockDialog({
+    required this.cubit,
+    required this.materials,
+  });
+
+  final InventoryCubit cubit;
+  final List<dynamic> materials;
+
+  @override
+  State<_AddRawMaterialStockDialog> createState() =>
+      _AddRawMaterialStockDialogState();
+}
+
+class _AddRawMaterialStockDialogState
+    extends State<_AddRawMaterialStockDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _quantityController = TextEditingController();
+  final _costController = TextEditingController();
+  String? _selectedId;
+  var _isSaving = false;
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    _costController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (!(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _isSaving = true);
+    try {
+      await widget.cubit.addRawMaterialStock(
+        _selectedId!,
+        double.parse(_quantityController.text.trim()),
+        double.parse(_costController.text.trim()),
+      );
+      if (mounted) Navigator.of(context).pop(true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('تعذر إضافة الرصيد. تحقق من البيانات والصلاحيات.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('إضافة رصيد مادة خام'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _selectedId,
+              decoration: const InputDecoration(labelText: 'اختر المادة *'),
+              items: widget.materials
+                  .whereType<Map>()
+                  .where((material) => material['id'] != null)
+                  .map(
+                    (material) => DropdownMenuItem<String>(
+                      value: material['id'].toString(),
+                      child: Text(
+                          '${material['name'] ?? material['code'] ?? 'خامة'}'),
+                    ),
+                  )
+                  .toList(),
+              onChanged: _isSaving
+                  ? null
+                  : (value) => setState(() => _selectedId = value),
+              validator: (value) => value == null ? 'اختر المادة' : null,
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _quantityController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'الكمية المضافة *'),
+              validator: (value) {
+                final quantity = double.tryParse(value?.trim() ?? '');
+                return quantity == null || quantity <= 0
+                    ? 'أدخل كمية موجبة'
+                    : null;
+              },
+            ),
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: _costController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'سعر الوحدة *'),
+              validator: (value) {
+                final cost = double.tryParse(value?.trim() ?? '');
+                return cost == null || cost < 0 ? 'أدخل سعرًا صحيحًا' : null;
+              },
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.of(context).pop(),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton(
+          onPressed: _isSaving ? null : _save,
+          child: Text(_isSaving ? 'جاري الحفظ...' : 'إضافة'),
+        ),
+      ],
     );
   }
 }

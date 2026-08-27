@@ -3,6 +3,7 @@ import 'package:go_router/go_router.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
 import '../../features/dashboard/presentation/screens/dashboard_screen.dart';
 import '../../features/inventory/presentation/screens/inventory_screen.dart';
+import '../../features/purchasing/presentation/screens/purchasing_screen.dart';
 import '../../features/production/presentation/screens/production_screen.dart';
 import '../../features/products/presentation/screens/products_screen.dart';
 import '../../features/quality/presentation/screens/quality_screen.dart';
@@ -21,6 +22,7 @@ class AppRouter {
   static const String login = '/login';
   static const String dashboard = '/dashboard';
   static const String inventory = '/inventory';
+  static const String purchasing = '/purchasing';
   static const String production = '/production';
   static const String quality = '/quality';
   static const String hr = '/hr';
@@ -76,6 +78,11 @@ class AppRouter {
         path: inventory,
         name: 'inventory',
         builder: (context, state) => const InventoryScreen(),
+      ),
+      GoRoute(
+        path: purchasing,
+        name: 'purchasing',
+        builder: (context, state) => const PurchasingScreen(),
       ),
       GoRoute(
         path: '/products',
