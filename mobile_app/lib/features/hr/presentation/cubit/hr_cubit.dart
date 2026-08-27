@@ -47,10 +47,10 @@ class HrCubit extends Cubit<HrState> {
         'piecesCount': piecesCount,
         'date': DateTime.now().toIso8601String(),
       });
-      // يمكن عرض إشعار بنجاح التسجيل هنا
+      await fetchWorkers();
     } catch (e) {
       emit(HrError('خطأ في تسجيل الإنتاج: $e'));
-      await fetchWorkers(); // تحديث القائمة
+      rethrow;
     }
   }
 }

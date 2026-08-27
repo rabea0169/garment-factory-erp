@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
 
@@ -71,27 +72,13 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
       ),
       body: BlocBuilder<InventoryCubit, InventoryState>(
         builder: (context, state) {
-          if (state is InventoryLoading) {
-            return const Center(child: CircularProgressIndicator());
+          if (state is InventoryLoading || state is InventoryInitial) {
+            return const AppLoadingView();
           } else if (state is InventoryError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline,
-                      color: AppColors.error, size: 60),
-                  const SizedBox(height: 16),
-                  Text(state.message,
-                      style: const TextStyle(
-                          fontFamily: 'Cairo', color: AppColors.error)),
-                  const SizedBox(height: 16),
-                  ElevatedButton(
-                    onPressed: () =>
-                        context.read<InventoryCubit>().fetchInventoryData(),
-                    child: const Text('إعادة المحاولة'),
-                  )
-                ],
-              ),
+            return AppErrorView(
+              message: state.message,
+              onRetry: () =>
+                  context.read<InventoryCubit>().fetchInventoryData(),
             );
           } else if (state is InventoryLoaded) {
             return TabBarView(
@@ -116,9 +103,11 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
 
   Widget _buildRawMaterialsTab(List<dynamic> materials) {
     if (materials.isEmpty) {
-      return const Center(
-          child:
-              Text('لا توجد مواد خام', style: TextStyle(fontFamily: 'Cairo')));
+      return AppEmptyView(
+        title: 'لا توجد مواد خام',
+        actionLabel: 'إعادة التحميل',
+        onAction: () => context.read<InventoryCubit>().fetchInventoryData(),
+      );
     }
 
     return ListView.builder(
@@ -171,9 +160,11 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
 
   Widget _buildFinishedGoodsTab(List<dynamic> goods) {
     if (goods.isEmpty) {
-      return const Center(
-          child: Text('لا توجد منتجات تامة',
-              style: TextStyle(fontFamily: 'Cairo')));
+      return AppEmptyView(
+        title: 'لا توجد منتجات تامة',
+        actionLabel: 'إعادة التحميل',
+        onAction: () => context.read<InventoryCubit>().fetchInventoryData(),
+      );
     }
 
     return ListView.builder(

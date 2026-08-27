@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/products_cubit.dart';
 import '../cubit/products_state.dart';
 import 'add_product_screen.dart';
@@ -27,19 +28,21 @@ class ProductsScreen extends StatelessWidget {
         ),
         body: BlocBuilder<ProductsCubit, ProductsState>(
           builder: (context, state) {
-            if (state is ProductsLoading) {
-              return const Center(child: CircularProgressIndicator());
+            if (state is ProductsLoading || state is ProductsInitial) {
+              return const AppLoadingView();
             } else if (state is ProductsError) {
-              return Center(
-                  child: Text(state.message,
-                      style: const TextStyle(
-                          color: AppColors.error, fontFamily: 'Cairo')));
+              return AppErrorView(
+                message: state.message,
+                onRetry: () => context.read<ProductsCubit>().fetchProducts(),
+              );
             } else if (state is ProductsLoaded) {
               final products = state.products;
               if (products.isEmpty) {
-                return const Center(
-                    child: Text('لا توجد منتجات حالياً',
-                        style: TextStyle(fontFamily: 'Cairo')));
+                return AppEmptyView(
+                  title: 'لا توجد منتجات حاليًا',
+                  actionLabel: 'إعادة التحميل',
+                  onAction: () => context.read<ProductsCubit>().fetchProducts(),
+                );
               }
               return ListView.builder(
                 padding: const EdgeInsets.all(16),
@@ -103,7 +106,8 @@ class ProductsScreen extends StatelessWidget {
                   builder: (_) => MultiBlocProvider(
                     providers: [
                       BlocProvider.value(value: ctx.read<ProductsCubit>()),
-                      BlocProvider(create: (_) => InventoryCubit()..fetchRawMaterials()),
+                      BlocProvider(
+                          create: (_) => InventoryCubit()..fetchRawMaterials()),
                     ],
                     child: const AddProductScreen(),
                   ),
