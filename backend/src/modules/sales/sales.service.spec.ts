@@ -45,6 +45,42 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
     });
   });
 
+  it('persists contact email when creating a customer', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.create.mockResolvedValue({
+      id: 'customer-1',
+      code: 'CUS-0001',
+      name: 'مصنع النور',
+      phone: '+201001234567',
+      email: 'sales@example.com',
+      address: 'القاهرة',
+    });
+
+    await service.createCustomer({
+      name: 'مصنع النور',
+      phone: '+201001234567',
+      email: 'sales@example.com',
+      address: 'القاهرة',
+    });
+
+    const createCalls = prisma.customer.create.mock.calls as unknown as Array<
+      [{ data: Record<string, unknown> }]
+    >;
+    const createCall = createCalls[0]?.[0];
+    expect(createCall).toBeDefined();
+    if (!createCall) throw new Error('customer.create was not called');
+
+    expect(createCall.data).toEqual(
+      expect.objectContaining({
+        name: 'مصنع النور',
+        phone: '+201001234567',
+        email: 'sales@example.com',
+        address: 'القاهرة',
+      }),
+    );
+    expect(typeof createCall.data.code).toBe('string');
+  });
+
   it('calculates VAT on the server and rejects invalid discounts', async () => {
     const { prisma, service } = makeService();
     prisma.customer.findFirst.mockResolvedValue({ id: 'c-1' });

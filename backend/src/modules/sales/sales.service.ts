@@ -63,6 +63,7 @@ export class SalesService {
     name: string;
     phone?: string;
     address?: string;
+    email?: string;
   }) {
     return this.prisma.customer.create({
       data: {

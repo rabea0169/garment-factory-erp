@@ -126,6 +126,8 @@
 | GET | `/sales/orders` | أوامر البيع | 🔒 JWT | أي مستخدم موثّق |
 | POST | `/sales/orders` | إنشاء أمر بيع | 🔒 JWT | CASHIER, GENERAL_MANAGER |
 
+يستقبل `POST /sales/customers` body بالحقول `name` الإلزامي، و`phone` و`email` و`address` الاختيارية، وجميعها نصوص؛ لا تُقبل الحقول غير المعروفة. يحفظ الخادم `email` كما يصل من Contact Picker أو الإدخال اليدوي. في Sprint 1 يقتصر تدفق الهاتف على إنشاء العميل الفعلي؛ استيراد جهات الاتصال للموردين والموظفين مؤجل حتى توفير APIs حقيقية لإنشائهم.
+
 يدعم `POST /sales/orders` رأس `Idempotency-Key` اختياريًا. نفس المفتاح ونفس payload يعيدان أمر البيع نفسه، وإعادة استخدام المفتاح بمحتوى مختلف تُرفض بـ409.
 
 **ملاحظة GF-0002:** `userId` لم يعد يُقبل من body — من الجلسة.
@@ -252,7 +254,7 @@
 // Body: { "treasuryId": "uuid", "paymentDate": "2026-08-31", "notes": "اختياري" }
 // POST /quality  { "workOrderId": "uuid", "stage": "SEWING", "checkedQty": 100, "passedQty": 95, "rejectedQty": 5 }
 // POST /products  { "code": "PRD-T01", "name": "تيشيرت", "category": "تيشيرت", "retailPrice": 250, "wholesalePrice": 180, "seasonId": "uuid?" }
-// POST /sales/customers  { "name": "عميل", "phone": "اختياري", "address": "اختياري" }
+// POST /sales/customers  { "name": "عميل", "phone": "اختياري", "email": "customer@example.com", "address": "اختياري" }
 // POST /shipping  { "salesOrderId": "uuid", "shippingCost": 75, "trackingNumber": "اختياري" }
 // POST /accounting/accounts  { "code": "1000", "name": "الصندوق", "type": "ASSET", "parentId": "uuid?", "isGroup": false }
 ```

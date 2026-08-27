@@ -1,11 +1,14 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/navigation/double_back_exit_guard.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../../auth/presentation/cubit/auth_cubit.dart';
 import '../cubit/dashboard_cubit.dart';
 import '../cubit/dashboard_state.dart';
@@ -18,61 +21,74 @@ import '../cubit/dashboard_state.dart';
 /// - قائمة بأعلى 5 عمال إنتاجاً.
 ///
 /// الحالات: Loading / Error / Empty / Loaded. لا توجد قيم ثابتة بأي شكل.
-class DashboardScreen extends StatelessWidget {
+class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
 
   @override
+  State<DashboardScreen> createState() => _DashboardScreenState();
+}
+
+class _DashboardScreenState extends State<DashboardScreen> {
+  final _exitGuard = DoubleBackExitGuard();
+
+  @override
   Widget build(BuildContext context) {
-    return BlocProvider<DashboardCubit>(
-      create: (_) => DashboardCubit()..fetchStats(),
-      child: Scaffold(
-        appBar: AppBar(
-          title: const Text('لوحة التحكم'),
-          // MOBILE-F03: أيقونات الإشعارات/الحساب معطّلة حتى تُنفّذ مساراتها.
-        ),
-        drawer: _buildDrawer(context),
-        body: BlocBuilder<DashboardCubit, DashboardState>(
-          builder: (context, state) {
-            if (state is DashboardLoading || state is DashboardInitial) {
-              return const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    CircularProgressIndicator(),
-                    SizedBox(height: 12),
-                    Text(
-                      'جاري التحميل...',
-                      style: TextStyle(fontFamily: 'Cairo'),
-                    ),
-                  ],
-                ),
-              );
-            }
-            if (state is DashboardError) {
-              return _ErrorView(
-                message: state.message,
-                onRetry: () =>
-                    context.read<DashboardCubit>().fetchStats(),
-              );
-            }
-            if (state is DashboardEmpty) {
-              return _EmptyView(
-                onRetry: () =>
-                    context.read<DashboardCubit>().fetchStats(),
-              );
-            }
-            if (state is DashboardLoaded) {
-              return _DashboardContent(stats: state.stats);
-            }
-            return const SizedBox.shrink();
-          },
-        ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => context.go(AppRouter.production),
-          icon: const Icon(Icons.add),
-          label: const Text(
-            'أمر تشغيل جديد',
-            style: TextStyle(fontFamily: 'Cairo'),
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (didPop) return;
+        if (!_exitGuard.handleBack()) {
+          ScaffoldMessenger.of(context)
+            ..hideCurrentSnackBar()
+            ..showSnackBar(
+              const SnackBar(
+                content: Text('اضغط مرة أخرى للخروج من التطبيق'),
+                duration: Duration(seconds: 2),
+              ),
+            );
+          return;
+        }
+        SystemNavigator.pop();
+      },
+      child: BlocProvider<DashboardCubit>(
+        create: (_) => DashboardCubit()..fetchStats(),
+        child: Scaffold(
+          appBar: AppBar(
+            title: const Text('لوحة التحكم'),
+            // MOBILE-F03: أيقونات الإشعارات/الحساب معطّلة حتى تُنفّذ مساراتها.
+          ),
+          drawer: _buildDrawer(context),
+          body: BlocBuilder<DashboardCubit, DashboardState>(
+            builder: (context, state) {
+              if (state is DashboardLoading || state is DashboardInitial) {
+                return const AppLoadingView();
+              }
+              if (state is DashboardError) {
+                return AppErrorView(
+                  message: state.message,
+                  onRetry: () => context.read<DashboardCubit>().fetchStats(),
+                );
+              }
+              if (state is DashboardEmpty) {
+                return AppEmptyView(
+                  title: 'لا توجد بيانات في الفترة المحددة',
+                  actionLabel: 'إعادة التحميل',
+                  onAction: () => context.read<DashboardCubit>().fetchStats(),
+                );
+              }
+              if (state is DashboardLoaded) {
+                return _DashboardContent(stats: state.stats);
+              }
+              return const SizedBox.shrink();
+            },
+          ),
+          floatingActionButton: FloatingActionButton.extended(
+            onPressed: () => context.push(AppRouter.production),
+            icon: const Icon(Icons.add),
+            label: const Text(
+              'أمر تشغيل جديد',
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
           ),
         ),
       ),
@@ -87,13 +103,13 @@ class DashboardScreen extends StatelessWidget {
           AppRouter.production),
       _MenuItem('الجودة', Icons.verified_rounded, AppRouter.quality),
       _MenuItem('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
-      _MenuItem('المبيعات والمشتريات', Icons.receipt_long_rounded,
-          AppRouter.sales),
-      _MenuItem('الشحن والتوزيع', Icons.local_shipping_rounded,
-          AppRouter.shipping),
+      _MenuItem(
+          'المبيعات والمشتريات', Icons.receipt_long_rounded, AppRouter.sales),
+      _MenuItem(
+          'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
       _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
-      _MenuItem('التقارير والطباعة', Icons.bar_chart_rounded,
-          AppRouter.reports),
+      _MenuItem(
+          'التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
     ];
 
     return Drawer(
@@ -147,14 +163,18 @@ class DashboardScreen extends StatelessWidget {
               itemBuilder: (context, index) {
                 final item = menuItems[index];
                 return ListTile(
-                  leading: Icon(item.icon,
-                      color: AppColors.textSecondary, size: 22),
+                  leading:
+                      Icon(item.icon, color: AppColors.textSecondary, size: 22),
                   title: Text(item.title,
-                      style: const TextStyle(
-                          fontFamily: 'Cairo', fontSize: 14)),
+                      style:
+                          const TextStyle(fontFamily: 'Cairo', fontSize: 14)),
                   onTap: () {
                     Navigator.pop(context);
-                    context.go(item.route);
+                    final currentRoute =
+                        GoRouterState.of(context).matchedLocation;
+                    if (currentRoute != item.route) {
+                      context.push(item.route);
+                    }
                   },
                 );
               },
@@ -234,13 +254,11 @@ class _DashboardContent extends StatelessWidget {
           ),
         ),
         Container(
-          padding:
-              const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
             color: AppColors.success.withValues(alpha: 0.1),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-                color: AppColors.success.withValues(alpha: 0.3)),
+            border: Border.all(color: AppColors.success.withValues(alpha: 0.3)),
           ),
           child: const Row(
             children: [
@@ -259,8 +277,7 @@ class _DashboardContent extends StatelessWidget {
   }
 
   Widget _buildKpiGrid(BuildContext context) {
-    final inventory =
-        Map<String, dynamic>.from(stats['inventory'] as Map);
+    final inventory = Map<String, dynamic>.from(stats['inventory'] as Map);
     final sales = List<dynamic>.from(stats['sales'] as List);
     // إجمالي مبيعات الفترة = مجموع حقول amount في السلسلة الشهرية.
     final totalSales = sales.fold<double>(
@@ -268,10 +285,8 @@ class _DashboardContent extends StatelessWidget {
       (prev, item) =>
           prev + (((item as Map)['amount'] as num?)?.toDouble() ?? 0),
     );
-    final totalMaterials =
-        (inventory['totalMaterials'] as num?)?.toInt() ?? 0;
-    final lowStock =
-        (inventory['lowStockMaterials'] as num?)?.toInt() ?? 0;
+    final totalMaterials = (inventory['totalMaterials'] as num?)?.toInt() ?? 0;
+    final lowStock = (inventory['lowStockMaterials'] as num?)?.toInt() ?? 0;
     final finishedGoods =
         (inventory['totalFinishedGoodsTypes'] as num?)?.toInt() ?? 0;
 
@@ -313,8 +328,7 @@ class _DashboardContent extends StatelessWidget {
         childAspectRatio: 1.6,
       ),
       itemCount: kpis.length,
-      itemBuilder: (context, index) =>
-          _buildKpiCard(context, kpis[index]),
+      itemBuilder: (context, index) => _buildKpiCard(context, kpis[index]),
     );
   }
 
@@ -359,8 +373,7 @@ class _DashboardContent extends StatelessWidget {
   }
 
   Widget _buildProductionChart(BuildContext context) {
-    final production =
-        List<dynamic>.from(stats['production'] as List);
+    final production = List<dynamic>.from(stats['production'] as List);
     if (production.isEmpty) {
       return _sectionCard(
         context,
@@ -422,9 +435,8 @@ class _DashboardContent extends StatelessWidget {
                     final period =
                         (production[index] as Map)['period'] as String;
                     // period بصيغة YYYY-MM-DD — نأخذ الجزء اليومي فقط.
-                    final dayLabel = period.length >= 10
-                        ? period.substring(8, 10)
-                        : period;
+                    final dayLabel =
+                        period.length >= 10 ? period.substring(8, 10) : period;
                     return Text(
                       nf.format(int.tryParse(dayLabel) ?? 0),
                       style: const TextStyle(
@@ -448,19 +460,17 @@ class _DashboardContent extends StatelessWidget {
                   ),
                 ),
               ),
-              rightTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false)),
-              topTitles: const AxisTitles(
-                  sideTitles: SideTitles(showTitles: false)),
+              rightTitles:
+                  const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              topTitles:
+                  const AxisTitles(sideTitles: SideTitles(showTitles: false)),
             ),
             borderData: FlBorderData(show: false),
             lineBarsData: [
               LineChartBarData(
                 spots: production.asMap().entries.map((entry) {
-                  final pieces =
-                      (entry.value as Map)['pieces'] as num;
-                  return FlSpot(entry.key.toDouble(),
-                      pieces.toDouble());
+                  final pieces = (entry.value as Map)['pieces'] as num;
+                  return FlSpot(entry.key.toDouble(), pieces.toDouble());
                 }).toList(),
                 isCurved: true,
                 color: AppColors.primary,
@@ -481,8 +491,7 @@ class _DashboardContent extends StatelessWidget {
   }
 
   Widget _buildTopWorkers(BuildContext context) {
-    final workers =
-        List<dynamic>.from(stats['topWorkers'] as List);
+    final workers = List<dynamic>.from(stats['topWorkers'] as List);
     final nf = NumberFormat.decimalPattern('ar');
 
     return _sectionCard(
@@ -503,11 +512,10 @@ class _DashboardContent extends StatelessWidget {
                 final pieces = (w['pieces'] as num?)?.toInt() ?? 0;
                 return ListTile(
                   leading: const CircleAvatar(
-                    child:
-                        Icon(Icons.star, color: Colors.amber),
+                    child: Icon(Icons.star, color: Colors.amber),
                   ),
-                  title: Text(name,
-                      style: const TextStyle(fontFamily: 'Cairo')),
+                  title:
+                      Text(name, style: const TextStyle(fontFamily: 'Cairo')),
                   trailing: Text(
                     '${nf.format(pieces)} قطعة',
                     style: const TextStyle(
@@ -547,74 +555,6 @@ class _DashboardContent extends StatelessWidget {
 // مشاهد الحالات الخاصة (Error / Empty).
 // ---------------------------------------------------------------------------
 
-class _ErrorView extends StatelessWidget {
-  const _ErrorView({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.cloud_off, size: 48, color: AppColors.error),
-            const SizedBox(height: 12),
-            Text(
-              message,
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontFamily: 'Cairo'),
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('إعادة المحاولة'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EmptyView extends StatelessWidget {
-  const _EmptyView({required this.onRetry});
-
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.inbox_outlined,
-                size: 48, color: AppColors.textSecondary),
-            const SizedBox(height: 12),
-            const Text(
-              'لا توجد بيانات',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontFamily: 'Cairo'),
-            ),
-            const SizedBox(height: 16),
-            OutlinedButton.icon(
-              onPressed: onRetry,
-              icon: const Icon(Icons.refresh),
-              label: const Text('إعادة التحميل'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
 class _RoleBadge extends StatelessWidget {
   const _RoleBadge();
 
@@ -628,8 +568,8 @@ class _RoleBadge extends StatelessWidget {
       ),
       child: const Text(
         'مدير عام',
-        style: TextStyle(
-            color: Colors.white, fontFamily: 'Cairo', fontSize: 10),
+        style:
+            TextStyle(color: Colors.white, fontFamily: 'Cairo', fontSize: 10),
       ),
     );
   }

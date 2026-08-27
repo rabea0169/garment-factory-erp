@@ -24,6 +24,8 @@
 	<string>????</string>
 	<key>CFBundleVersion</key>
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
+	<key>NSContactsUsageDescription</key>
+	<string>نحتاج الوصول إلى جهة اتصال واحدة لتعبئة بيانات العميل أو المورد أو الموظف.</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>

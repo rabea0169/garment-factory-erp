@@ -19,4 +19,12 @@ export class CreateCustomerDto {
   @IsOptional()
   @IsString()
   address?: string;
+
+  @ApiPropertyOptional({
+    example: 'customer@example.com',
+    description: 'البريد الإلكتروني (اختياري)',
+  })
+  @IsOptional()
+  @IsString()
+  email?: string;
 }
