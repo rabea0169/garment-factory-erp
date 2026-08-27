@@ -15,13 +15,19 @@ void main() async {
   // تهيئة عميل API
   ApiClient.instance.init(onUnauthorized: AppRouter.goToLogin);
   String? token;
+  Map<String, dynamic>? user;
   try {
-    token = await AuthStorage().readAccessToken();
+    final storage = AuthStorage();
+    token = await storage.readAccessToken();
+    user = await storage.readUser();
   } catch (_) {
     // فشل قراءة التخزين لا يجب أن يمنع تشغيل التطبيق؛ يبدأ المستخدم بدون جلسة.
     token = null;
+    user = null;
   }
-  AppRouter.configureInitialLocation(isAuthenticated: token?.isNotEmpty == true);
+  AppRouter.configureInitialLocation(
+    isAuthenticated: token?.isNotEmpty == true && user?['id'] != null,
+  );
 
   // إجبار الاتجاه العمودي فقط
   await SystemChrome.setPreferredOrientations([

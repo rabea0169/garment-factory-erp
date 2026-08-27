@@ -40,7 +40,26 @@ class AuthCubit extends Cubit<AuthState> {
         return;
       }
 
-      emit(AuthAuthenticated(<String, dynamic>{}));
+      final cachedUser = await _storage.readUser();
+      if (cachedUser == null) {
+        await _apiClient.clearSession();
+        emit(AuthUnauthenticated());
+        return;
+      }
+
+      try {
+        final response = await _apiClient.dio.get('/auth/me');
+        final responseData = response.data;
+        if (responseData is! Map) {
+          throw const FormatException('استجابة بيانات المستخدم غير صالحة');
+        }
+        final user = Map<String, dynamic>.from(responseData);
+        await _storage.writeUser(user);
+        emit(AuthAuthenticated(user));
+      } catch (error) {
+        await _apiClient.clearSession();
+        emit(AuthUnauthenticated());
+      }
     } catch (error) {
       await _apiClient.clearSession();
       emit(AuthUnauthenticated());
@@ -65,16 +84,15 @@ class AuthCubit extends Cubit<AuthState> {
 
       final token = responseData['access_token'] as String;
       final user = responseData['user'];
+      if (user is! Map) {
+        throw const FormatException('بيانات المستخدم غير موجودة');
+      }
+      final normalizedUser = Map<String, dynamic>.from(user);
       await _storage.writeAccessToken(token);
+      await _storage.writeUser(normalizedUser);
       _apiClient.dio.options.headers['Authorization'] = 'Bearer $token';
 
-      emit(
-        AuthAuthenticated(
-          user is Map<String, dynamic>
-              ? user
-              : <String, dynamic>{},
-        ),
-      );
+      emit(AuthAuthenticated(normalizedUser));
     } catch (error) {
       emit(AuthError(_apiClient.messageFor(error)));
     }

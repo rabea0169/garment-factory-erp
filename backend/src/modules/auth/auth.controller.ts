@@ -1,8 +1,16 @@
-import { Controller, Post, Body, HttpCode, HttpStatus } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Post,
+} from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { CurrentUser } from './current-user.decorator';
 import { Public } from './public.decorator';
 
 /**
@@ -13,6 +21,13 @@ import { Public } from './public.decorator';
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
+
+  @Get('me')
+  @ApiOperation({ summary: 'إرجاع بيانات المستخدم الحالي' })
+  @ApiResponse({ status: 200, description: 'بيانات المستخدم المصادق عليه' })
+  me(@CurrentUser() user: Record<string, unknown>) {
+    return user;
+  }
 
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })

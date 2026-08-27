@@ -58,7 +58,14 @@ class AppRouter {
         token = null;
       }
 
-      final isAuthenticated = token?.isNotEmpty == true;
+      Map<String, dynamic>? user;
+      try {
+        user = await AuthStorage().readUser();
+      } catch (_) {
+        user = null;
+      }
+
+      final isAuthenticated = token?.isNotEmpty == true && user?['id'] != null;
       if (!isAuthenticated && !isLoginRoute) return login;
       if (isAuthenticated && isLoginRoute) return dashboard;
       return null;
