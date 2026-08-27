@@ -33,12 +33,14 @@ export class ShippingController {
     @Param('id') id: string,
     @Body() body: UpdateShipmentStatusDto,
     @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.shippingService.updateShipmentStatus(
       id,
       body.status,
       actorId,
       body.proofOfDelivery,
+      idempotencyKey,
     );
   }
 

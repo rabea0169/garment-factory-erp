@@ -29,6 +29,7 @@ export function createPrismaMock() {
     },
     rawMaterial: {
       findMany: jest.fn(),
+      findFirst: jest.fn(),
       findUnique: jest.fn(),
       update: jest.fn(),
       count: jest.fn(),
@@ -119,12 +120,19 @@ export function createPrismaMock() {
       findFirst: jest.fn(),
       findUnique: jest.fn(),
       create: jest.fn(),
+      update: jest.fn(),
     },
-    bomLine: { upsert: jest.fn(), delete: jest.fn() },
+    bomLine: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn(),
+    },
     stockLedgerEntry: {
       create: jest.fn(),
       findMany: jest.fn(),
       count: jest.fn(),
+      aggregate: jest.fn(),
+      findUnique: jest.fn(),
     },
     // A8: idempotencyKey mock — findUnique (for replay), create (for new key), update (for storing response)
     idempotencyKey: {
@@ -204,6 +212,12 @@ export function createPrismaMock() {
       update: jest.fn(),
       count: jest.fn(),
     },
+    customerPayment: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      count: jest.fn(),
+    },
     supplier: {
       findMany: jest.fn(),
       findFirst: jest.fn(),
@@ -215,6 +229,7 @@ export function createPrismaMock() {
     shipment: {
       findMany: jest.fn(),
       findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),

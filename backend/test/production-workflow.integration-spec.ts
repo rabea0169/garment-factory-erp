@@ -460,26 +460,6 @@ integrationDescribe('GF-0013 production workflow integration', () => {
       },
       scenario.userId,
     );
-    await workflowService.recordStageOutput(
-      {
-        workOrderId: scenario.workOrderId,
-        stage: ProductionStage.CUTTING,
-        inputQty: 10,
-        acceptedQty: 8,
-        rejectedQty: 1,
-        wasteQty: 1,
-      },
-      scenario.userId,
-    );
-
-    expect(
-      await prisma.activityLog.count({
-        where: {
-          userId: scenario.userId,
-          action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
-        },
-      }),
-    ).toBe(1);
 
     const input = {
       workOrderId: scenario.workOrderId,
@@ -520,6 +500,26 @@ integrationDescribe('GF-0013 production workflow integration', () => {
       }),
     ).toBe(1); // replay must not create a second ISSUE
 
+    await workflowService.recordStageOutput(
+      {
+        workOrderId: scenario.workOrderId,
+        stage: ProductionStage.CUTTING,
+        inputQty: 10,
+        acceptedQty: 8,
+        rejectedQty: 1,
+        wasteQty: 1,
+      },
+      scenario.userId,
+    );
+    expect(
+      await prisma.activityLog.count({
+        where: {
+          userId: scenario.userId,
+          action: 'PRODUCTION_STAGE_OUTPUT_RECORDED',
+        },
+      }),
+    ).toBe(1);
+
     await workflowService.transitionStage(
       {
         workOrderId: scenario.workOrderId,
@@ -554,14 +554,6 @@ integrationDescribe('GF-0013 production workflow integration', () => {
       },
       scenario.userId,
     );
-    await workflowService.recordStageOutput({
-      workOrderId: scenario.workOrderId,
-      stage: ProductionStage.CUTTING,
-      inputQty: 10,
-      acceptedQty: 8,
-      rejectedQty: 1,
-      wasteQty: 1,
-    });
 
     const input = {
       workOrderId: scenario.workOrderId,
@@ -777,14 +769,6 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       { workOrderId: scenario.workOrderId, toStage: ProductionStage.CUTTING },
       scenario.userId,
     );
-    await workflowService.recordStageOutput({
-      workOrderId: scenario.workOrderId,
-      stage: ProductionStage.CUTTING,
-      inputQty: 10,
-      acceptedQty: 8,
-      rejectedQty: 1,
-      wasteQty: 1,
-    });
     await workflowService.consumeMaterial(
       {
         workOrderId: scenario.workOrderId,
@@ -799,6 +783,14 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       },
       scenario.userId,
     );
+    await workflowService.recordStageOutput({
+      workOrderId: scenario.workOrderId,
+      stage: ProductionStage.CUTTING,
+      inputQty: 10,
+      acceptedQty: 8,
+      rejectedQty: 1,
+      wasteQty: 1,
+    });
     await workflowService.transitionStage(
       { workOrderId: scenario.workOrderId, toStage: ProductionStage.SEWING },
       scenario.userId,

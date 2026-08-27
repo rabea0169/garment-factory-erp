@@ -236,9 +236,14 @@ describe('HrService — GF-0015 payroll', () => {
         reference: 'PAYROLL:pay-1',
         lines: [
           expect.objectContaining({
-            debitAccountId: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
             creditAccountId: CHART_OF_ACCOUNTS.CASH,
             amount: 410,
+          }),
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+            creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+            amount: 250,
           }),
         ],
         treasuryUpdates: [{ treasuryId: 'treasury-1', delta: -410 }],

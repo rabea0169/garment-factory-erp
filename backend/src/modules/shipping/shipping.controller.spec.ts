@@ -39,12 +39,13 @@ describe('ShippingController — التفويض والصلاحيات (GF-0003)',
       status: ShipmentStatus.DELIVERED,
       proofOfDelivery: 'POD-1',
     };
-    await controller.updateStatus('sh-1', body, 'actor-1');
+    await controller.updateStatus('sh-1', body, 'actor-1', 'status-key-1');
     expect(service.updateShipmentStatus).toHaveBeenCalledWith(
       'sh-1',
       body.status,
       'actor-1',
       'POD-1',
+      'status-key-1',
     );
   });
 

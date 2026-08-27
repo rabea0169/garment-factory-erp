@@ -71,6 +71,7 @@ function createInventoryPrismaMock(): ExtendedPrismaMock {
       findMany: jest.fn(),
       count: jest.fn(),
       aggregate: jest.fn(),
+      findUnique: jest.fn(),
     },
     idempotencyKey: {
       findUnique: jest.fn(),
@@ -1339,5 +1340,85 @@ describe('InventoryService — قيد GL لهدر/تسوية المخزون (OPS
       postingKey: string;
     };
     expect(input.postingKey).toBe('inventory-waste:' + ENTRY_CREATED.entryCode);
+  });
+
+  it('ينقل الخامة بين مخزنين بقيدي TRANSFER متوازنين دون تغيير الإجمالي', async () => {
+    prisma.$transaction.mockImplementation(
+      async (fn: (txClient: ExtendedPrismaMock) => Promise<unknown>) =>
+        fn(prisma),
+    );
+    prisma.rawMaterial.findUnique.mockResolvedValue({
+      id: 'rm-1',
+      costPerUnit: new Prisma.Decimal('45.50'),
+    });
+    prisma.warehouse.findUnique
+      .mockResolvedValueOnce(WAREHOUSE)
+      .mockResolvedValueOnce({
+        ...WAREHOUSE,
+        id: 'wh-2',
+        code: 'WH-RAW-2',
+        name: 'مخزن خامات ثانٍ',
+      });
+    prisma.stockLedgerEntry.aggregate
+      .mockResolvedValueOnce({
+        _sum: { quantityDelta: new Prisma.Decimal('10') },
+      })
+      .mockResolvedValueOnce({
+        _sum: { quantityDelta: new Prisma.Decimal('5') },
+      });
+    prisma.stockLedgerEntry.create
+      .mockResolvedValueOnce(ENTRY_CREATED)
+      .mockResolvedValueOnce({
+        entryCode: 'SLE-20260825-TEST0002',
+        createdAt: new Date('2026-08-25T10:01:00.000Z'),
+      });
+
+    const result = await service.transfer(
+      {
+        rawMaterialId: 'rm-1',
+        fromWarehouseId: 'wh-1',
+        toWarehouseId: 'wh-2',
+        quantity: 4,
+        reference: 'TRF-1',
+        notes: 'تحويل للتشغيل',
+      },
+      'user-1',
+    );
+
+    expect(result).toMatchObject({
+      rawMaterialId: 'rm-1',
+      fromWarehouseId: 'wh-1',
+      toWarehouseId: 'wh-2',
+      quantity: 4,
+      fromBalanceAfter: 6,
+      toBalanceAfter: 9,
+      totalValue: 182,
+      replayed: false,
+    });
+    expect(prisma.stockLedgerEntry.create).toHaveBeenCalledTimes(2);
+    expect(prisma.stockLedgerEntry.create).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: StockMovementType.TRANSFER,
+          warehouseId: 'wh-1',
+          quantityDelta: -4,
+          balanceAfter: 6,
+          reference: 'TRF-1',
+        }) as Record<string, unknown>,
+      }),
+    );
+    expect(prisma.stockLedgerEntry.create).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: StockMovementType.TRANSFER,
+          warehouseId: 'wh-2',
+          quantityDelta: 4,
+          balanceAfter: 9,
+          reference: 'TRF-1',
+        }) as Record<string, unknown>,
+      }),
+    );
   });
 });

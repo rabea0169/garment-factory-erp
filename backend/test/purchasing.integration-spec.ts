@@ -275,11 +275,44 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
         where: { rawMaterialId: rawMaterialId },
       }),
     ).toBe(2);
+    const returnJournal = await prisma.journalEntry.findFirst({
+      where: { reference: { startsWith: 'PURCHASE_RETURN:' } },
+      include: { lines: true },
+    });
+    expect(returnJournal).toMatchObject({ isAuto: true });
+    expect(returnJournal?.lines).toHaveLength(1);
+    expect(returnJournal?.lines[0]).toMatchObject({
+      debitAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+      creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+    });
+    expect(returnJournal?.lines[0].amount.toNumber()).toBe(20);
+    const accounts = await prisma.account.findMany({
+      where: {
+        id: {
+          in: [CHART_OF_ACCOUNTS.INVENTORY, CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE],
+        },
+      },
+      select: { id: true, balance: true },
+    });
     expect(
-      await prisma.journalEntry.count({
-        where: { reference: { startsWith: 'PURCHASE_RETURN_ITEM:' } },
-      }),
-    ).toBe(1);
+      accounts
+        .find((account) => account.id === CHART_OF_ACCOUNTS.INVENTORY)
+        ?.balance.toNumber(),
+    ).toBe(30);
+    expect(
+      accounts
+        .find((account) => account.id === CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE)
+        ?.balance.toNumber(),
+    ).toBe(-30);
+    const order = await prisma.purchaseOrder.findUnique({
+      where: { id: orderId },
+      select: { supplierId: true },
+    });
+    const supplier = await prisma.supplier.findUnique({
+      where: { id: order!.supplierId },
+      select: { balance: true },
+    });
+    expect(supplier?.balance.toNumber()).toBe(30);
     const material = await prisma.rawMaterial.findUnique({
       where: { id: rawMaterialId },
     });

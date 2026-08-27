@@ -18,6 +18,7 @@ import { ReceiveStockDto } from './dto/receive-stock.dto';
 import { IssueStockDto } from './dto/issue-stock.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { WasteStockDto } from './dto/waste-stock.dto';
+import { TransferStockDto } from './dto/transfer-stock.dto';
 import { LedgerQueryDto } from './dto/ledger-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -113,6 +114,19 @@ export class InventoryController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.inventoryService.issue({ ...body, idempotencyKey }, userId);
+  }
+
+  @Post('movements/transfer')
+  @Roles(UserRole.INVENTORY_MANAGER)
+  @ApiOperation({
+    summary: 'تحويل خامات بين مخزنين مع قيدي خروج ودخول قابلين للتدقيق',
+  })
+  async transfer(
+    @Body() body: TransferStockDto,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.inventoryService.transfer({ ...body, idempotencyKey }, userId);
   }
 
   @Post('movements/adjust')

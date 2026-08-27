@@ -285,6 +285,7 @@ model Warehouse {
 enum StockMovementType {
   RECEIVE
   ISSUE
+  TRANSFER
   ADJUSTMENT
   WASTE
   RETURN

@@ -87,8 +87,16 @@ describe('Auth guard (e2e) — GF-0002', () => {
     product: { create: jest.fn(), findFirst: jest.fn() },
     productVariant: { create: jest.fn() },
     rawMaterial: { findFirst: jest.fn() },
-    bomVersion: { findFirst: jest.fn(), create: jest.fn() },
-    bomLine: { upsert: jest.fn(), delete: jest.fn() },
+    bomVersion: {
+      findFirst: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    bomLine: {
+      findUnique: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn(),
+    },
   };
 
   // A1/A2/A3: mock مبسّط لـ FinancialPostingService — لا يحتاج DB فعلي.
@@ -621,9 +629,30 @@ describe('Auth guard (e2e) — GF-0002', () => {
       prismaFns.rawMaterial.findFirst.mockResolvedValue({ id: rawMaterialId });
       prismaFns.bomVersion.findFirst.mockResolvedValue({
         id: 'bom-version-rbac-1',
+        versionName: 'v1.0',
+        isActive: true,
+        lines: [],
       });
-      prismaFns.bomLine.upsert.mockResolvedValue({ id: bomId });
-      prismaFns.bomLine.delete.mockResolvedValue({ id: bomId });
+      prismaFns.bomVersion.update.mockResolvedValue({
+        id: 'bom-version-rbac-1',
+        isActive: false,
+      });
+      prismaFns.bomVersion.create.mockResolvedValue({
+        id: 'bom-version-rbac-2',
+        versionName: 'v2.0',
+        isActive: true,
+        lines: [],
+      });
+      prismaFns.bomLine.findUnique.mockResolvedValue({
+        id: bomId,
+        bomVersion: {
+          id: 'bom-version-rbac-1',
+          productId,
+          versionName: 'v1.0',
+          isActive: true,
+          lines: [{ id: bomId, rawMaterialId, quantity: 1.25, unit: 'METER' }],
+        },
+      });
     });
 
     it('POST /products بلا توكن → 401', () => {

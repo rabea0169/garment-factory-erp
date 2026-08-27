@@ -1,4 +1,8 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
@@ -88,52 +92,113 @@ export class ProductsService {
     quantity: number,
     unit: string,
   ) {
-    const [product, rawMaterial] = await Promise.all([
-      this.prisma.product.findFirst({
-        where: { id: productId, isActive: true, deletedAt: null },
-      }),
-      this.prisma.rawMaterial.findFirst({
-        where: { id: rawMaterialId, isActive: true },
-      }),
-    ]);
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new BadRequestException('كمية BOM يجب أن تكون موجبة وصالحة');
+    }
+    if (!unit.trim()) {
+      throw new BadRequestException('وحدة BOM مطلوبة');
+    }
 
-    if (!product) throw new NotFoundException('المنتج غير موجود');
-    if (!rawMaterial) throw new NotFoundException('الخامة غير موجودة');
+    return this.prisma.$transaction(async (tx) => {
+      const [product, rawMaterial] = await Promise.all([
+        tx.product.findFirst({
+          where: { id: productId, isActive: true, deletedAt: null },
+        }),
+        tx.rawMaterial.findFirst({
+          where: { id: rawMaterialId, isActive: true },
+        }),
+      ]);
 
-    const activeBom = await this.prisma.bomVersion.findFirst({
-      where: { productId, isActive: true },
-      orderBy: { createdAt: 'desc' },
-    });
+      if (!product) throw new NotFoundException('المنتج غير موجود');
+      if (!rawMaterial) throw new NotFoundException('الخامة غير موجودة');
 
-    const bomVersion =
-      activeBom ??
-      (await this.prisma.bomVersion.create({
+      const activeBom = await tx.bomVersion.findFirst({
+        where: { productId, isActive: true },
+        include: { lines: true },
+        orderBy: { createdAt: 'desc' },
+      });
+      const existingLines = activeBom?.lines ?? [];
+      const nextLines = existingLines.some(
+        (line) => line.rawMaterialId === rawMaterialId,
+      )
+        ? existingLines.map((line) =>
+            line.rawMaterialId === rawMaterialId
+              ? { rawMaterialId, quantity, unit }
+              : {
+                  rawMaterialId: line.rawMaterialId,
+                  quantity: line.quantity,
+                  unit: line.unit,
+                },
+          )
+        : [
+            ...existingLines.map((line) => ({
+              rawMaterialId: line.rawMaterialId,
+              quantity: line.quantity,
+              unit: line.unit,
+            })),
+            { rawMaterialId, quantity, unit },
+          ];
+
+      if (activeBom) {
+        await tx.bomVersion.update({
+          where: { id: activeBom.id },
+          data: { isActive: false },
+        });
+      }
+
+      return tx.bomVersion.create({
         data: {
           productId,
-          versionName: 'v1.0',
+          versionName: nextBomVersionName(activeBom?.versionName),
           isActive: true,
+          lines: { create: nextLines },
         },
-      }));
-
-    return this.prisma.bomLine.upsert({
-      where: {
-        bomVersionId_rawMaterialId: {
-          bomVersionId: bomVersion.id,
-          rawMaterialId,
-        },
-      },
-      create: {
-        bomVersionId: bomVersion.id,
-        rawMaterialId,
-        quantity,
-        unit,
-      },
-      update: { quantity, unit },
-      include: { rawMaterial: true },
+        include: { lines: { include: { rawMaterial: true } } },
+      });
     });
   }
 
   async deleteBomItem(id: string) {
-    return this.prisma.bomLine.delete({ where: { id } });
+    return this.prisma.$transaction(async (tx) => {
+      const line = await tx.bomLine.findUnique({
+        where: { id },
+        include: { bomVersion: { include: { lines: true } } },
+      });
+      if (!line) throw new NotFoundException('بند BOM غير موجود');
+
+      const bomVersion = line.bomVersion;
+      if (!bomVersion.isActive) {
+        throw new BadRequestException('لا يمكن تعديل إصدار BOM غير فعال');
+      }
+      const nextLines = bomVersion.lines
+        .filter((candidate) => candidate.id !== id)
+        .map((candidate) => ({
+          rawMaterialId: candidate.rawMaterialId,
+          quantity: candidate.quantity,
+          unit: candidate.unit,
+        }));
+
+      await tx.bomVersion.update({
+        where: { id: bomVersion.id },
+        data: { isActive: false },
+      });
+      const replacement = await tx.bomVersion.create({
+        data: {
+          productId: bomVersion.productId,
+          versionName: nextBomVersionName(bomVersion.versionName),
+          isActive: true,
+          lines: { create: nextLines },
+        },
+        include: { lines: { include: { rawMaterial: true } } },
+      });
+      return { deletedLineId: id, bomVersion: replacement };
+    });
   }
+}
+
+function nextBomVersionName(current?: string): string {
+  if (!current) return 'v1.0';
+  const match = /^v(\d+)(?:\.(\d+))?$/.exec(current.trim());
+  if (!match) return `${current}-next`;
+  return `v${Number(match[1]) + 1}.0`;
 }
