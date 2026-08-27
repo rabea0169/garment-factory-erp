@@ -10,23 +10,23 @@
 | الفرع الأساسي المرجعي | `origin/main` |
 | آخر commit على main | `bd3c02eefc404a2110c60c31df3ea405214186e6` — baseline متحقق يتضمن إصلاحات Railway |
 | فرع العمل الحالي | `feat/sprint1-navigation-ux` — شريحة Sprint 1 معزولة |
-| آخر commit في فرع العمل | مبني على baseline أعلاه؛ تغييرات Sprint 1 قيد المراجعة قبل أول commit |
-| Pull Requests الأخيرة | لا يوجد PR لـSprint 1 بعد؛ لا دمج إلى main دون موافقة صريحة |
+| آخر commit في فرع العمل | `8d28905` — تنفيذ محلي متتابع لمراحل الخطة، دون رفع التغييرات الجديدة بعد |
+| Pull Requests الأخيرة | PR #71 موجود على GitHub للنسخة السابقة؛ لا تُرفع النسخة الشاملة أو تُدمج قبل Release Gate النهائي |
 | آخر مرحلة مكتملة بالكامل على main | آخر حالة موثقة قبل Sprint 1؛ هذا الفرع لا يغيّر main |
 | حالة CI على main | تُراجع من GitHub قبل الدمج؛ نجاح الفحوص المحلية لا يثبت CI أو جاهزية الإنتاج |
 | حالة قاعدة البيانات | لا توجد migration في Sprint 1؛ إضافة `email` تستعمل عمود Customer الموجود مسبقًا |
-| إصدار API | `1.1`؛ توسعة `POST /sales/customers` لتوثيق وحفظ `email` الاختياري |
+| إصدار API | `1.2-dev`؛ توسعات master data والمبيعات والمشتريات والجودة والمحاسبة |
 | قاعدة البيانات المحلية | `GF_INTEGRATION_DATABASE_URL` غير مضبوط؛ اختبارات PostgreSQL التكاملية لم تُشغّل محليًا |
 | الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي أو إنتاجي |
-| المهمة النشطة | Sprint 1 — navigation/UX وContact Picker وربط إنشاء العميل |
+| المهمة النشطة | استكمال الخطة الشاملة ثم Release Gate النهائي |
 | المرحلة النشطة | التنفيذ والتحقق المحلي مكتملان مبدئيًا؛ APK Debug نجح، ولا يوجد اختبار جهاز فعلي أو قبول إنتاجي |
-| سبب عدم إغلاق Sprint 1 | يلزم مراجعة diff النهائي، secret scan، commit/push، فتح PR، وانتظار CI؛ supplier/worker APIs خارج النطاق |
+| سبب عدم الإغلاق النهائي | يلزم تدقيق diff والأسرار والوثائق، رفع النسخة الشاملة، انتظار CI، ثم موافقة المستخدم على الدمج |
 | حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
 | حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
 | Security blockers | لا أسرار في Sprint 1 حسب المراجعة الحالية؛ بيئة Railway التجريبية لا تعني جاهزية إنتاجية، ويجب تغيير بيانات الحساب التجريبي قبل الاستخدام الحقيقي |
 | Open decisions | إنشاء Supplier API وWorker API وربط Contact Picker بهما مؤجلان؛ إنشاء أمر البيع من الواجهة ودورات ERP الأخرى مؤجلة |
-| Last handoff | سيُضاف `docs/handoffs/HANDOFF-SPRINT1-NAVIGATION-UX.md` مع نتائج التحقق وقيود التشغيل |
-| Next exact action | إكمال secret/diff review ثم commit وpush وفتح PR مستقل؛ لا تدمج PR إلا بعد تفويض صريح ونجاح CI |
+| Last handoff | `docs/handoffs/HANDOFF-SPRINT1-NAVIGATION-UX.md`؛ يلزم handoff نهائي بعد اكتمال كل المراحل |
+| Next exact action | إكمال audit النهائي وUAT وقيود الإنتاج، ثم رفع النسخة الشاملة وفتح PR؛ لا دمج قبل موافقة صريحة |
 
 ## المهام المكتملة على main
 
@@ -89,3 +89,11 @@
 ## آخر تحديث توثيقي
 
 تم تحديث هذا الملف على فرع `docs/post-merge-release-state` فوق `main@e32f745` بعد دمج PR #57 وPR #58. Run `32950963418` أخضر وحقق Backend وPostgreSQL integration وE2E وFlutter وSecret Scan. ما زال Production No-Go حتى إغلاق Prisma Compute/npm audit وBackup/Restore/UAT.
+
+## سجل التنفيذ الشامل — 2026-08-27
+
+على فرع `feat/sprint1-navigation-ux` تم تنفيذ شرائح إضافية فوق Sprint 1: Supplier وWorker master-data APIs مع RBAC، ربط Contact Picker بنماذج العميل والمورد والعامل مع شاشة مراجعة، دورة المبيعات والتحصيل والإلغاء والمرتجعات، دورة الشحن، أوامر الشراء والاستلام، فحص الجودة والهالك، الخزائن والسندات المحاسبية، وتوحيد حالات UX وإصلاح الانتظار غير المتزامن في تسجيل إنتاج العامل.
+
+نتائج بوابات التحقق الأخيرة: Flutter analyze و29 اختبار Flutter وAndroid Debug APK ناجحة؛ Backend Prisma generate وformat وtypecheck وbuild ناجحة؛ 35 suite و241 unit tests ناجحة؛ و3 E2E suites و64 اختبارًا ناجحة. توجد 6 تحذيرات lint قديمة فقط في payroll/inventory specs، ولا توجد أخطاء lint. لم تُشغّل PostgreSQL integration محليًا لغياب `GF_INTEGRATION_DATABASE_URL`، ولم يُنفذ قبول على جهاز Android فعلي أو iOS build في بيئة Linux.
+
+لم تُرفع commits ما بعد `b868087` إلى GitHub حتى الآن، ولم يتم دمج أي تعديل في `main`. يبقى الإصدار `pre-release` إلى أن تُغلق مراجعة الأسرار، وUAT، وsigning/release build، وخطة backup/restore وmonitoring، ثم تُرفع النسخة النهائية ويُراجع CI قبل الدمج.
