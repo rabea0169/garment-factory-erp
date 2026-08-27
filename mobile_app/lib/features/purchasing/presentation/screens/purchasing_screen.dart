@@ -82,7 +82,7 @@ class PurchasingScreen extends StatelessWidget {
                           Align(
                             alignment: AlignmentDirectional.centerStart,
                             child: Padding(
-                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                               child: OutlinedButton.icon(
                                 onPressed: () => _showReceiveDialog(
                                   screenContext,
@@ -90,6 +90,22 @@ class PurchasingScreen extends StatelessWidget {
                                 ),
                                 icon: const Icon(Icons.move_to_inbox_outlined),
                                 label: const Text('تسجيل استلام'),
+                              ),
+                            ),
+                          ),
+                        if (status != 'DRAFT' && status != 'CANCELLED')
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                              child: OutlinedButton.icon(
+                                onPressed: () => _showReturnDialog(
+                                  screenContext,
+                                  order,
+                                ),
+                                icon: const Icon(
+                                    Icons.assignment_return_outlined),
+                                label: const Text('مرتجع للمورد'),
                               ),
                             ),
                           ),
@@ -129,6 +145,21 @@ class PurchasingScreen extends StatelessWidget {
     if (saved == true && context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم إنشاء أمر الشراء')),
+      );
+    }
+  }
+
+  Future<void> _showReturnDialog(BuildContext context, Map order) async {
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => _ReturnToSupplierDialog(
+        cubit: context.read<PurchasingCubit>(),
+        order: order,
+      ),
+    );
+    if (saved == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تسجيل مرتجع المورد وتحديث المخزون')),
       );
     }
   }
@@ -361,6 +392,15 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
       .where((item) => item['id'] != null)
       .toList();
 
+  int _remaining(Map item) {
+    final ordered = int.tryParse('${item['quantity'] ?? 0}') ?? 0;
+    final received = int.tryParse(
+          '${item['receivedQuantity'] ?? item['quantityReceived'] ?? 0}',
+        ) ??
+        0;
+    return (ordered - received).clamp(0, ordered);
+  }
+
   @override
   void dispose() {
     _quantityController.dispose();
@@ -409,7 +449,7 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
                   .map((item) => DropdownMenuItem<String>(
                         value: item['id'].toString(),
                         child: Text(
-                            'خامة ${item['rawMaterialId'] ?? ''} — ${item['quantity'] ?? 0}'),
+                            'خامة ${item['rawMaterialId'] ?? ''} — متبقي ${_remaining(item)}'),
                       ))
                   .toList(),
               onChanged:
@@ -423,8 +463,16 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
               decoration: const InputDecoration(labelText: 'كمية الاستلام *'),
               validator: (value) {
                 final quantity = int.tryParse(value?.trim() ?? '');
-                return quantity == null || quantity <= 0
-                    ? 'أدخل عددًا صحيحًا موجبًا'
+                if (quantity == null || quantity <= 0) {
+                  return 'أدخل عددًا صحيحًا موجبًا';
+                }
+                final item = _items.cast<Map?>().firstWhere(
+                      (item) => item?['id']?.toString() == _itemId,
+                      orElse: () => null,
+                    );
+                final remaining = item == null ? 0 : _remaining(item);
+                return quantity > remaining
+                    ? 'الكمية تتجاوز المتبقي ($remaining)'
                     : null;
               },
             ),
@@ -444,6 +492,143 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
         FilledButton(
           onPressed: _isSaving ? null : _save,
           child: Text(_isSaving ? 'جاري الحفظ...' : 'حفظ'),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReturnToSupplierDialog extends StatefulWidget {
+  const _ReturnToSupplierDialog({required this.cubit, required this.order});
+
+  final PurchasingCubit cubit;
+  final Map order;
+
+  @override
+  State<_ReturnToSupplierDialog> createState() =>
+      _ReturnToSupplierDialogState();
+}
+
+class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
+  final _formKey = GlobalKey<FormState>();
+  final _quantityController = TextEditingController(text: '1');
+  final _notesController = TextEditingController();
+  String? _itemId;
+  var _isSaving = false;
+
+  List<Map> get _items => (widget.order['items'] as List? ?? const [])
+      .whereType<Map>()
+      .where((item) => item['id'] != null)
+      .toList();
+
+  int _received(Map item) {
+    return int.tryParse(
+          '${item['receivedQuantity'] ?? item['quantityReceived'] ?? 0}',
+        ) ??
+        0;
+  }
+
+  @override
+  void dispose() {
+    _quantityController.dispose();
+    _notesController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    if (_isSaving || !(_formKey.currentState?.validate() ?? false)) return;
+    setState(() => _isSaving = true);
+    try {
+      await widget.cubit.returnToSupplier(
+        purchaseOrderId: '${widget.order['id']}',
+        purchaseOrderItemId: _itemId!,
+        quantity: double.parse(_quantityController.text.trim()),
+        notes: _notesController.text.trim(),
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('تعذر تسجيل المرتجع. تحقق من الكمية المستلمة.')),
+      );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('مرتجع إلى المورد'),
+      content: Form(
+        key: _formKey,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<String>(
+              initialValue: _itemId,
+              decoration: const InputDecoration(labelText: 'البند المستلم *'),
+              items: _items
+                  .where((item) => _received(item) > 0)
+                  .map(
+                    (item) => DropdownMenuItem<String>(
+                      value: '${item['id']}',
+                      child: Text(
+                        'خامة ${item['rawMaterialId'] ?? ''} — مستلم ${_received(item)}',
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged:
+                  _isSaving ? null : (value) => setState(() => _itemId = value),
+              validator: (value) => value == null ? 'اختر بندًا مستلمًا' : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _quantityController,
+              enabled: !_isSaving,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(labelText: 'كمية المرتجع *'),
+              validator: (value) {
+                final quantity = double.tryParse(value?.trim() ?? '');
+                if (quantity == null || quantity <= 0) {
+                  return 'أدخل كمية موجبة';
+                }
+                final item = _items.cast<Map?>().firstWhere(
+                      (item) => item?['id']?.toString() == _itemId,
+                      orElse: () => null,
+                    );
+                final received = item == null ? 0 : _received(item);
+                return quantity > received
+                    ? 'الكمية تتجاوز المستلم ($received)'
+                    : null;
+              },
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _notesController,
+              enabled: !_isSaving,
+              maxLines: 2,
+              decoration: const InputDecoration(labelText: 'ملاحظات'),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: _isSaving ? null : () => Navigator.pop(context),
+          child: const Text('إلغاء'),
+        ),
+        FilledButton(
+          onPressed: _isSaving ? null : _save,
+          child: _isSaving
+              ? const SizedBox(
+                  height: 18,
+                  width: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('حفظ المرتجع'),
         ),
       ],
     );
