@@ -16,11 +16,13 @@ class ProductionUnauthorizedFailure extends ProductionFailure {
 }
 
 class ProductionForbiddenFailure extends ProductionFailure {
-  const ProductionForbiddenFailure([super.message = 'ليس لديك صلاحية لتنفيذ هذا الإجراء']);
+  const ProductionForbiddenFailure(
+      [super.message = 'ليس لديك صلاحية لتنفيذ هذا الإجراء']);
 }
 
 class ProductionValidationFailure extends ProductionFailure {
-  const ProductionValidationFailure([super.message = 'بيانات أمر التشغيل غير صالحة']);
+  const ProductionValidationFailure(
+      [super.message = 'بيانات أمر التشغيل غير صالحة']);
 }
 
 class ProductionServerFailure extends ProductionFailure {
@@ -28,5 +30,6 @@ class ProductionServerFailure extends ProductionFailure {
 }
 
 class ProductionMappingFailure extends ProductionFailure {
-  const ProductionMappingFailure([super.message = 'استجابة الإنتاج غير متوافقة']);
+  const ProductionMappingFailure(
+      [super.message = 'استجابة الإنتاج غير متوافقة']);
 }

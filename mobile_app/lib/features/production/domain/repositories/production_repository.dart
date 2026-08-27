@@ -8,6 +8,8 @@ abstract interface class ProductionRepository {
     required int limit,
   });
 
+  Future<void> createWorkOrder(CreateWorkOrderCommand command);
+
   Future<StageTransition> transitionStage({
     required String workOrderId,
     required ProductionStage toStage,

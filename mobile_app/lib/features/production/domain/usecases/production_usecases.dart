@@ -3,6 +3,16 @@ import '../entities/stage_transition.dart';
 import '../entities/work_order.dart';
 import '../repositories/production_repository.dart';
 
+class CreateWorkOrder {
+  const CreateWorkOrder(this.repository);
+
+  final ProductionRepository repository;
+
+  Future<void> call(CreateWorkOrderCommand command) {
+    return repository.createWorkOrder(command);
+  }
+}
+
 class GetWorkOrders {
   const GetWorkOrders(this.repository);
 
