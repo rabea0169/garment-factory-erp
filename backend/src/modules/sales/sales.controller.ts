@@ -2,6 +2,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -13,6 +14,10 @@ import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateCustomerDto } from './dto/create-customer.dto';
+import {
+  UpdateCustomerDto,
+  UpdateCustomerCreditDto,
+} from './dto/update-customer.dto';
 import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
@@ -34,6 +39,30 @@ export class SalesController {
   @ApiOperation({ summary: 'إضافة عميل جديد' })
   async createCustomer(@Body() body: CreateCustomerDto) {
     return this.salesService.createCustomer(body);
+  }
+
+  // Wave 6 — COMM-F07: تحديث بيانات العميل العامة (الاسم/الهاتف/العنوان/...).
+  @Patch('customers/:id')
+  @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'تحديث بيانات عميل' })
+  async updateCustomer(
+    @Param('id') id: string,
+    @Body() body: UpdateCustomerDto,
+  ) {
+    return this.salesService.updateCustomer(id, body);
+  }
+
+  // Wave 6 — COMM-F07: ضبط الحد الائتماني وشروط السداد لعميل.
+  // مسار مخصّص لأنه إجراء امتيازي يحتاج تدقيقًا منفصلًا عن التعديل العام.
+  @Patch('customers/:id/credit')
+  @Roles(UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'ضبط الحد الائتماني وشروط السداد لعميل' })
+  async updateCustomerCredit(
+    @Param('id') id: string,
+    @Body() body: UpdateCustomerCreditDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.salesService.updateCustomerCredit(id, body, actorId);
   }
 
   @Post('customer-payments')

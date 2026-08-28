@@ -81,13 +81,123 @@ export class SalesService {
     phone?: string;
     address?: string;
     email?: string;
+    creditLimit?: number;
+    creditTermsDays?: number;
   }) {
     return this.prisma.customer.create({
       data: {
-        ...data,
+        name: data.name,
+        phone: data.phone,
+        address: data.address,
+        email: data.email,
+        // Wave 6 — COMM-F07: pass through the optional credit limit / terms.
+        // Prisma accepts `undefined` (skip the field) and `null` (explicitly
+        // store NULL). The DTO sends `number | undefined`; either is fine.
+        creditLimit: data.creditLimit,
+        creditTermsDays: data.creditTermsDays ?? 0,
         code: generateDocumentCode(DocumentCodePrefix.CUSTOMER),
       },
     });
+  }
+
+  /**
+   * Wave 6 — COMM-F07: update an existing customer's general contact info.
+   * `balance`, `code`, `creditLimit`, `creditTermsDays` are NOT editable here
+   * — credit fields go through `updateCustomerCredit` so they can be audited
+   * distinctly, and balance is governed by the financial posting service.
+   */
+  async updateCustomer(
+    id: string,
+    data: {
+      name?: string;
+      phone?: string;
+      address?: string;
+      email?: string;
+      notes?: string;
+    },
+  ) {
+    const existing = await this.prisma.customer.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('العميل غير موجود');
+    }
+    if (existing.deletedAt) {
+      throw new BadRequestException('لا يمكن تعديل عميل محذوف — استرجعه أولًا');
+    }
+    return this.prisma.customer.update({
+      where: { id },
+      data,
+    });
+  }
+
+  /**
+   * Wave 6 — COMM-F07: adjust the credit limit / terms on an existing customer.
+   *
+   * Accepts null for creditLimit to mean "remove the limit" (unlimited). This
+   * is a privileged action (GENERAL_MANAGER only — enforced at the controller)
+   * because it directly affects the factory's credit exposure.
+   *
+   * The write is logged via ActivityLog so credit-limit changes are auditable
+   * even if the customer record itself is later edited.
+   */
+  async updateCustomerCredit(
+    id: string,
+    input: {
+      creditLimit?: number | null;
+      creditTermsDays?: number;
+    },
+    actorId: string,
+  ) {
+    const existing = await this.prisma.customer.findUnique({
+      where: { id },
+    });
+    if (!existing) {
+      throw new NotFoundException('العميل غير موجود');
+    }
+    if (existing.deletedAt) {
+      throw new BadRequestException(
+        'لا يمكن تعديل حد ائتماني لعميل محذوف — استرجعه أولًا',
+      );
+    }
+
+    // Build update payload — only fields that are actually present.
+    const data: { creditLimit?: number | null; creditTermsDays?: number } = {};
+    if (input.creditLimit !== undefined) {
+      // Prisma treats `null` as "store NULL" (= unlimited). Allow it.
+      data.creditLimit = input.creditLimit;
+    }
+    if (input.creditTermsDays !== undefined) {
+      data.creditTermsDays = input.creditTermsDays;
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const customer = await tx.customer.update({
+        where: { id },
+        data,
+      });
+      await tx.activityLog.create({
+        data: {
+          action: 'CUSTOMER_CREDIT_LIMIT_UPDATED',
+          module: 'SALES',
+          userId: actorId,
+          details: {
+            entityType: 'Customer',
+            entityId: id,
+            previous: {
+              creditLimit: existing.creditLimit?.toString?.() ?? null,
+              creditTermsDays: existing.creditTermsDays,
+            },
+            next: {
+              creditLimit: customer.creditLimit?.toString?.() ?? null,
+              creditTermsDays: customer.creditTermsDays,
+            },
+          },
+        },
+      });
+      return customer;
+    });
+    return updated;
   }
 
   async createCustomerPayment(
@@ -764,6 +874,42 @@ export class SalesService {
           throw new BadRequestException(
             'مخزن المنتج التام الافتراضي غير موجود',
           );
+
+        // Wave 6 — COMM-F07: credit ceiling check.
+        // For CREDIT orders, project the customer's outstanding AR (balance)
+        // plus the new order's total against their creditLimit.
+        // Semantics:
+        //   * creditLimit = NULL  → unlimited (historical behavior, no check)
+        //   * creditLimit = 0     → no credit allowed at all (any CREDIT order is rejected)
+        //   * creditLimit > 0     → cap at this number (current AR + new order ≤ limit)
+        // We use the customer record that was eager-loaded above (order.customer)
+        // so no extra DB round trip is needed inside the tx. The check happens
+        // BEFORE the status transition so a failed check leaves the order in DRAFT.
+        if (order.paymentType === PaymentType.CREDIT) {
+          const customer = order.customer;
+          if (customer) {
+            const limit = customer.creditLimit;
+            const limitNum =
+              limit !== null && limit !== undefined ? Number(limit) : null;
+            if (limitNum !== null) {
+              const currentBalance = Number(customer.balance ?? 0);
+              const orderTotal = Number(order.totalAmount ?? 0);
+              const projected = currentBalance + orderTotal;
+              if (limitNum === 0) {
+                throw new BadRequestException(
+                  `لا يُسمح ببيع آجل لهذا العميل — الحد الائتماني = 0 ` +
+                    `(الرصيد ${currentBalance} + الطلب ${orderTotal} > 0)`,
+                );
+              }
+              if (limitNum > 0 && projected > limitNum + 0.01) {
+                throw new BadRequestException(
+                  `تجاوز الحد الائتماني للعميل: الرصيد الحالي ${currentBalance} ` +
+                    `+ قيمة الطلب ${orderTotal} = ${projected} > الحد ${limitNum}`,
+                );
+              }
+            }
+          }
+        }
 
         const transition = await tx.salesOrder.updateMany({
           where: { id: orderId, status: SalesOrderStatus.DRAFT },
