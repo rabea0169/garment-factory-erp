@@ -119,10 +119,10 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     ]);
   });
 
-  it('تسجيل سلفة يمرر البيانات كما وردت', async () => {
+  it('تسجيل سلفة يمرر البيانات وactorId وIdempotency-Key', async () => {
     const body = { workerId: 'w-1', amount: 200 };
-    await controller.recordAdvance(body);
-    expect(service.recordAdvance).toHaveBeenCalledWith(body, undefined);
+    await controller.recordAdvance(body, 'hr-1', 'adv-key');
+    expect(service.recordAdvance).toHaveBeenCalledWith(body, 'hr-1', 'adv-key');
   });
 
   it('إنشاء payroll يمرر تواريخ الفترة وactor وIdempotency-Key', async () => {

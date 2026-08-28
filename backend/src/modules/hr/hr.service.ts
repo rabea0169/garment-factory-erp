@@ -289,7 +289,9 @@ export class HrService {
       workerId: string;
       amount: number;
       notes?: string;
+      treasuryId?: string;
     },
+    actorId: string,
     idempotencyKey?: string,
   ) {
     // RES-F02: replay-safe retry via Idempotency-Key header — advances
@@ -298,6 +300,8 @@ export class HrService {
       workerId: data.workerId,
       amount: data.amount,
       notes: data.notes ?? null,
+      treasuryId: data.treasuryId ?? null,
+      actorId: actorId ?? null,
     });
     const scope = 'hr-advance';
     return this.prisma.$transaction(async (tx) => {
@@ -312,11 +316,82 @@ export class HrService {
           replayed: true;
         };
 
+      // COMM-F05 / ACC-F02: validate worker exists + treasury (if provided) is
+      // active BEFORE we touch money. We do this inside the tx so a partial
+      // failure (e.g., treasury frozen mid-flight) rolls back the advance too.
+      const worker = await tx.worker.findUnique({
+        where: { id: data.workerId },
+        select: { id: true, name: true, code: true },
+      });
+      if (!worker) throw new NotFoundException('العامل غير موجود');
+
+      if (data.treasuryId) {
+        const treasury = await tx.treasury.findUnique({
+          where: { id: data.treasuryId },
+          select: { id: true, isActive: true },
+        });
+        if (!treasury || !treasury.isActive) {
+          throw new NotFoundException('الخزينة غير موجودة أو غير نشطة');
+        }
+      }
+
       const created = await tx.workerAdvance.create({
         data: {
           workerId: data.workerId,
           amount: data.amount,
           notes: data.notes,
+        },
+      });
+
+      // COMM-F05 / ACC-F02: GL posting — Dr Worker Advances (asset) / Cr Cash
+      // (if treasury provided). Posting is INSIDE the tx so the GL entry and
+      // the treasury balance update commit atomically with the advance record.
+      // When no treasury is provided, the advance is recorded as an outstanding
+      // receivable without a cash-side entry (the worker may collect later).
+      // postingKey is stable per advance id so retry with the same key is safe.
+      if (data.treasuryId) {
+        const workerLabel = worker.name ?? worker.code ?? worker.id;
+        await this.financial.postJournalEntryInTx(
+          tx,
+          {
+            description: `سلفة عامل ${workerLabel} (${created.id.slice(0, 8)})`,
+            reference: `WORKER_ADVANCE:${created.id}`,
+            postingKey: `hr-worker-advance:${created.id}`,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+                creditAccountId: CHART_OF_ACCOUNTS.CASH,
+                amount: data.amount,
+                description: `سلفة عامل ${workerLabel}`,
+              },
+            ],
+            treasuryUpdates: [
+              { treasuryId: data.treasuryId, delta: -data.amount },
+            ],
+            metadata: {
+              source: 'HR_WORKER_ADVANCE',
+              workerAdvanceId: created.id,
+              workerId: data.workerId,
+              treasuryId: data.treasuryId,
+            },
+          },
+          actorId,
+        );
+      }
+
+      await tx.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'WORKER_ADVANCE_RECORDED',
+          module: 'HR',
+          details: {
+            workerAdvanceId: created.id,
+            workerId: data.workerId,
+            amount: data.amount,
+            treasuryId: data.treasuryId ?? null,
+            postedToGL: data.treasuryId ? true : false,
+          },
         },
       });
       await storeIdempotencyResponse(tx, idempotencyKey, created);
@@ -479,6 +554,19 @@ export class HrService {
         if (!payroll) throw new NotFoundException('كشف الراتب غير موجود');
         if (payroll.status !== PayrollStatus.DRAFT) {
           throw new ConflictException('كشف الراتب معتمد ولا يمكن تعديله');
+        }
+
+        // COMM-F02 (regression fix): Separation of Duties (SoD) — the user who
+        // created a payroll must NOT approve it themselves. This blocks the
+        // insider threat where a single HR_MANAGER creates + approves a fake
+        // payroll without oversight. Two distinct actors are required. The
+        // check happens INSIDE the tx so the replay path returns first (an
+        // already-replayed approval does not need to re-check SoD — the
+        // original approval that was already committed was vetted).
+        if (payroll.createdById && payroll.createdById === actorId) {
+          throw new ConflictException(
+            'لا يمكن لمنشئ كشف الراتب اعتماده بنفسه (فصل الواجبات)',
+          );
         }
 
         await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
