@@ -753,6 +753,175 @@ export class InventoryService {
     }
   }
 
+  /**
+   * PERF-F02: إصدار جماعي لمنتجات تامة الصنع لأمر بيع متعدد البنود.
+   *
+   * يحل محل for...await على issueFinishedGood في SalesService.confirmOrder
+   * ويعتمد على نمط bulk:
+   *   1. findMany واحد لجلب كل أرصدة FG للمستودع + المنتجات في استعلام واحد
+   *   2. تحقق من الكميات في الذاكرة — يرفض الكل لو أي بنفة لا يكفيها الرصيد
+   *   3. updateMany متوازي (Promise.all) لكل بنفة — تنفيذ ذري لكل صف لكن
+   *      بضمان أن المعاملة الأب (tx) تلفّهم جميعًا
+   *   4. createMany واحد لكل قيود الـ StockLedgerEntry — استعلام إدخال واحد
+   *
+   * النتيجة: من 3N+1 استعلام → 3 استعلامات فقط (findMany + N×updateMany
+   * متوازية + createMany واحد). للأمر بـ 10 بنود، من 31 استعلام إلى ~12.
+   *
+   * ملاحظات:
+   *   - لا يستخدم idempotencyKey لكل بندة — يُتوقع أن الـ parent يلفّ كل
+   *     العملية في idempotencyKey خاص به (confirmOrder يفعل ذلك).
+   *   - يحتاج externalTx مُمرر — لا يفتح معاملة جديدة (الـ parent يديرها).
+   *   - يرمي BadRequestException لو أي كمية غير صالحة، NotFoundException لو
+   *     بنفة لا تملك رصيدًا، ConflictException لو نقص بعد التحديث الذري.
+   */
+  async bulkIssueFinishedGoods(
+    items: Array<{
+      productVariantId: string;
+      quantity: number;
+      reference?: string;
+      notes?: string;
+    }>,
+    warehouseId: string,
+    externalTx: TxClient,
+    userId?: string,
+  ): Promise<{
+    movements: StockMovementResult[];
+    totalValue: number;
+  }> {
+    if (items.length === 0) {
+      return { movements: [], totalValue: 0 };
+    }
+    // 1) تحقق من الكميات
+    for (const item of items) {
+      if (!Number.isInteger(item.quantity) || item.quantity <= 0) {
+        throw new BadRequestException(
+          'كمية المنتج التام يجب أن تكون عددًا صحيحًا موجبًا',
+        );
+      }
+    }
+
+    // 2) findMany واحد لكل الأرصدة
+    const variantIds = items.map((i) => i.productVariantId);
+    const stocks = await externalTx.finishedGoodStock.findMany({
+      where: {
+        warehouseId,
+        productVariantId: { in: variantIds },
+      },
+      select: {
+        id: true,
+        productVariantId: true,
+        quantity: true,
+        unitCost: true,
+      },
+    });
+    const stockByVariant = new Map(stocks.map((s) => [s.productVariantId, s]));
+
+    // تحقق أن كل بندة لها رصيد موجود وكافٍ
+    const missing: string[] = [];
+    const insufficient: string[] = [];
+    for (const item of items) {
+      const stock = stockByVariant.get(item.productVariantId);
+      if (!stock) {
+        missing.push(item.productVariantId);
+        continue;
+      }
+      if (Number(stock.quantity) < item.quantity) {
+        insufficient.push(item.productVariantId);
+      }
+    }
+    if (missing.length > 0) {
+      throw new NotFoundException(
+        `رصيد المنتج التام غير موجود في المخزن للمتغيرات: ${missing.join(', ')}`,
+      );
+    }
+    if (insufficient.length > 0) {
+      throw new ConflictException(
+        `المخزون التام غير كافٍ للمتغيرات: ${insufficient.join(', ')}`,
+      );
+    }
+
+    // 3) Promise.all على updateMany لكل بنفة (كل صف مختلف، لكن نفس tx)
+    //    Prisma interactive transaction يدعم Promise.all بأمان (تُنفّذ على نفس
+    //    الاتصال ولكن يدير الترتيب داخليًا).
+    const updateResults = await Promise.all(
+      items.map(async (item) => {
+        const stock = stockByVariant.get(item.productVariantId)!;
+        const updated = await externalTx.finishedGoodStock.updateMany({
+          where: { id: stock.id, quantity: { gte: item.quantity } },
+          data: { quantity: { decrement: item.quantity } },
+        });
+        return { item, stock, updated };
+      }),
+    );
+
+    // تحقق أن كل التحديثات أثرت على صف واحد (atomic CAS guard)
+    const conflictVariants = updateResults
+      .filter((r) => r.updated.count !== 1)
+      .map((r) => r.item.productVariantId);
+    if (conflictVariants.length > 0) {
+      throw new ConflictException(
+        `المخزون التام تغير بالتزامن للمتغيرات: ${conflictVariants.join(', ')}`,
+      );
+    }
+
+    // 4) createMany واحد لكل قيود الـ StockLedgerEntry
+    const now = new Date();
+    const ledgerData = items.map((item) => {
+      const stock = stockByVariant.get(item.productVariantId)!;
+      const balanceAfter = Number(stock.quantity) - item.quantity;
+      const unitCost = stock.unitCost.toNumber();
+      const totalValue = unitCost * item.quantity;
+      return {
+        entryCode: generateEntryCode(),
+        type: StockMovementType.ISSUE,
+        warehouseId,
+        productVariantId: item.productVariantId,
+        quantityDelta: -item.quantity,
+        balanceAfter,
+        unitCost,
+        totalValue,
+        reference: item.reference ?? null,
+        notes: item.notes ?? null,
+        createdById: userId ?? null,
+        createdAt: now,
+      };
+    });
+    await externalTx.stockLedgerEntry.createMany({
+      data: ledgerData,
+    });
+
+    // تجهيز النتائج بنفس شكل StockMovementResult لكل بنفة
+    const movements: StockMovementResult[] = items.map((item) => {
+      const stock = stockByVariant.get(item.productVariantId)!;
+      const balanceAfter = Number(stock.quantity) - item.quantity;
+      const unitCost = stock.unitCost.toNumber();
+      const totalValue = unitCost * item.quantity;
+      return {
+        replayed: false,
+        entryCode: ledgerData.find(
+          (d) =>
+            d.productVariantId === item.productVariantId &&
+            d.quantityDelta === -item.quantity,
+        )!.entryCode,
+        type: StockMovementType.ISSUE,
+        rawMaterialId: '',
+        warehouseId,
+        quantityDelta: -item.quantity,
+        balanceAfter,
+        unitCost,
+        totalValue,
+        costPerUnitAfter: null,
+        createdAt: now.toISOString(),
+      } satisfies StockMovementResult;
+    });
+
+    const totalValue = round2(
+      movements.reduce((sum, m) => sum + (m.totalValue ?? 0), 0),
+    );
+
+    return { movements, totalValue };
+  }
+
   async getAllFinishedGoods(pagination: PaginationDto) {
     const page = pagination.page || 1;
     const limit = pagination.limit || 20;

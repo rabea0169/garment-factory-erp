@@ -27,6 +27,9 @@ model User {
   password  String
   role      UserRole @default(VIEWER)
   isActive  Boolean  @default(true)
+  // SEC-F04: رقم إصدار جلسة JWT — كل logout/refresh-rotation يزيّده
+  // فيبطل كل الـ access tokens السابقة. تدقق عليه JwtStrategy.validate.
+  jwtVersion   Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -52,7 +55,38 @@ model User {
   shipmentsDelivered   Shipment[]     @relation("ShipmentDeliverer")
   salesReturns         SalesReturn[]
 
+  // SEC-F04: refresh tokens الصادرة لهذا المستخدم (نشطة أو ملغاة).
+  refreshTokens        RefreshToken[]
+
   @@map("users")
+}
+
+// SEC-F04: Refresh token model مع rotation + revocation.
+// - tokenHash: sha256(القيمة الأصلية) — لا نخزّن القيمة الأصلية أبدًا.
+// - expiresAt: انتهاء الصلاحية (default 30d).
+// - revokedAt: null ما دام نشطًا؛ يُملأ عند الـ logout أو rotation.
+// - replacedById: الـ token الذي حلّ محلّه بعد rotation — يسهّل تدقيق السلسلة.
+model RefreshToken {
+  id           String    @id @default(uuid())
+  userId       String
+  // sha256 hex — 64 حرفًا. لا نقارن بالنص الأصلي أبدًا.
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  userAgent    String?
+  ipAddress    String?
+  createdAt    DateTime  @default(now())
+
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // SEC-F04: علاقة استبدال (rotation). كل token قد يُستبدل بواحد جديد؛
+  // ونُبقيها one-to-many للسماح بتدقيق السلسلة دون قيد uniqueness معيق.
+  replacedBy   RefreshToken? @relation("RefreshTokenReplacedBy", fields: [replacedById], references: [id])
+  replaces     RefreshToken[] @relation("RefreshTokenReplacedBy")
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
 }
 
 model ActivityLog {

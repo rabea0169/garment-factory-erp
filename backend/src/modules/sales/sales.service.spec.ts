@@ -11,10 +11,12 @@ function makeService() {
   const prisma = createPrismaMock();
   const issueFinishedGood = jest.fn();
   const receiveFinishedGood = jest.fn();
+  const bulkIssueFinishedGoods = jest.fn();
   const postJournalEntryInTx = jest.fn();
   const inventory = {
     issueFinishedGood,
     receiveFinishedGood,
+    bulkIssueFinishedGoods,
   } as unknown as InventoryService;
   const financial = {
     postJournalEntryInTx,
@@ -25,6 +27,7 @@ function makeService() {
     financial,
     issueFinishedGood,
     receiveFinishedGood,
+    bulkIssueFinishedGoods,
     postJournalEntryInTx,
     service: new SalesService(
       prisma as unknown as PrismaService,
@@ -343,7 +346,7 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
   });
 
   it('confirms through FinishedGoodStock, posts revenue/VAT/COGS in one transaction', async () => {
-    const { prisma, issueFinishedGood, postJournalEntryInTx, service } =
+    const { prisma, bulkIssueFinishedGoods, postJournalEntryInTx, service } =
       makeService();
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
@@ -368,9 +371,24 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
-    issueFinishedGood.mockResolvedValue({
+    // PERF-F02: confirmOrder now calls bulkIssueFinishedGoods instead of per-item issueFinishedGood
+    bulkIssueFinishedGoods.mockResolvedValue({
+      movements: [
+        {
+          replayed: false,
+          entryCode: 'SLE-x',
+          type: 'ISSUE',
+          rawMaterialId: '',
+          warehouseId: 'wh-fg',
+          quantityDelta: -2,
+          balanceAfter: 98,
+          unitCost: 40,
+          totalValue: 80,
+          costPerUnitAfter: null,
+          createdAt: new Date().toISOString(),
+        },
+      ],
       totalValue: 80,
-      replayed: false,
     });
     postJournalEntryInTx.mockResolvedValue({
       entryId: 'je-1',
@@ -378,14 +396,18 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
 
     await service.confirmOrder('so-1', 'u-1', 'confirm-key');
 
-    expect(issueFinishedGood).toHaveBeenCalledWith(
-      expect.objectContaining({
-        productVariantId: 'v-1',
-        warehouseId: 'wh-fg',
-        quantity: 2,
-      }),
-      'u-1',
+    // PERF-F02: bulk path receives the items list, warehouse, tx, and userId
+    expect(bulkIssueFinishedGoods).toHaveBeenCalledWith(
+      [
+        expect.objectContaining({
+          productVariantId: 'v-1',
+          quantity: 2,
+          reference: 'SO-1',
+        }),
+      ],
+      'wh-fg',
       prisma,
+      'u-1',
     );
     expect(postJournalEntryInTx).toHaveBeenCalledWith(
       prisma,
@@ -488,7 +510,7 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
   });
 
   it('handles rollback: transaction failure reverts all changes (simulated)', async () => {
-    const { prisma, issueFinishedGood, service } = makeService();
+    const { prisma, bulkIssueFinishedGoods, service } = makeService();
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     prisma.salesOrder.findUnique.mockResolvedValue({
       id: 'so-1',
@@ -498,13 +520,13 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
     prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
     prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
 
-    // Simulate failure during journal posting
+    // Simulate failure during stock issuance (now from bulk path)
     prisma.$transaction.mockImplementation(
       async (callback: (tx: unknown) => Promise<unknown>) => {
         await callback(prisma);
       },
     );
-    issueFinishedGood.mockRejectedValue(new Error('Stock issue failed'));
+    bulkIssueFinishedGoods.mockRejectedValue(new Error('Stock issue failed'));
 
     await expect(service.confirmOrder('so-1', 'u-1')).rejects.toThrow(
       'Stock issue failed',

@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment */
 import { createHash } from 'node:crypto';
 import {
   BadRequestException,
@@ -51,8 +51,14 @@ function createTxMock() {
     finishedGoodStock: {
       findUnique: jest.fn(),
       findUniqueOrThrow: jest.fn(),
+      findMany: jest.fn(),
+      updateMany: jest.fn(),
     },
-    stockLedgerEntry: { create: jest.fn(), aggregate: jest.fn() },
+    stockLedgerEntry: {
+      create: jest.fn(),
+      aggregate: jest.fn(),
+      createMany: jest.fn(),
+    },
     idempotencyKey: { create: jest.fn(), update: jest.fn() },
   };
 }
@@ -1339,5 +1345,202 @@ describe('InventoryService — قيد GL لهدر/تسوية المخزون (OPS
       postingKey: string;
     };
     expect(input.postingKey).toBe('inventory-waste:' + ENTRY_CREATED.entryCode);
+  });
+});
+
+describe('InventoryService — PERF-F02 bulkIssueFinishedGoods', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let postJournalEntryInTx: jest.Mock;
+  let financial: FinancialPostingService;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    postJournalEntryInTx = jest.fn().mockResolvedValue({
+      entryId: 'je-bulk',
+      entryCode: 'JE-BULK-1',
+    });
+    financial = { postJournalEntryInTx } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('يرفض قائمة فارغة ويعيد totalValue=0 دون أي استعلام', async () => {
+    const result = await service.bulkIssueFinishedGoods(
+      [],
+      'wh-fg',
+      tx as never,
+      'u-1',
+    );
+    expect(result.movements).toEqual([]);
+    expect(result.totalValue).toBe(0);
+    expect(tx.finishedGoodStock.findMany).not.toHaveBeenCalled();
+    expect(tx.stockLedgerEntry.createMany).not.toHaveBeenCalled();
+  });
+
+  it('يرفض كمية غير صحيحة بـ BadRequestException', async () => {
+    await expect(
+      service.bulkIssueFinishedGoods(
+        [
+          { productVariantId: 'v-1', quantity: 2 },
+          { productVariantId: 'v-2', quantity: 0 }, // غير صالح
+        ],
+        'wh-fg',
+        tx as never,
+        'u-1',
+      ),
+    ).rejects.toThrow(BadRequestException);
+  });
+
+  it('يرفض بنفة بلا رصيد بـ NotFoundException', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 10,
+        unitCost: new Prisma.Decimal(40),
+      },
+      // v-2 غير موجود
+    ]);
+    await expect(
+      service.bulkIssueFinishedGoods(
+        [
+          { productVariantId: 'v-1', quantity: 2 },
+          { productVariantId: 'v-2', quantity: 1 },
+        ],
+        'wh-fg',
+        tx as never,
+        'u-1',
+      ),
+    ).rejects.toThrow(NotFoundException);
+  });
+
+  it('يرفض بنفة برصيد غير كافٍ بـ ConflictException', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 1, // أقل من المطلوب (2)
+        unitCost: new Prisma.Decimal(40),
+      },
+    ]);
+    await expect(
+      service.bulkIssueFinishedGoods(
+        [{ productVariantId: 'v-1', quantity: 2 }],
+        'wh-fg',
+        tx as never,
+        'u-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('ينفذ الإصدار الجماعي بـ findMany واحد + updateMany لكل بندة + createMany واحد', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 100,
+        unitCost: new Prisma.Decimal(40),
+      },
+      {
+        id: 's-2',
+        productVariantId: 'v-2',
+        quantity: 50,
+        unitCost: new Prisma.Decimal(80),
+      },
+    ]);
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 1 });
+    tx.stockLedgerEntry.createMany.mockResolvedValue({ count: 2 });
+
+    const result = await service.bulkIssueFinishedGoods(
+      [
+        { productVariantId: 'v-1', quantity: 5, reference: 'SO-1' },
+        { productVariantId: 'v-2', quantity: 3, reference: 'SO-1' },
+      ],
+      'wh-fg',
+      tx as never,
+      'u-1',
+    );
+
+    // PERF-F02: استعلام واحد findMany لكل الأرصدة
+    expect(tx.finishedGoodStock.findMany).toHaveBeenCalledTimes(1);
+    expect(tx.finishedGoodStock.findMany).toHaveBeenCalledWith({
+      where: {
+        warehouseId: 'wh-fg',
+        productVariantId: { in: ['v-1', 'v-2'] },
+      },
+      select: {
+        id: true,
+        productVariantId: true,
+        quantity: true,
+        unitCost: true,
+      },
+    });
+    // updateMany مرتين (مرة لكل بندة) — لكن Promise.all
+    expect(tx.finishedGoodStock.updateMany).toHaveBeenCalledTimes(2);
+    // createMany مرة واحدة لكل قيود الـ ledger
+    expect(tx.stockLedgerEntry.createMany).toHaveBeenCalledTimes(1);
+    expect(tx.stockLedgerEntry.createMany).toHaveBeenCalledWith({
+      data: expect.arrayContaining([
+        expect.objectContaining({
+          productVariantId: 'v-1',
+          quantityDelta: -5,
+          balanceAfter: 95,
+          unitCost: 40,
+          totalValue: 200,
+          createdById: 'u-1',
+        }),
+        expect.objectContaining({
+          productVariantId: 'v-2',
+          quantityDelta: -3,
+          balanceAfter: 47,
+          unitCost: 80,
+          totalValue: 240,
+          createdById: 'u-1',
+        }),
+      ]),
+    });
+    // totalValue = 200 + 240 = 440 (round2)
+    expect(result.totalValue).toBe(440);
+    expect(result.movements).toHaveLength(2);
+    expect(result.movements[0].type).toBe(StockMovementType.ISSUE);
+    expect(result.movements[0].quantityDelta).toBe(-5);
+    expect(result.movements[1].quantityDelta).toBe(-3);
+  });
+
+  it('يرفض بعد التحديث الذري لو count=0 (تغير بالتزامن)', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 100,
+        unitCost: new Prisma.Decimal(40),
+      },
+    ]);
+    // تحاكي أن الصف تغير بالتزامن (لم يعد يحقق الشرط WHERE quantity >= 2)
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.bulkIssueFinishedGoods(
+        [{ productVariantId: 'v-1', quantity: 2 }],
+        'wh-fg',
+        tx as never,
+        'u-1',
+      ),
+    ).rejects.toThrow(ConflictException);
   });
 });
