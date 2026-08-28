@@ -777,20 +777,23 @@ export class SalesService {
           throw new ConflictException('تم تغيير أمر البيع بالتزامن');
 
         let totalCogs = 0;
-        for (const item of order.items) {
-          const movement = await this.inventoryService.issueFinishedGood(
-            {
+        if (order.items.length > 0) {
+          // PERF-F02: bulk-issue finished goods in 3 queries instead of 3N.
+          // The old code did `for (const item of order.items) await issueFinishedGood(...)`,
+          // which on a 10-item order ran 31 sequential round-trips inside the tx.
+          // The bulk path: 1 findMany + N parallel updateMany + 1 createMany ≈ 12.
+          const bulkResult = await this.inventoryService.bulkIssueFinishedGoods(
+            order.items.map((item) => ({
               productVariantId: item.productVariantId,
-              warehouseId: fgWarehouse.id,
               quantity: item.quantity,
               reference: order.code,
               notes: `صرف فاتورة مبيعات ${order.code}`,
-              idempotencyKey: `sales.confirm:${order.id}:${item.id}`,
-            },
-            userId,
+            })),
+            fgWarehouse.id,
             tx,
+            userId,
           );
-          totalCogs += movement.totalValue ?? 0;
+          totalCogs = bulkResult.totalValue;
         }
 
         const debitAccount =

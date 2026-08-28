@@ -17,7 +17,7 @@ export function createPrismaMock() {
     // ProductionWorkflowService.recordStageOutput for atomic upserts on
     // finished_good_stocks via raw INSERT ... ON CONFLICT.
     $executeRaw: jest.fn().mockResolvedValue(1),
-    user: { findUnique: jest.fn() },
+    user: { findUnique: jest.fn(), update: jest.fn() },
     salesOrder: {
       findMany: jest.fn(),
       create: jest.fn(),
@@ -116,6 +116,12 @@ export function createPrismaMock() {
       aggregate: jest.fn(),
     },
     activityLog: { create: jest.fn() },
+    // SEC-F04: refreshToken mock — findUnique (for refresh/logout), create (for new token), update (for revoke)
+    refreshToken: {
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
     bomVersion: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),

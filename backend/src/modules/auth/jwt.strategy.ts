@@ -40,13 +40,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
     });
   }
 
-  async validate(payload: { sub: string; email: string }) {
+  async validate(payload: { sub: string; email: string; v?: number }) {
     const user = await this.prisma.user.findUnique({
       where: { id: payload.sub },
     });
 
     if (!user || !user.isActive) {
       throw new UnauthorizedException('المستخدم غير مصرح له بالدخول');
+    }
+
+    // SEC-F04: revoke-by-version — لو payload.v يختلف عن user.jwtVersion،
+    // فالـ access token قد بُطّل بعد logout. نرفض الطلب ونُجبر العميل على refresh.
+    if (
+      typeof payload.v === 'number' &&
+      Number.isFinite(payload.v) &&
+      payload.v !== user.jwtVersion
+    ) {
+      throw new UnauthorizedException(
+        'انتهت صلاحية الجلسة — سجّل دخولك من جديد أو استعمل refresh_token',
+      );
     }
 
     // إزالة كلمة المرور من كائن المستخدم المرجع
