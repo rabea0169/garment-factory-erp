@@ -4,6 +4,7 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
+import { json, urlencoded } from 'express';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { RequestContextInterceptor } from './common/request-context.interceptor';
 
@@ -67,6 +68,22 @@ async function bootstrap() {
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');
   const isProd = nodeEnv === 'production';
+
+  // SEC-F06: enforce a request body size limit. The default Express body
+  // parser allows ~100kb for JSON, but NestFactory.create() leaves it
+  // effectively unbounded. Setting an explicit limit prevents memory
+  // exhaustion from a malicious client uploading a huge JSON payload.
+  // 1 MB is generous for all DTOs in this API (the largest payload is
+  // POST /products/full which may include a few variants + BOM lines).
+  const bodyLimitKb = parseInt(
+    configService.get<string>('BODY_LIMIT_KB') ?? '1024',
+    10,
+  );
+  const bodyLimitBytes =
+    (Number.isFinite(bodyLimitKb) && bodyLimitKb > 0 ? bodyLimitKb : 1024) *
+    1024;
+  app.use(json({ limit: bodyLimitBytes }));
+  app.use(urlencoded({ limit: bodyLimitBytes, extended: true }));
 
   // C2: Helmet — security headers. في dev نعطّل CSP كي يعمل Swagger UI.
   app.use(helmet(isProd ? undefined : { contentSecurityPolicy: false }));

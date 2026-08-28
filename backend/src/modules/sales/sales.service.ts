@@ -221,6 +221,20 @@ export class SalesService {
           input.actorId,
         );
         await storeIdempotencyResponse(tx, idempotencyKey, payment);
+        // SEC-F02: audit trail for every cash receipt.
+        await tx.activityLog.create({
+          data: {
+            userId: input.actorId,
+            action: 'CUSTOMER_PAYMENT_CREATED',
+            module: 'SALES',
+            details: {
+              customerPaymentId: payment.id,
+              customerId: input.customerId,
+              salesOrderId: input.salesOrderId ?? null,
+              amount: input.amount,
+            },
+          },
+        });
         return payment;
       });
     } catch (error) {
@@ -674,6 +688,21 @@ export class SalesService {
             items: { create: orderItemsData },
           },
           include: { items: true },
+        });
+        // SEC-F02: record an audit trail entry for every financial write.
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: 'SALES_ORDER_CREATED',
+            module: 'SALES',
+            details: {
+              salesOrderId: created.id,
+              code: created.code,
+              customerId: data.customerId,
+              totalAmount,
+              itemsCount: data.items.length,
+            },
+          },
         });
         await storeIdempotencyResponse(tx, idempotencyKey, created);
         return created;
