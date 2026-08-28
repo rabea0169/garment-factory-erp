@@ -1,4 +1,8 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { PaymentType, SalesOrderStatus } from '@prisma/client';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -531,5 +535,316 @@ describe('SalesService — Behavioral Tests (GF-AUDIT-001B)', () => {
     await expect(service.confirmOrder('so-1', 'u-1')).rejects.toThrow(
       'Stock issue failed',
     );
+  });
+});
+
+describe('SalesService — Wave 6: COMM-F07 customer credit limit', () => {
+  // Helper that wires the standard mock dance for a CREDIT-order confirmOrder
+  // path. Caller can override the customer record (esp. creditLimit + balance)
+  // to exercise different enforcement scenarios.
+  function makeCreditOrderSetup(opts: {
+    creditLimit: number | null;
+    balance?: number;
+    orderTotal?: number;
+    bulkIssueSucceeds?: boolean;
+  }) {
+    const { prisma, bulkIssueFinishedGoods, postJournalEntryInTx, service } =
+      makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      code: 'SO-1',
+      status: SalesOrderStatus.DRAFT,
+      paymentType: PaymentType.CREDIT,
+      subtotal: opts.orderTotal ?? 200,
+      vatAmount: 0,
+      totalAmount: opts.orderTotal ?? 200,
+      customerId: 'c-1',
+      customer: {
+        id: 'c-1',
+        // Return creditLimit either as a Decimal-compatible number or null.
+        // Prisma Decimal comes back as a special object; in unit tests we
+        // use a plain number and Number() coerces it.
+        balance: opts.balance ?? 0,
+        creditLimit: opts.creditLimit,
+        creditTermsDays: 0,
+      },
+      items: [{ id: 'item-1', productVariantId: 'v-1', quantity: 1 }],
+    });
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.CONFIRMED,
+    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    if (opts.bulkIssueSucceeds !== false) {
+      bulkIssueFinishedGoods.mockResolvedValue({
+        movements: [],
+        totalValue: 50,
+      });
+    }
+    postJournalEntryInTx.mockResolvedValue({ entryId: 'je-1' });
+    return { prisma, bulkIssueFinishedGoods, postJournalEntryInTx, service };
+  }
+
+  it('rejects a CREDIT order when balance + total > creditLimit', async () => {
+    // balance 5000 + order 200 = 5200 > limit 5000 → reject
+    const { service, bulkIssueFinishedGoods, postJournalEntryInTx } =
+      makeCreditOrderSetup({
+        creditLimit: 5000,
+        balance: 5000,
+        orderTotal: 200,
+      });
+
+    await expect(
+      service.confirmOrder('so-1', 'u-1', 'confirm-key'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+
+    // Failed before status transition — no stock issued, no GL posted.
+    expect(bulkIssueFinishedGoods).not.toHaveBeenCalled();
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('allows a CREDIT order when balance + total <= creditLimit', async () => {
+    // balance 4000 + order 200 = 4200 ≤ limit 5000 → allow
+    const { service, bulkIssueFinishedGoods, postJournalEntryInTx } =
+      makeCreditOrderSetup({
+        creditLimit: 5000,
+        balance: 4000,
+        orderTotal: 200,
+      });
+
+    await service.confirmOrder('so-1', 'u-1', 'confirm-key');
+
+    expect(bulkIssueFinishedGoods).toHaveBeenCalledTimes(1);
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects ALL CREDIT orders when creditLimit = 0 (explicit no-credit)', async () => {
+    const { service, bulkIssueFinishedGoods } = makeCreditOrderSetup({
+      creditLimit: 0,
+      balance: 0,
+      orderTotal: 100,
+    });
+
+    await expect(
+      service.confirmOrder('so-1', 'u-1', 'confirm-key'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(bulkIssueFinishedGoods).not.toHaveBeenCalled();
+  });
+
+  it('allows unlimited CREDIT orders when creditLimit = null (legacy behavior)', async () => {
+    // creditLimit null + huge balance + huge order → still allowed
+    const { service, bulkIssueFinishedGoods, postJournalEntryInTx } =
+      makeCreditOrderSetup({
+        creditLimit: null,
+        balance: 1_000_000,
+        orderTotal: 1_000_000,
+      });
+
+    await service.confirmOrder('so-1', 'u-1', 'confirm-key');
+
+    expect(bulkIssueFinishedGoods).toHaveBeenCalledTimes(1);
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('does NOT run the credit check on CASH orders (paid now)', async () => {
+    // Even an absurd creditLimit = 1 with balance 0 and order 200 should not
+    // trip on a CASH order — the check only applies to PaymentType.CREDIT.
+    const { prisma, bulkIssueFinishedGoods, postJournalEntryInTx, service } =
+      makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      code: 'SO-1',
+      status: SalesOrderStatus.DRAFT,
+      paymentType: PaymentType.CASH,
+      subtotal: 200,
+      vatAmount: 0,
+      totalAmount: 200,
+      customerId: 'c-1',
+      customer: {
+        id: 'c-1',
+        balance: 0,
+        creditLimit: 1, // absurdly low — would block if check ran on CASH
+        creditTermsDays: 0,
+      },
+      items: [{ id: 'item-1', productVariantId: 'v-1', quantity: 1 }],
+    });
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
+      id: 'so-1',
+      status: SalesOrderStatus.CONFIRMED,
+    });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    bulkIssueFinishedGoods.mockResolvedValue({ movements: [], totalValue: 50 });
+    postJournalEntryInTx.mockResolvedValue({ entryId: 'je-1' });
+
+    await service.confirmOrder('so-1', 'u-1', 'confirm-key');
+
+    expect(bulkIssueFinishedGoods).toHaveBeenCalledTimes(1);
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+  });
+
+  it('persists creditLimit + creditTermsDays when creating a customer', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.create.mockResolvedValue({
+      id: 'c-1',
+      code: 'CUS-0001',
+      name: 'عميل بمحدودية',
+      creditLimit: 50000,
+      creditTermsDays: 30,
+    });
+
+    await service.createCustomer({
+      name: 'عميل بمحدودية',
+      creditLimit: 50000,
+      creditTermsDays: 30,
+    });
+
+    const createCalls = prisma.customer.create.mock.calls as unknown as Array<
+      [{ data: Record<string, unknown> }]
+    >;
+    const call = createCalls[0]?.[0];
+    expect(call).toBeDefined();
+    if (!call) throw new Error('customer.create was not called');
+    expect(call.data).toEqual(
+      expect.objectContaining({
+        name: 'عميل بمحدودية',
+        creditLimit: 50000,
+        creditTermsDays: 30,
+      }),
+    );
+  });
+
+  it('updateCustomerCredit: adjusts limit + logs ActivityLog in same tx', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c-1',
+      creditLimit: 5000,
+      creditTermsDays: 0,
+      deletedAt: null,
+    });
+    prisma.customer.update.mockResolvedValue({
+      id: 'c-1',
+      creditLimit: 15000,
+      creditTermsDays: 45,
+    });
+    prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    const result = await service.updateCustomerCredit(
+      'c-1',
+      { creditLimit: 15000, creditTermsDays: 45 },
+      'user-gm',
+    );
+
+    expect(result).toEqual(
+      expect.objectContaining({
+        id: 'c-1',
+        creditLimit: 15000,
+        creditTermsDays: 45,
+      }),
+    );
+    expect(prisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 'c-1' },
+      data: { creditLimit: 15000, creditTermsDays: 45 },
+    });
+    // ActivityLog carries the before/after snapshot for audit trail.
+    expect(prisma.activityLog.create).toHaveBeenCalledTimes(1);
+    type ActivityLogCreateCall = [{ data: Record<string, unknown> }];
+    const logCall = prisma.activityLog.create.mock
+      .calls[0] as unknown as ActivityLogCreateCall;
+    const data = logCall[0].data;
+    expect(data.action).toBe('CUSTOMER_CREDIT_LIMIT_UPDATED');
+    expect(data.module).toBe('SALES');
+    expect(data.userId).toBe('user-gm');
+    const details = data.details as Record<string, unknown>;
+    expect(details.entityType).toBe('Customer');
+    expect(details.entityId).toBe('c-1');
+    const previous = details.previous as Record<string, unknown>;
+    expect(previous.creditTermsDays).toBe(0);
+    const next = details.next as Record<string, unknown>;
+    expect(next.creditTermsDays).toBe(45);
+  });
+
+  it('updateCustomerCredit: setting creditLimit=null removes the limit (unlimited)', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c-1',
+      creditLimit: 5000,
+      creditTermsDays: 0,
+      deletedAt: null,
+    });
+    prisma.customer.update.mockResolvedValue({
+      id: 'c-1',
+      creditLimit: null,
+      creditTermsDays: 0,
+    });
+    prisma.activityLog.create.mockResolvedValue({ id: 'log-2' });
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    await service.updateCustomerCredit('c-1', { creditLimit: null }, 'user-gm');
+
+    // Prisma should see `null` as "store NULL".
+    expect(prisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 'c-1' },
+      data: { creditLimit: null },
+    });
+  });
+
+  it('updateCustomerCredit: rejects when customer is soft-deleted', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c-1',
+      creditLimit: null,
+      creditTermsDays: 0,
+      deletedAt: new Date('2026-01-01'),
+    });
+
+    await expect(
+      service.updateCustomerCredit('c-1', { creditLimit: 10000 }, 'user-gm'),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customer.update).not.toHaveBeenCalled();
+  });
+
+  it('updateCustomerCredit: 404 when customer does not exist', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.updateCustomerCredit(
+        'c-missing',
+        { creditLimit: 10000 },
+        'user-gm',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+    expect(prisma.customer.update).not.toHaveBeenCalled();
+  });
+
+  it('updateCustomer: rejects when customer is soft-deleted', async () => {
+    const { prisma, service } = makeService();
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c-1',
+      name: 'قديم',
+      deletedAt: new Date('2026-01-01'),
+    });
+
+    await expect(
+      service.updateCustomer('c-1', { name: 'جديد' }),
+    ).rejects.toBeInstanceOf(BadRequestException);
+    expect(prisma.customer.update).not.toHaveBeenCalled();
   });
 });

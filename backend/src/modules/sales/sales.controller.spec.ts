@@ -7,12 +7,18 @@ import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
+import {
+  UpdateCustomerCreditDto,
+  UpdateCustomerDto,
+} from './dto/update-customer.dto';
 
 describe('SalesController — هوية الجلسة والصلاحيات (GF-0011)', () => {
   let controller: SalesController;
   let service: {
     getCustomers: jest.Mock;
     createCustomer: jest.Mock;
+    updateCustomer: jest.Mock;
+    updateCustomerCredit: jest.Mock;
     createCustomerPayment: jest.Mock;
     createSalesReturn: jest.Mock;
     getSalesOrders: jest.Mock;
@@ -25,6 +31,8 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
     service = {
       getCustomers: jest.fn().mockResolvedValue([]),
       createCustomer: jest.fn().mockResolvedValue({ id: 'c-1' }),
+      updateCustomer: jest.fn().mockResolvedValue({ id: 'c-1' }),
+      updateCustomerCredit: jest.fn().mockResolvedValue({ id: 'c-1' }),
       createCustomerPayment: jest.fn().mockResolvedValue({ id: 'payment-1' }),
       createSalesReturn: jest.fn().mockResolvedValue({ id: 'return-1' }),
       getSalesOrders: jest.fn().mockResolvedValue([]),
@@ -138,5 +146,51 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
       'user-1',
       undefined,
     );
+  });
+
+  // ===== Wave 6 — COMM-F07 controller coverage =====
+
+  it('تحديث بيانات العميل يمرر المعرف والجسم', async () => {
+    const body = {
+      name: 'مصنع النور المحدّث',
+    } as unknown as UpdateCustomerDto;
+
+    await controller.updateCustomer('c-1', body);
+
+    expect(service.updateCustomer).toHaveBeenCalledWith('c-1', body);
+  });
+
+  it('تحديث بيانات العميل مقيّد بـ CASHIER وGENERAL_MANAGER', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'updateCustomer',
+    );
+    expect(roles).toEqual([UserRole.CASHIER, UserRole.GENERAL_MANAGER]);
+  });
+
+  it('ضبط الحد الائتماني يمرر المعرف والجسم وactor', async () => {
+    const body = {
+      creditLimit: 75000,
+      creditTermsDays: 30,
+    } as unknown as UpdateCustomerCreditDto;
+
+    await controller.updateCustomerCredit('c-1', body, 'user-gm');
+
+    expect(service.updateCustomerCredit).toHaveBeenCalledWith(
+      'c-1',
+      body,
+      'user-gm',
+    );
+  });
+
+  it('ضبط الحد الائتماني مقيّد بـ GENERAL_MANAGER فقط (إجراء امتيازي)', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'updateCustomerCredit',
+    );
+    // Unprivileged roles (CASHIER) cannot adjust credit limits — only GM.
+    expect(roles).toEqual([UserRole.GENERAL_MANAGER]);
   });
 });

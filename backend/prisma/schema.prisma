@@ -821,6 +821,11 @@ model Customer {
   email     String?
   notes     String?
   balance   Decimal   @default(0) @db.Decimal(10, 2)
+  // Wave 6 — COMM-F07: Customer credit limit (NULL = unlimited).
+  // creditLimit من NULL يعني "لا حد ائتماني" (متوافق مع السلوك التاريخي).
+  // creditTermsDays: شروط السداد الآجل بالأيام (0 = فوري، 30 = آجل شهر، إلخ).
+  creditLimit     Decimal? @db.Decimal(12, 2)
+  creditTermsDays Int      @default(0)
   isActive  Boolean   @default(true)
   // E2: soft-delete — العميل يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   deletedAt DateTime?
@@ -1201,6 +1206,13 @@ model JournalEntry {
   currencyId     String?
   exchangeRate   Decimal?  @db.Decimal(10, 6)
   fiscalPeriodId String?
+  // Wave 6 — SCHEMA-F01 follow-up: expose debitTotal / creditTotal columns that were
+  // added by migration 20260831110000_wave2_v2_fix_balance_trigger but were missing
+  // from the prisma model. They are populated by an AFTER INSERT/UPDATE/DELETE trigger
+  // on journal_lines (`enforce_journal_entry_balance`) and protected by a column-level
+  // CHECK constraint (journal_entries_debit_credit_balance_check).
+  debitTotal     Decimal   @default(0) @db.Decimal(20, 2)
+  creditTotal    Decimal   @default(0) @db.Decimal(20, 2)
 
   lines        JournalLine[]
   fiscalPeriod FiscalPeriod?  @relation(fields: [fiscalPeriodId], references: [id])
