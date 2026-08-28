@@ -1,5 +1,5 @@
 import { ConflictException, NotFoundException } from '@nestjs/common';
-import { Prisma, WorkerSpecialty } from '@prisma/client';
+import { PayrollStatus, Prisma, WorkerSpecialty } from '@prisma/client';
 import { HrService } from './hr.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -8,6 +8,10 @@ import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 describe('HrService — العمال والإنتاج بالقطعة (GF-0003)', () => {
   let service: HrService;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let financial: {
+    postJournalEntryInTx: jest.Mock;
+    postJournalEntry: jest.Mock;
+  };
 
   beforeEach(() => {
     prisma = createPrismaMock();
@@ -17,9 +21,13 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    financial = {
+      postJournalEntryInTx: jest.fn(),
+      postJournalEntry: jest.fn(),
+    };
     service = new HrService(
       prisma as unknown as PrismaService,
-      {} as FinancialPostingService,
+      financial as unknown as FinancialPostingService,
     );
   });
 
@@ -213,17 +221,194 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
     expect(prisma.dailyProduction.create).not.toHaveBeenCalled();
   });
 
-  it('تسجيل سلفة يمرر (workerId, amount, notes) كما وردت', async () => {
+  it('تسجيل سلفة بدون treasuryId لا يرحّل قيدًا ماليًا', async () => {
+    prisma.worker.findUnique.mockResolvedValue({
+      id: 'w-1',
+      name: 'أحمد',
+      code: 'WRK-1',
+    });
     prisma.workerAdvance.create.mockResolvedValue({ id: 'adv-1' });
 
-    await service.recordAdvance({
-      workerId: 'w-1',
-      amount: 200,
-      notes: 'سلفة شهرية',
-    });
+    const created = await service.recordAdvance(
+      {
+        workerId: 'w-1',
+        amount: 200,
+        notes: 'سلفة شهرية',
+      },
+      'hr-1',
+    );
 
+    expect(created).toEqual({ id: 'adv-1' });
     expect(prisma.workerAdvance.create).toHaveBeenCalledWith({
       data: { workerId: 'w-1', amount: 200, notes: 'سلفة شهرية' },
+    });
+    // COMM-F05: بدون treasuryId لا يُرحَّل أي قيد GL.
+    expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'hr-1',
+          action: 'WORKER_ADVANCE_RECORDED',
+          details: expect.objectContaining({
+            postedToGL: false,
+          }) as Record<string, unknown>,
+        }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
+    );
+  });
+
+  it('تسجيل سلفة بعامل غير موجود يرمي 404', async () => {
+    prisma.worker.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.recordAdvance({ workerId: 'ghost', amount: 200 }, 'hr-1'),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.workerAdvance.create).not.toHaveBeenCalled();
+    expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('تسجيل سلفة بtreasuryId غير نشط يرمي 404', async () => {
+    prisma.worker.findUnique.mockResolvedValue({
+      id: 'w-1',
+      name: 'أحمد',
+      code: 'WRK-1',
+    });
+    prisma.treasury.findUnique.mockResolvedValue({
+      id: 't-1',
+      isActive: false,
+    });
+
+    await expect(
+      service.recordAdvance(
+        { workerId: 'w-1', amount: 200, treasuryId: 't-1' },
+        'hr-1',
+      ),
+    ).rejects.toThrow(NotFoundException);
+    expect(prisma.workerAdvance.create).not.toHaveBeenCalled();
+    expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('تسجيل سلفة بtreasuryId نشط يرحّل قيد GL (Dr Worker Advances / Cr Cash) ويخصم من الخزينة', async () => {
+    prisma.worker.findUnique.mockResolvedValue({
+      id: 'w-1',
+      name: 'أحمد',
+      code: 'WRK-1',
+    });
+    prisma.treasury.findUnique.mockResolvedValue({ id: 't-1', isActive: true });
+    prisma.workerAdvance.create.mockResolvedValue({ id: 'adv-1' });
+    financial.postJournalEntryInTx.mockResolvedValue({
+      entryId: 'je-1',
+      entryCode: 'JE-1',
+      totalDebit: 200,
+      totalCredit: 200,
+      linesCount: 1,
+      createdAt: new Date(),
+    });
+
+    await service.recordAdvance(
+      { workerId: 'w-1', amount: 200, treasuryId: 't-1' },
+      'hr-1',
+    );
+
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const call = financial.postJournalEntryInTx.mock.calls[0] as [
+      unknown,
+      {
+        postingKey: string;
+        lines: { amount: number }[];
+        treasuryUpdates: { treasuryId: string; delta: number }[];
+      },
+      unknown,
+    ];
+    expect(call[1].postingKey).toBe('hr-worker-advance:adv-1');
+    expect(call[1].lines[0].amount).toBe(200);
+    expect(call[1].treasuryUpdates).toEqual([
+      { treasuryId: 't-1', delta: -200 },
+    ]);
+  });
+
+  // COMM-F02: Separation of Duties — the user who created a payroll must NOT
+  // approve it themselves. This blocks the insider threat where a single
+  // HR_MANAGER creates + approves a fake payroll without oversight.
+  describe('COMM-F02 — فصل الواجبات في اعتماد كشف الراتب', () => {
+    const draftPayroll = {
+      id: 'pay-1',
+      workerId: 'w-1',
+      periodStart: new Date('2026-08-01'),
+      periodEnd: new Date('2026-08-31'),
+      grossAmount: new Prisma.Decimal(1000),
+      advanceDeduct: new Prisma.Decimal(0),
+      absenceDeduct: new Prisma.Decimal(0),
+      netAmount: new Prisma.Decimal(1000),
+      status: PayrollStatus.DRAFT,
+      isPaid: false,
+      paidAt: null,
+      notes: null,
+      createdById: 'hr-1',
+      approvedById: null,
+      approvedAt: null,
+    };
+
+    it('يرفض اعتماد كشف الراتب من نفس منشئه (409 ConflictException)', async () => {
+      prisma.payroll.findUnique.mockResolvedValue(draftPayroll);
+
+      await expect(service.approvePayroll('pay-1', 'hr-1')).rejects.toThrow(
+        ConflictException,
+      );
+
+      // No state change, no GL posting, no idempotency key stored.
+      expect(prisma.payroll.updateMany).not.toHaveBeenCalled();
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+
+    it('يسمح لمستخدم آخر باعتماد كشف الراتب ويرحّل القيد GL', async () => {
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(draftPayroll)
+        .mockResolvedValueOnce({
+          ...draftPayroll,
+          status: PayrollStatus.APPROVED,
+          approvedById: 'gm-1',
+        });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+      prisma.worker.findUnique.mockResolvedValue({
+        id: 'w-1',
+        name: 'أحمد',
+      });
+      financial.postJournalEntryInTx.mockResolvedValue({
+        entryId: 'je-1',
+        entryCode: 'JE-1',
+        totalDebit: 1000,
+        totalCredit: 1000,
+        linesCount: 1,
+        createdAt: new Date(),
+      });
+
+      const result = await service.approvePayroll('pay-1', 'gm-1');
+
+      expect(result.status).toBe(PayrollStatus.APPROVED);
+      expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        {
+          postingKey: string;
+          lines: { amount: number }[];
+          treasuryUpdates?: { treasuryId: string; delta: number }[];
+        },
+        unknown,
+      ];
+      expect(call[1].postingKey).toBe('payroll-approval:pay-1');
+      expect(call[1].lines[0].amount).toBe(1000);
+    });
+
+    it('يرفض اعتماد كشف راتب معتمد مسبقًا (409)', async () => {
+      prisma.payroll.findUnique.mockResolvedValue({
+        ...draftPayroll,
+        status: PayrollStatus.APPROVED,
+      });
+
+      await expect(service.approvePayroll('pay-1', 'gm-1')).rejects.toThrow(
+        ConflictException,
+      );
     });
   });
 });

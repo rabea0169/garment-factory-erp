@@ -106,12 +106,16 @@ export class HrController {
     required: false,
     description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لتسجيل السلفة',
   })
-  @ApiOperation({ summary: 'تسجيل سلفة مالية لعامل' })
+  @ApiOperation({
+    summary:
+      'تسجيل سلفة مالية لعامل — عند توفير treasuryId تُرحَّل قيد GL مزدوج',
+  })
   async recordAdvance(
     @Body() body: CreateAdvanceDto,
+    @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.hrService.recordAdvance(body, idempotencyKey);
+    return this.hrService.recordAdvance(body, actorId, idempotencyKey);
   }
 
   @Post('payrolls')

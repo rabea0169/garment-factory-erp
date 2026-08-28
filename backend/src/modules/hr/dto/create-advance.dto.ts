@@ -27,4 +27,17 @@ export class CreateAdvanceDto {
   @IsString()
   @IsNotEmpty()
   notes?: string;
+
+  // COMM-F05 / ACC-F02: عند توفير treasuryId تُخصم قيمة السلفة من الخزينة
+  // ويُرحَّل قيد مزدوج (Dr Worker Advances / Cr Cash) داخل نفس tx. عند
+  // غياب treasuryId تُسجَّل السلفة كأصل مستحق فقط دون قيد نقدي (مثال: سلفة
+  // معلَّقة بانتظار الصرف).
+  @ApiPropertyOptional({
+    example: 'uuid-of-treasury',
+    description:
+      'معرف الخزينة المصروف منها (اختياري، يفعّل ترحيل القيد النقدي)',
+  })
+  @IsOptional()
+  @IsUUID(undefined, { message: 'معرف الخزينة يجب أن يكون UUID صالحًا' })
+  treasuryId?: string;
 }

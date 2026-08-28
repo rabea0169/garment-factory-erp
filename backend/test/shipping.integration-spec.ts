@@ -9,6 +9,7 @@ import {
 import { randomUUID } from 'node:crypto';
 import { ShippingService } from '../src/modules/shipping/shipping.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -26,7 +27,7 @@ integrationDescribe('GF-0017 shipping lifecycle integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    service = new ShippingService(prisma);
+    service = new ShippingService(prisma, new FinancialPostingService(prisma));
   });
 
   beforeEach(async () => {

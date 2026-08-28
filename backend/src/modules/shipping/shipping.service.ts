@@ -7,6 +7,8 @@ import {
 import { Prisma, SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
@@ -23,7 +25,10 @@ import {
 
 @Injectable()
 export class ShippingService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financialPosting: FinancialPostingService,
+  ) {}
 
   async getShipments(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -51,6 +56,8 @@ export class ShippingService {
       shippingCost?: number;
       trackingNumber?: string;
       notes?: string;
+      treasuryId?: string;
+      accrueToPayable?: boolean;
     },
     actorId: string,
     idempotencyKey?: string,
@@ -63,6 +70,8 @@ export class ShippingService {
       shippingCost: data.shippingCost ?? null,
       trackingNumber: data.trackingNumber ?? null,
       notes: data.notes ?? null,
+      treasuryId: data.treasuryId ?? null,
+      accrueToPayable: data.accrueToPayable ?? false,
     });
     const replay = await tryReplayIdempotencyKey(
       this.prisma,
@@ -74,13 +83,43 @@ export class ShippingService {
 
     const order = await this.prisma.salesOrder.findUnique({
       where: { id: data.salesOrderId },
-      select: { id: true, status: true },
+      select: { id: true, status: true, code: true },
     });
     if (!order) throw new NotFoundException('Sales order not found');
     if (order.status !== SalesOrderStatus.CONFIRMED) {
       throw new BadRequestException(
         'Cannot create shipment for an unconfirmed order',
       );
+    }
+
+    // COMM-F11 / ACC-F03: GL posting for shipping cost. Three modes:
+    //   (a) treasuryId + shippingCost > 0 → Dr Shipping Expense / Cr Cash
+    //       + treasury balance update (cash sale of shipping service).
+    //   (b) accrueToPayable=true + shippingCost > 0 (no treasury) → Dr Shipping
+    //       Expense / Cr Accounts Payable (credit to supplier, paid later).
+    //   (c) neither flag → no GL posting; the cost is recorded on the shipment
+    //       row only and may be expensed later via a separate voucher. This is
+    //       the backward-compatible default (existing callers that don't send
+    //       treasuryId / accrueToPayable behave exactly as before).
+    const shippingCost = data.shippingCost ?? 0;
+    if (!Number.isFinite(shippingCost) || shippingCost < 0) {
+      throw new BadRequestException(
+        'تكلفة الشحن يجب أن تكون رقمًا موجبًا أو صفرًا',
+      );
+    }
+    if (data.treasuryId && data.accrueToPayable) {
+      throw new BadRequestException(
+        'لا يمكن تحديد treasuryId و accrueToPayable معًا — اختر إما صرف نقدي أو استحقاق',
+      );
+    }
+    if (shippingCost > 0 && data.treasuryId) {
+      const treasury = await this.prisma.treasury.findUnique({
+        where: { id: data.treasuryId },
+        select: { id: true, isActive: true },
+      });
+      if (!treasury || !treasury.isActive) {
+        throw new NotFoundException('الخزينة غير موجودة أو غير نشطة');
+      }
     }
 
     try {
@@ -94,8 +133,97 @@ export class ShippingService {
         const created = await tx.shipment.create({
           data: {
             code: generateDocumentCode(DocumentCodePrefix.SHIPMENT),
-            ...data,
+            salesOrderId: data.salesOrderId,
+            shippingCompanyId: data.shippingCompanyId,
+            shippingCost,
+            trackingNumber: data.trackingNumber,
+            notes: data.notes,
             idempotencyKeyId,
+          },
+        });
+
+        // COMM-F11 / ACC-F03: post the GL entry INSIDE the same tx so the
+        // shipping expense hit and the shipment row commit atomically.
+        // postingKey is keyed to the shipment id → safe for idempotent retry.
+        if (shippingCost > 0) {
+          if (data.treasuryId) {
+            // (a) cash mode — Dr Shipping Expense / Cr Cash
+            await this.financialPosting.postJournalEntryInTx(
+              tx,
+              {
+                description: `تكلفة شحن شحنة ${created.code}`,
+                reference: `SHIPMENT:${created.id}`,
+                postingKey: `shipping-cost-cash:${created.id}`,
+                isAuto: true,
+                lines: [
+                  {
+                    debitAccountId: CHART_OF_ACCOUNTS.SHIPPING_EXPENSE,
+                    creditAccountId: CHART_OF_ACCOUNTS.CASH,
+                    amount: shippingCost,
+                    description: `شحن ${order.code ?? created.salesOrderId}`,
+                  },
+                ],
+                treasuryUpdates: [
+                  { treasuryId: data.treasuryId, delta: -shippingCost },
+                ],
+                metadata: {
+                  source: 'SHIPPING_COST_CASH',
+                  shipmentId: created.id,
+                  salesOrderId: created.salesOrderId,
+                  treasuryId: data.treasuryId,
+                },
+              },
+              actorId,
+            );
+          } else if (data.accrueToPayable) {
+            // (b) accrual mode — Dr Shipping Expense / Cr Accounts Payable
+            await this.financialPosting.postJournalEntryInTx(
+              tx,
+              {
+                description: `استحقاق تكلفة شحن ${created.code}`,
+                reference: `SHIPMENT:${created.id}`,
+                postingKey: `shipping-cost-accrual:${created.id}`,
+                isAuto: true,
+                lines: [
+                  {
+                    debitAccountId: CHART_OF_ACCOUNTS.SHIPPING_EXPENSE,
+                    creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+                    amount: shippingCost,
+                    description: `استحقاق شحن ${order.code ?? created.salesOrderId}`,
+                  },
+                ],
+                metadata: {
+                  source: 'SHIPPING_COST_ACCRUAL',
+                  shipmentId: created.id,
+                  salesOrderId: created.salesOrderId,
+                  shippingCompanyId: data.shippingCompanyId ?? null,
+                },
+              },
+              actorId,
+            );
+          }
+          // (c) no flag → skip GL posting intentionally
+        }
+
+        await tx.activityLog.create({
+          data: {
+            userId: actorId,
+            action: 'SHIPMENT_CREATED',
+            module: 'SHIPPING',
+            details: {
+              shipmentId: created.id,
+              salesOrderId: created.salesOrderId,
+              shippingCost,
+              postedToGL:
+                shippingCost > 0
+                  ? data.treasuryId
+                    ? 'CASH'
+                    : data.accrueToPayable
+                      ? 'ACCRUAL'
+                      : 'NONE'
+                  : 'NONE',
+              treasuryId: data.treasuryId ?? null,
+            },
           },
         });
         const response = {

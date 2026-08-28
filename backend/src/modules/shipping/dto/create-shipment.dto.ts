@@ -1,5 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsNumber, IsOptional, IsString, IsUUID, Min } from 'class-validator';
+import {
+  IsBoolean,
+  IsNumber,
+  IsOptional,
+  IsString,
+  IsUUID,
+  Min,
+} from 'class-validator';
 
 export class CreateShipmentDto {
   @ApiProperty({
@@ -25,6 +32,25 @@ export class CreateShipmentDto {
   @IsNumber()
   @Min(0, { message: 'تكلفة الشحن لا يمكن أن تكون سالبة' })
   shippingCost?: number;
+
+  @ApiPropertyOptional({
+    example: 'uuid-of-treasury',
+    description:
+      'معرف الخزينة المصروف منها الشحن (اختياري). عند توفيره مع shippingCost > 0 يُرحَّل قيد Dr Shipping Expense / Cr Cash.',
+  })
+  @IsOptional()
+  @IsUUID(undefined, { message: 'معرف الخزينة يجب أن يكون UUID صالحًا' })
+  treasuryId?: string;
+
+  @ApiPropertyOptional({
+    example: false,
+    description:
+      'عند true (مع shippingCost > 0 وغياب treasuryId) يُرحَّل قيد Dr Shipping Expense / Cr Accounts Payable (استحقاق على شركة الشحن). افتراضي false.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  accrueToPayable?: boolean;
 
   @ApiPropertyOptional({
     example: 'TRK-99',
