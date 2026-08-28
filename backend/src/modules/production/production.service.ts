@@ -14,6 +14,11 @@ import {
   generateDocumentCode,
   DocumentCodePrefix,
 } from '../../core/common/codes.util';
+import {
+  computeRequestHash,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
 
 @Injectable()
 export class ProductionService {
@@ -48,16 +53,40 @@ export class ProductionService {
   async createWorkOrder(
     dto: { productVariantId: string; bomVersionId: string; quantity: number },
     creatorId: string,
+    idempotencyKey?: string,
   ) {
-    const workOrder = await this.prisma.workOrder.create({
-      data: {
-        code: generateDocumentCode(DocumentCodePrefix.WORK_ORDER),
-        productVariantId: dto.productVariantId,
-        bomVersionId: dto.bomVersionId,
-        quantity: dto.quantity,
-        status: WorkOrderStatus.PLANNED,
-        createdById: creatorId,
-      },
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      productVariantId: dto.productVariantId,
+      bomVersionId: dto.bomVersionId,
+      quantity: dto.quantity,
+      creatorId,
+    });
+    const scope = 'work-order-create';
+    const workOrder = await this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.workOrder.create>> & {
+          replayed: true;
+        };
+
+      const created = await tx.workOrder.create({
+        data: {
+          code: generateDocumentCode(DocumentCodePrefix.WORK_ORDER),
+          productVariantId: dto.productVariantId,
+          bomVersionId: dto.bomVersionId,
+          quantity: dto.quantity,
+          status: WorkOrderStatus.PLANNED,
+          createdById: creatorId,
+        },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
     });
 
     void this.eventEmitter.emitAsync(EVENTS.WORK_ORDER_CREATED, workOrder);

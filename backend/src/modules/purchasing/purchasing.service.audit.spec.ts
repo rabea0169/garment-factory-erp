@@ -32,6 +32,10 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       create: jest.fn(),
       update: jest.fn(),
     },
+    // SEC-F02: createReceipt writes an ActivityLog entry inside the same tx.
+    activityLog: {
+      create: jest.fn().mockResolvedValue({ id: 'log-1' }),
+    },
     $queryRaw: jest.fn().mockResolvedValue([{ id: 'order-1' }]),
     $transaction: jest.fn((cb) => cb(mockPrisma)),
   };

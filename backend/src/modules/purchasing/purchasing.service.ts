@@ -69,26 +69,44 @@ export class PurchasingService {
       0,
     );
 
-    return this.prisma.purchaseOrder.create({
-      data: {
-        code: generateDocumentCode(DocumentCodePrefix.PURCHASE_ORDER),
-        supplierId: dto.supplierId,
-        paymentType: dto.paymentType,
-        totalAmount,
-        dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-        notes: dto.notes,
-        userId: creatorId,
-        status: PurchaseOrderStatus.DRAFT,
-        items: {
-          create: dto.items.map((item) => ({
-            rawMaterialId: item.rawMaterialId,
-            quantity: item.quantity,
-            unitCost: item.unitCost,
-            totalCost: item.quantity * item.unitCost,
-          })),
+    return this.prisma.$transaction(async (tx) => {
+      const created = await tx.purchaseOrder.create({
+        data: {
+          code: generateDocumentCode(DocumentCodePrefix.PURCHASE_ORDER),
+          supplierId: dto.supplierId,
+          paymentType: dto.paymentType,
+          totalAmount,
+          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+          notes: dto.notes,
+          userId: creatorId,
+          status: PurchaseOrderStatus.DRAFT,
+          items: {
+            create: dto.items.map((item) => ({
+              rawMaterialId: item.rawMaterialId,
+              quantity: item.quantity,
+              unitCost: item.unitCost,
+              totalCost: item.quantity * item.unitCost,
+            })),
+          },
         },
-      },
-      include: { items: true },
+        include: { items: true },
+      });
+      // SEC-F02: audit trail for every purchase order write.
+      await tx.activityLog.create({
+        data: {
+          userId: creatorId,
+          action: 'PURCHASE_ORDER_CREATED',
+          module: 'PURCHASING',
+          details: {
+            purchaseOrderId: created.id,
+            code: created.code,
+            supplierId: dto.supplierId,
+            totalAmount,
+            itemsCount: dto.items.length,
+          },
+        },
+      });
+      return created;
     });
   }
 
@@ -303,6 +321,25 @@ export class PurchasingService {
               )?.quantity ?? 0;
             return previous + current >= Number(item.quantity);
           });
+
+          // SEC-F02: audit trail for purchase receipt (financial impact).
+          await tx.activityLog.create({
+            data: {
+              userId,
+              action: 'PURCHASE_RECEIPT_CREATED',
+              module: 'PURCHASING',
+              details: {
+                purchaseReceiptId: receipt.id,
+                code: receipt.code,
+                purchaseOrderId: orderId,
+                supplierId: currentOrder.supplierId,
+                receiptTotal,
+                itemsCount: dto.items.length,
+                allReceived,
+              },
+            },
+          });
+
           await tx.purchaseOrder.update({
             where: { id: orderId },
             data: {

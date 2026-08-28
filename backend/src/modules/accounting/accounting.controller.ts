@@ -9,7 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -34,19 +34,37 @@ export class AccountingController {
 
   @Post('accounts')
   @Roles(UserRole.ACCOUNTANT)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإنشاء حساب',
+  })
   @ApiOperation({ summary: 'إضافة حساب جديد' })
-  async createAccount(@Body() body: CreateAccountDto) {
-    return this.accountingService.createAccount(body);
+  async createAccount(
+    @Body() body: CreateAccountDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.accountingService.createAccount(body, idempotencyKey);
   }
 
   @Post('fiscal-periods')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإنشاء فترة مالية',
+  })
   @ApiOperation({ summary: 'إنشاء فترة مالية مفتوحة' })
   async createFiscalPeriod(
     @Body() body: CreateFiscalPeriodDto,
     @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.accountingService.createFiscalPeriod(body, userId);
+    return this.accountingService.createFiscalPeriod(
+      body,
+      userId,
+      idempotencyKey,
+    );
   }
 
   @Patch('fiscal-periods/:id/close')
@@ -61,12 +79,22 @@ export class AccountingController {
 
   @Post('journal-entries')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإنشاء قيد مالي',
+  })
   @ApiOperation({ summary: 'إنشاء قيد متعدد البنود داخل فترة مفتوحة' })
   async createJournalEntry(
     @Body() body: CreateJournalEntryDto,
     @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.accountingService.createJournalEntry(body, userId);
+    return this.accountingService.createJournalEntry(
+      body,
+      userId,
+      idempotencyKey,
+    );
   }
 
   @Get('treasuries')
@@ -97,6 +125,11 @@ export class AccountingController {
 
   @Post('journal-entries/:id/reverse')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لعكس القيد',
+  })
   @ApiOperation({
     summary: 'A9: عكس قيد مالي — قيد عكسي مرتبط بالأصلي (غير تدميري)',
   })
@@ -104,6 +137,7 @@ export class AccountingController {
     @Param('id') id: string,
     @CurrentUser('id') userId: string,
     @Body() body: ReverseJournalEntryDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     // A9: عكس قيد سابق — يُنشئ قيدًا عكسيًا مقلوبًا ويربطه بالأصلي.
     // لا cascade — القيد الأصلي يبقى محفوظًا (audit trail).
@@ -111,6 +145,7 @@ export class AccountingController {
       id,
       userId,
       body.description,
+      idempotencyKey,
     );
   }
 }

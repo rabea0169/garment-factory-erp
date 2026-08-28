@@ -29,6 +29,8 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
+    // RES-F02: default to "no replay" so the create path is followed.
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     service = new AccountingService(
       prisma as unknown as PrismaService,
       financial as unknown as FinancialPostingService,
@@ -260,6 +262,7 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
         'je-orig-1',
         'user-reverser',
         'إلغاء قيد بيع بالخطأ',
+        undefined,
       );
     });
 
@@ -280,6 +283,7 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       expect(financial.reverseJournalEntry).toHaveBeenCalledWith(
         'je-orig-2',
         'user-reverser',
+        undefined,
         undefined,
       );
     });

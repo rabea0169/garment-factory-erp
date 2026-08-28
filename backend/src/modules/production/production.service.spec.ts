@@ -26,6 +26,11 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       issue: jest.fn(),
       receiveFinishedGood: jest.fn(),
     };
+    // RES-F02: make $transaction invoke the callback with prisma mock.
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     service = new ProductionService(
       prisma as unknown as PrismaService,
       eventEmitter as never,

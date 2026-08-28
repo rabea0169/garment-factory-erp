@@ -17,6 +17,11 @@ import { InventoryService } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
+import {
+  computeRequestHash,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
 
 export interface TransitionStageInput {
   workOrderId: string;
@@ -745,63 +750,93 @@ export class ProductionWorkflowService {
     }
   }
 
-  async finalizeCost(workOrderId: string, actorId?: string) {
-    const [consumptions, stageRuns] = await Promise.all([
-      this.prisma.productionMaterialConsumption.findMany({
-        where: { workOrderId },
-      }),
-      this.prisma.productionStageRun.findMany({
-        where: { workOrderId },
-      }),
-    ]);
-    if (consumptions.length === 0) {
-      throw new NotFoundException('No material consumption found');
-    }
+  async finalizeCost(
+    workOrderId: string,
+    actorId?: string,
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header. The underlying
+    // upsert on (workOrderId, status=FINALIZED) already guarantees natural
+    // idempotency, but the explicit replay path returns the cached response
+    // (avoids recomputation on network-retry).
+    const requestHash = computeRequestHash({
+      workOrderId,
+      actorId: actorId ?? null,
+    });
+    const scope = 'production-cost-finalize';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<
+          ReturnType<typeof tx.productionCostSnapshot.upsert>
+        > & { replayed: true };
 
-    const materialCost = consumptions.reduce(
-      (sum, row) => sum.add(row.totalCost),
-      new Prisma.Decimal(0),
-    );
-    const wasteCost = consumptions.reduce(
-      (sum, row) => sum.add(row.wasteCost),
-      new Prisma.Decimal(0),
-    );
-    const latestCompletedStageRun = stageRuns
-      .filter((row) => row.status === ProductionStageRunStatus.COMPLETED)
-      .sort((a, b) => b.sequence - a.sequence)[0];
-    // Each stage reports the same units at a different routing point. The
-    // denominator must therefore be the latest completed output, not the sum
-    // of accepted quantities across all stages.
-    const acceptedQty = latestCompletedStageRun?.acceptedQty ?? 0;
-    const unitCost =
-      acceptedQty > 0 ? materialCost.div(acceptedQty).toDecimalPlaces(4) : null;
+      const [consumptions, stageRuns] = await Promise.all([
+        tx.productionMaterialConsumption.findMany({
+          where: { workOrderId },
+        }),
+        tx.productionStageRun.findMany({
+          where: { workOrderId },
+        }),
+      ]);
+      if (consumptions.length === 0) {
+        throw new NotFoundException('No material consumption found');
+      }
 
-    return this.prisma.productionCostSnapshot.upsert({
-      where: {
-        workOrderId_status: {
+      const materialCost = consumptions.reduce(
+        (sum, row) => sum.add(row.totalCost),
+        new Prisma.Decimal(0),
+      );
+      const wasteCost = consumptions.reduce(
+        (sum, row) => sum.add(row.wasteCost),
+        new Prisma.Decimal(0),
+      );
+      const latestCompletedStageRun = stageRuns
+        .filter((row) => row.status === ProductionStageRunStatus.COMPLETED)
+        .sort((a, b) => b.sequence - a.sequence)[0];
+      // Each stage reports the same units at a different routing point. The
+      // denominator must therefore be the latest completed output, not the sum
+      // of accepted quantities across all stages.
+      const acceptedQty = latestCompletedStageRun?.acceptedQty ?? 0;
+      const unitCost =
+        acceptedQty > 0
+          ? materialCost.div(acceptedQty).toDecimalPlaces(4)
+          : null;
+
+      const result = await tx.productionCostSnapshot.upsert({
+        where: {
+          workOrderId_status: {
+            workOrderId,
+            status: ProductionCostStatus.FINALIZED,
+          },
+        },
+        update: {
+          materialCost,
+          wasteCost,
+          totalCost: materialCost,
+          acceptedQty,
+          unitCost,
+          capturedAt: new Date(),
+          createdById: actorId,
+        },
+        create: {
           workOrderId,
           status: ProductionCostStatus.FINALIZED,
+          materialCost,
+          wasteCost,
+          totalCost: materialCost,
+          acceptedQty,
+          unitCost,
+          createdById: actorId,
         },
-      },
-      update: {
-        materialCost,
-        wasteCost,
-        totalCost: materialCost,
-        acceptedQty,
-        unitCost,
-        capturedAt: new Date(),
-        createdById: actorId,
-      },
-      create: {
-        workOrderId,
-        status: ProductionCostStatus.FINALIZED,
-        materialCost,
-        wasteCost,
-        totalCost: materialCost,
-        acceptedQty,
-        unitCost,
-        createdById: actorId,
-      },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, result);
+      return result;
     });
   }
 

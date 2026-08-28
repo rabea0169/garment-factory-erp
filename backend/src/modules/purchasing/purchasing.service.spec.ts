@@ -18,6 +18,13 @@ describe('PurchasingService (GF-0009)', () => {
     prisma = createPrismaMock();
     prisma.$queryRaw.mockResolvedValue([{ id: 'po-1' }]);
 
+    // SEC-F02 + RES-F02: $transaction must invoke the callback with the
+    // prisma mock so the inner tx.purchaseOrder.create / tx.activityLog.create
+    // calls resolve against the same mocked model objects.
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
     inventoryService = { receive: jest.fn() };
     financialPosting = { postJournalEntryInTx: jest.fn() };
     prisma.supplier.findFirst.mockResolvedValue({ id: 'sup-1' });

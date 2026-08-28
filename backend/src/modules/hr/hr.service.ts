@@ -105,23 +105,49 @@ export class HrService {
     return new PaginatedResult(data, total, page, pageSize);
   }
 
-  async createWorker(input: CreateWorkerInput) {
+  async createWorker(input: CreateWorkerInput, idempotencyKey?: string) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      name: input.name,
+      phone: input.phone ?? null,
+      nationalId: input.nationalId ?? null,
+      specialty: input.specialty,
+      pieceRate: input.pieceRate ?? null,
+      hireDate: input.hireDate?.toISOString() ?? null,
+    });
+    const scope = 'hr-worker-create';
     try {
-      return await this.prisma.worker.create({
-        data: {
-          code: generateDocumentCode(DocumentCodePrefix.WORKER),
-          name: input.name.trim(),
-          phone: input.phone?.trim() || undefined,
-          nationalId: input.nationalId?.trim() || undefined,
-          specialty: input.specialty,
-          pieceRate: input.pieceRate ?? 0,
-          hireDate: input.hireDate,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay)
+          return replay as Awaited<ReturnType<typeof tx.worker.create>> & {
+            replayed: true;
+          };
+
+        const created = await tx.worker.create({
+          data: {
+            code: generateDocumentCode(DocumentCodePrefix.WORKER),
+            name: input.name.trim(),
+            phone: input.phone?.trim() || undefined,
+            nationalId: input.nationalId?.trim() || undefined,
+            specialty: input.specialty,
+            pieceRate: input.pieceRate ?? 0,
+            hireDate: input.hireDate,
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, created);
+        return created;
       });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
+        error.code === 'P2002' &&
+        !isIdempotencyUniqueViolation(error)
       ) {
         throw new ConflictException('بيانات العامل مستخدمة بالفعل');
       }
@@ -147,31 +173,58 @@ export class HrService {
     return worker;
   }
 
-  async recordAttendance(data: {
-    workerId: string;
-    date: Date;
-    isPresent: boolean;
-    notes?: string;
-  }) {
-    const worker = await this.prisma.worker.findUnique({
-      where: { id: data.workerId },
-      select: { id: true },
+  async recordAttendance(
+    data: {
+      workerId: string;
+      date: Date;
+      isPresent: boolean;
+      notes?: string;
+    },
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      workerId: data.workerId,
+      date: data.date.toISOString(),
+      isPresent: data.isPresent,
+      notes: data.notes ?? null,
     });
-    if (!worker) throw new NotFoundException('العامل غير موجود');
-
+    const scope = 'hr-attendance';
     try {
-      return await this.prisma.attendance.create({
-        data: {
-          workerId: data.workerId,
-          date: new Date(data.date),
-          isPresent: data.isPresent,
-          notes: data.notes,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay)
+          return replay as Awaited<ReturnType<typeof tx.attendance.create>> & {
+            replayed: true;
+          };
+
+        const worker = await tx.worker.findUnique({
+          where: { id: data.workerId },
+          select: { id: true },
+        });
+        if (!worker) throw new NotFoundException('العامل غير موجود');
+
+        const created = await tx.attendance.create({
+          data: {
+            workerId: data.workerId,
+            date: new Date(data.date),
+            isPresent: data.isPresent,
+            notes: data.notes,
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, created);
+        return created;
       });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
+        error.code === 'P2002' &&
+        !isIdempotencyUniqueViolation(error)
       ) {
         throw new ConflictException(
           'يوجد سجل حضور للعامل في هذا التاريخ بالفعل',
@@ -181,42 +234,93 @@ export class HrService {
     }
   }
 
-  async recordDailyProduction(data: {
-    workerId: string;
-    workOrderId?: string;
-    date: Date;
-    piecesCount: number;
-  }) {
-    const worker = await this.prisma.worker.findUnique({
-      where: { id: data.workerId },
+  async recordDailyProduction(
+    data: {
+      workerId: string;
+      workOrderId?: string;
+      date: Date;
+      piecesCount: number;
+    },
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      workerId: data.workerId,
+      workOrderId: data.workOrderId ?? null,
+      date: data.date.toISOString(),
+      piecesCount: data.piecesCount,
     });
-    if (!worker) throw new NotFoundException('العامل غير موجود');
+    const scope = 'hr-production';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<
+          ReturnType<typeof tx.dailyProduction.create>
+        > & { replayed: true };
 
-    const totalAmount = data.piecesCount * Number(worker.pieceRate);
+      const worker = await tx.worker.findUnique({
+        where: { id: data.workerId },
+      });
+      if (!worker) throw new NotFoundException('العامل غير موجود');
 
-    return this.prisma.dailyProduction.create({
-      data: {
-        workerId: data.workerId,
-        workOrderId: data.workOrderId,
-        date: new Date(data.date),
-        piecesCount: data.piecesCount,
-        pieceRate: worker.pieceRate,
-        totalAmount,
-      },
+      const totalAmount = data.piecesCount * Number(worker.pieceRate);
+      const created = await tx.dailyProduction.create({
+        data: {
+          workerId: data.workerId,
+          workOrderId: data.workOrderId,
+          date: new Date(data.date),
+          piecesCount: data.piecesCount,
+          pieceRate: worker.pieceRate,
+          totalAmount,
+        },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
     });
   }
 
-  async recordAdvance(data: {
-    workerId: string;
-    amount: number;
-    notes?: string;
-  }) {
-    return this.prisma.workerAdvance.create({
-      data: {
-        workerId: data.workerId,
-        amount: data.amount,
-        notes: data.notes,
-      },
+  async recordAdvance(
+    data: {
+      workerId: string;
+      amount: number;
+      notes?: string;
+    },
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header — advances
+    // have no natural unique constraint so we MUST rely on explicit replay.
+    const requestHash = computeRequestHash({
+      workerId: data.workerId,
+      amount: data.amount,
+      notes: data.notes ?? null,
+    });
+    const scope = 'hr-advance';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.workerAdvance.create>> & {
+          replayed: true;
+        };
+
+      const created = await tx.workerAdvance.create({
+        data: {
+          workerId: data.workerId,
+          amount: data.amount,
+          notes: data.notes,
+        },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
     });
   }
 

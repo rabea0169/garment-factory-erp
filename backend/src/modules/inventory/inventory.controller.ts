@@ -8,7 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { InventoryService } from './inventory.service';
 import { Roles } from '../auth/roles.guard';
@@ -47,6 +47,11 @@ export class InventoryController {
 
   @Post('raw-materials/:id/add-stock')
   @Roles(UserRole.INVENTORY_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإضافة رصيد خام',
+  })
   @ApiOperation({
     summary:
       'إضافة رصيد لمادة خام (مسار قديم — يمر عبر ledger في مخزن الخامات الافتراضي)',
@@ -55,12 +60,14 @@ export class InventoryController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: AddStockDto,
     @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.inventoryService.addRawMaterialStock(
       id,
       body.quantity,
       body.costPerUnit,
       userId,
+      idempotencyKey,
     );
   }
 

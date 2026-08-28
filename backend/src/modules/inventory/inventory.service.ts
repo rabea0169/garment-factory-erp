@@ -445,6 +445,7 @@ export class InventoryService {
     quantity: number,
     costPerUnit: number,
     userId?: string,
+    idempotencyKey?: string,
   ): Promise<StockMovementResult> {
     const warehouse = await this.resolveDefaultMaterialWarehouse();
     return this.receive(
@@ -454,6 +455,7 @@ export class InventoryService {
         quantity,
         unitCost: costPerUnit,
         reference: 'إضافة مخزون يدوية (مسار add-stock)',
+        idempotencyKey,
       },
       userId,
     );

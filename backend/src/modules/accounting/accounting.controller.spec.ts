@@ -65,8 +65,16 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
     await controller.createJournalEntry(journal, 'user-1');
     await controller.closeFiscalPeriod('period-1', 'user-1');
 
-    expect(service.createFiscalPeriod).toHaveBeenCalledWith(period, 'user-1');
-    expect(service.createJournalEntry).toHaveBeenCalledWith(journal, 'user-1');
+    expect(service.createFiscalPeriod).toHaveBeenCalledWith(
+      period,
+      'user-1',
+      undefined,
+    );
+    expect(service.createJournalEntry).toHaveBeenCalledWith(
+      journal,
+      'user-1',
+      undefined,
+    );
     expect(service.closeFiscalPeriod).toHaveBeenCalledWith(
       'period-1',
       'user-1',
@@ -76,7 +84,7 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
   it('إضافة حساب تمرر البيانات كما وردت', async () => {
     const body = { code: '1000', name: 'الصندوق', type: AccountType.ASSET };
     await controller.createAccount(body);
-    expect(service.createAccount).toHaveBeenCalledWith(body);
+    expect(service.createAccount).toHaveBeenCalledWith(body, undefined);
   });
 
   it('قراءة شجرة الحسابات مقيّدة بـ ACCOUNTANT وGENERAL_MANAGER', () => {
