@@ -10,6 +10,12 @@ describe('SuppliersService — supplier master data', () => {
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    // RES-F02: $transaction must invoke the callback with the prisma mock
+    // so the inner tx.supplier.create / tx.idempotencyKey calls resolve.
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     service = new SuppliersService(prisma as unknown as PrismaService);
   });
 

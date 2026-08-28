@@ -64,6 +64,7 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
     expect(service.createWorkOrder).toHaveBeenCalledWith(
       maliciousBody,
       'user-from-session',
+      undefined,
     );
   });
 
@@ -151,6 +152,7 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
     expect(workflow.finalizeCost).toHaveBeenCalledWith(
       'wo-1',
       'production-actor',
+      undefined,
     );
   });
 

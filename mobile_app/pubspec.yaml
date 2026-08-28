@@ -96,12 +96,12 @@ flutter:
     - assets/icons/
     - assets/lottie/
 
-  # fonts:
-  #   - family: Cairo
-  #     fonts:
-  #       - asset: assets/fonts/Cairo-Regular.ttf
-  #         weight: 400
-  #       - asset: assets/fonts/Cairo-SemiBold.ttf
-  #         weight: 600
-  #       - asset: assets/fonts/Cairo-Bold.ttf
-  #         weight: 700
+  # MOBILE-F10 fix: Cairo variable font — single asset covers all weights.
+  # Resolves the 100+ references to fontFamily: 'Cairo' that previously fell back
+  # to Roboto (no Arabic glyphs → tofu boxes). Flutter resolves the variable
+  # font's default (Regular 400) for plain text; explicit FontWeight.w700 will
+  # fall back gracefully to the same asset without tofu.
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/Cairo-Variable.ttf

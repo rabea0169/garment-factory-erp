@@ -3,6 +3,12 @@ import { Prisma } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
+  computeRequestHash,
+  isIdempotencyUniqueViolation,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
+import {
   DocumentCodePrefix,
   generateDocumentCode,
 } from '../../core/common/codes.util';
@@ -31,22 +37,47 @@ export class SuppliersService {
     return new PaginatedResult(data, total, page, limit);
   }
 
-  async createSupplier(input: CreateSupplierDto) {
+  async createSupplier(input: CreateSupplierDto, idempotencyKey?: string) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      name: input.name,
+      phone: input.phone ?? null,
+      email: input.email ?? null,
+      address: input.address ?? null,
+      notes: input.notes ?? null,
+    });
+    const scope = 'supplier-create';
     try {
-      return await this.prisma.supplier.create({
-        data: {
-          code: generateDocumentCode(DocumentCodePrefix.SUPPLIER),
-          name: input.name.trim(),
-          phone: input.phone?.trim() || undefined,
-          email: input.email?.trim().toLowerCase() || undefined,
-          address: input.address?.trim() || undefined,
-          notes: input.notes?.trim() || undefined,
-        },
+      return await this.prisma.$transaction(async (tx) => {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay)
+          return replay as Awaited<ReturnType<typeof tx.supplier.create>> & {
+            replayed: true;
+          };
+
+        const created = await tx.supplier.create({
+          data: {
+            code: generateDocumentCode(DocumentCodePrefix.SUPPLIER),
+            name: input.name.trim(),
+            phone: input.phone?.trim() || undefined,
+            email: input.email?.trim().toLowerCase() || undefined,
+            address: input.address?.trim() || undefined,
+            notes: input.notes?.trim() || undefined,
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, created);
+        return created;
       });
     } catch (error) {
       if (
         error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
+        error.code === 'P2002' &&
+        !isIdempotencyUniqueViolation(error)
       ) {
         throw new ConflictException('بيانات المورد مستخدمة بالفعل');
       }

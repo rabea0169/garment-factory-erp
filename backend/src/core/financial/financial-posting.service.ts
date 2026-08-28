@@ -7,6 +7,11 @@ import {
 import { createHash, randomBytes } from 'node:crypto';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  computeRequestHash,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../common/idempotency.util';
 
 /**
  * A1/A2/A3 + E4/E1 — FinancialPostingService: محرك القيد المزدوج الموحد.
@@ -368,6 +373,7 @@ export class FinancialPostingService {
     originalEntryId: string,
     userId?: string,
     reversalDescription?: string,
+    idempotencyKey?: string,
   ): Promise<ReversalResult> {
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const original = await tx.journalEntry.findUnique({
@@ -382,6 +388,29 @@ export class FinancialPostingService {
           `القيد ${originalEntryId} لا يحوي بنودًا — لا يمكن عكسه`,
         );
       }
+
+      // RES-F02: If the caller supplied an Idempotency-Key and the original
+      // is already reversed, replay the cached response — this handles the
+      // "request succeeded, but client never got the response" case.
+      if (original.isReversed && idempotencyKey) {
+        const replay = await tryReplayIdempotencyKey(
+          tx,
+          idempotencyKey,
+          'journal-entry-reverse',
+          computeRequestHash({
+            originalEntryId,
+            userId: userId ?? null,
+            reversalDescription: reversalDescription ?? null,
+          }),
+        );
+        if (replay) {
+          return replay as unknown as ReversalResult;
+        }
+        throw new ConflictException(
+          `القيد ${original.code} معكوس بالفعل — استخدم نفس Idempotency-Key لإعادة الاستجابة، أو مفتاحًا جديدًا لقيد آخر.`,
+        );
+      }
+
       const claim = await tx.journalEntry.updateMany({
         where: { id: original.id, isReversed: false },
         data: {
@@ -430,11 +459,15 @@ export class FinancialPostingService {
         data: { reversalOfId: original.id },
       });
 
-      return {
+      const result: ReversalResult = {
         ...reversalEntry,
         reversedEntryId: original.id,
         reversedEntryCode: original.code,
       };
+      // RES-F02: persist the response so a retry with the same key replays it
+      // instead of throwing "already reversed".
+      await storeIdempotencyResponse(tx, idempotencyKey, result);
+      return result;
     });
   }
 }

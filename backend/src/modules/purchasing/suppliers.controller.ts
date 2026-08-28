@@ -1,5 +1,10 @@
-import { Body, Controller, Get, Post, Query } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Headers, Post, Query } from '@nestjs/common';
+import {
+  ApiBearerAuth,
+  ApiHeader,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { Roles } from '../auth/roles.guard';
@@ -20,8 +25,16 @@ export class SuppliersController {
 
   @Post()
   @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإنشاء مورد',
+  })
   @ApiOperation({ summary: 'إنشاء مورد جديد' })
-  async createSupplier(@Body() body: CreateSupplierDto) {
-    return this.suppliersService.createSupplier(body);
+  async createSupplier(
+    @Body() body: CreateSupplierDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.suppliersService.createSupplier(body, idempotencyKey);
   }
 }

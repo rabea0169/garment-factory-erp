@@ -29,7 +29,8 @@ describe('SuppliersController — التفويض والصلاحيات', () => {
     await controller.createSupplier(body);
 
     expect(service.getSuppliers).toHaveBeenCalledWith(pagination);
-    expect(service.createSupplier).toHaveBeenCalledWith(body);
+    // RES-F02: controller forwards an optional idempotency-key header (undefined in this test).
+    expect(service.createSupplier).toHaveBeenCalledWith(body, undefined);
   });
 
   it('protects supplier creation with inventory or general manager roles', () => {

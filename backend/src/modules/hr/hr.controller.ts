@@ -33,13 +33,24 @@ export class HrController {
 
   @Post('workers')
   @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإنشاء عامل',
+  })
   @ApiOperation({ summary: 'إنشاء عامل جديد' })
-  async createWorker(@Body() body: CreateWorkerDto) {
+  async createWorker(
+    @Body() body: CreateWorkerDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
     const { hireDate, ...workerData } = body;
-    return this.hrService.createWorker({
-      ...workerData,
-      hireDate: hireDate ? new Date(hireDate) : undefined,
-    });
+    return this.hrService.createWorker(
+      {
+        ...workerData,
+        hireDate: hireDate ? new Date(hireDate) : undefined,
+      },
+      idempotencyKey,
+    );
   }
 
   @Get('workers/:id')
@@ -50,12 +61,23 @@ export class HrController {
 
   @Post('attendance')
   @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لتسجيل الحضور',
+  })
   @ApiOperation({ summary: 'تسجيل حضور عامل ليوم محدد' })
-  async recordAttendance(@Body() body: CreateAttendanceDto) {
-    return this.hrService.recordAttendance({
-      ...body,
-      date: new Date(body.date),
-    });
+  async recordAttendance(
+    @Body() body: CreateAttendanceDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.recordAttendance(
+      {
+        ...body,
+        date: new Date(body.date),
+      },
+      idempotencyKey,
+    );
   }
 
   @Post('production')
@@ -64,16 +86,32 @@ export class HrController {
     UserRole.HR_MANAGER,
     UserRole.GENERAL_MANAGER,
   )
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لتسجيل الإنتاج',
+  })
   @ApiOperation({ summary: 'تسجيل إنتاج يومي بالقطعة لعامل' })
-  async recordProduction(@Body() body: RecordProductionDto) {
-    return this.hrService.recordDailyProduction(body);
+  async recordProduction(
+    @Body() body: RecordProductionDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.recordDailyProduction(body, idempotencyKey);
   }
 
   @Post('advances')
   @Roles(UserRole.HR_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لتسجيل السلفة',
+  })
   @ApiOperation({ summary: 'تسجيل سلفة مالية لعامل' })
-  async recordAdvance(@Body() body: CreateAdvanceDto) {
-    return this.hrService.recordAdvance(body);
+  async recordAdvance(
+    @Body() body: CreateAdvanceDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.recordAdvance(body, idempotencyKey);
   }
 
   @Post('payrolls')

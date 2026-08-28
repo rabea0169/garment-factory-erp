@@ -9,7 +9,12 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiHeader,
+  ApiOperation,
+  ApiTags,
+} from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
@@ -39,13 +44,19 @@ export class ProductionController {
 
   @Post('work-orders')
   @Roles(UserRole.PRODUCTION_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإنشاء أمر تشغيل',
+  })
   @ApiOperation({ summary: 'إنشاء أمر تشغيل جديد' })
   async createWorkOrder(
     @CurrentUser('id') userId: string,
     @Body() body: CreateWorkOrderDto,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     // P0-04: creatorId/createdById من الجلسة فقط — إرساله في body يُرفض بـ 400
-    return this.productionService.createWorkOrder(body, userId);
+    return this.productionService.createWorkOrder(body, userId, idempotencyKey);
   }
 
   @Patch('work-orders/:id/status')
@@ -122,11 +133,21 @@ export class ProductionController {
 
   @Post('work-orders/:id/cost/finalize')
   @Roles(UserRole.PRODUCTION_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لتثبيت التكلفة',
+  })
   @ApiOperation({ summary: 'تثبيت لقطة تكلفة المواد لأمر التشغيل' })
   async finalizeCost(
     @Param('id', ParseUUIDPipe) workOrderId: string,
     @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.workflowService.finalizeCost(workOrderId, actorId);
+    return this.workflowService.finalizeCost(
+      workOrderId,
+      actorId,
+      idempotencyKey,
+    );
   }
 }

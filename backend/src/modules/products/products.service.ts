@@ -6,6 +6,11 @@ import {
 import { PrismaService } from '../../prisma/prisma.service';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import {
+  computeRequestHash,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
 
 @Injectable()
 export class ProductsService {
@@ -64,31 +69,68 @@ export class ProductsService {
     return product;
   }
 
-  async createProduct(data: {
-    code: string;
-    name: string;
-    category: string;
-    retailPrice: number;
-    wholesalePrice: number;
-    seasonId?: string;
-  }) {
-    return this.prisma.product.create({ data });
+  async createProduct(
+    data: {
+      code: string;
+      name: string;
+      category: string;
+      retailPrice: number;
+      wholesalePrice: number;
+      seasonId?: string;
+    },
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      code: data.code,
+      name: data.name,
+      category: data.category,
+      retailPrice: data.retailPrice,
+      wholesalePrice: data.wholesalePrice,
+      seasonId: data.seasonId ?? null,
+    });
+    const scope = 'product-create';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.product.create>> & {
+          replayed: true;
+        };
+      const created = await tx.product.create({ data });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
+    });
   }
 
-  async createFullProduct(data: {
-    code: string;
-    name: string;
-    category: string;
-    retailPrice: number;
-    wholesalePrice: number;
-    seasonId?: string;
-    variants?: Array<{ size: string; color: string }>;
-    bomItems?: Array<{
-      rawMaterialId: string;
-      quantity: number;
-      unit: string;
-    }>;
-  }) {
+  async createFullProduct(
+    data: {
+      code: string;
+      name: string;
+      category: string;
+      retailPrice: number;
+      wholesalePrice: number;
+      seasonId?: string;
+      variants?: Array<{ size: string; color: string }>;
+      bomItems?: Array<{
+        rawMaterialId: string;
+        quantity: number;
+        unit: string;
+      }>;
+    },
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      ...data,
+      variants: data.variants ?? [],
+      bomItems: data.bomItems ?? [],
+    });
+    const scope = 'product-full-create';
     const variants = data.variants ?? [];
     const bomItems = data.bomItems ?? [];
     const variantKeys = new Set<string>();
@@ -112,6 +154,17 @@ export class ProductsService {
 
     const { variants: _variants, bomItems: _bomItems, ...productData } = data;
     return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.product.findUnique>> & {
+          replayed: true;
+        };
+
       const product = await tx.product.create({
         data: {
           ...productData,
@@ -149,24 +202,53 @@ export class ProductsService {
         });
       }
 
-      return tx.product.findUnique({
+      const result = await tx.product.findUnique({
         where: { id: product.id },
         include: {
           variants: { where: { isActive: true } },
           bomVersions: { include: { lines: true } },
         },
       });
+      await storeIdempotencyResponse(tx, idempotencyKey, result);
+      return result;
     });
   }
 
-  async createVariant(productId: string, size: string, color: string) {
-    const product = await this.prisma.product.findFirst({
-      where: { id: productId, isActive: true, deletedAt: null },
-      select: { id: true },
+  async createVariant(
+    productId: string,
+    size: string,
+    color: string,
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      productId,
+      size,
+      color,
     });
-    if (!product) throw new NotFoundException('المنتج غير موجود أو غير نشط');
-    return this.prisma.productVariant.create({
-      data: { productId, size, color },
+    const scope = 'product-variant-create';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<
+          ReturnType<typeof tx.productVariant.create>
+        > & { replayed: true };
+
+      const product = await tx.product.findFirst({
+        where: { id: productId, isActive: true, deletedAt: null },
+        select: { id: true },
+      });
+      if (!product) throw new NotFoundException('المنتج غير موجود أو غير نشط');
+      const created = await tx.productVariant.create({
+        data: { productId, size, color },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
     });
   }
 
@@ -175,49 +257,76 @@ export class ProductsService {
     rawMaterialId: string,
     quantity: number,
     unit: string,
+    idempotencyKey?: string,
   ) {
-    const [product, rawMaterial] = await Promise.all([
-      this.prisma.product.findFirst({
-        where: { id: productId, isActive: true, deletedAt: null },
-      }),
-      this.prisma.rawMaterial.findFirst({
-        where: { id: rawMaterialId, isActive: true },
-      }),
-    ]);
-
-    if (!product) throw new NotFoundException('المنتج غير موجود');
-    if (!rawMaterial) throw new NotFoundException('الخامة غير موجودة');
-
-    const activeBom = await this.prisma.bomVersion.findFirst({
-      where: { productId, isActive: true },
-      orderBy: { createdAt: 'desc' },
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    // Note: addBomItem uses upsert so duplicate input is naturally safe,
+    // but idempotency-Key ensures the same retry returns the same response
+    // (without executing the upsert twice in the network-failure case).
+    const requestHash = computeRequestHash({
+      productId,
+      rawMaterialId,
+      quantity,
+      unit,
     });
+    const scope = 'product-bom-add';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.bomLine.upsert>> & {
+          replayed: true;
+        };
 
-    const bomVersion =
-      activeBom ??
-      (await this.prisma.bomVersion.create({
-        data: {
-          productId,
-          versionName: 'v1.0',
-          isActive: true,
+      const [product, rawMaterial] = await Promise.all([
+        tx.product.findFirst({
+          where: { id: productId, isActive: true, deletedAt: null },
+        }),
+        tx.rawMaterial.findFirst({
+          where: { id: rawMaterialId, isActive: true },
+        }),
+      ]);
+
+      if (!product) throw new NotFoundException('المنتج غير موجود');
+      if (!rawMaterial) throw new NotFoundException('الخامة غير موجودة');
+
+      const activeBom = await tx.bomVersion.findFirst({
+        where: { productId, isActive: true },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      const bomVersion =
+        activeBom ??
+        (await tx.bomVersion.create({
+          data: {
+            productId,
+            versionName: 'v1.0',
+            isActive: true,
+          },
+        }));
+
+      const result = await tx.bomLine.upsert({
+        where: {
+          bomVersionId_rawMaterialId: {
+            bomVersionId: bomVersion.id,
+            rawMaterialId,
+          },
         },
-      }));
-
-    return this.prisma.bomLine.upsert({
-      where: {
-        bomVersionId_rawMaterialId: {
+        create: {
           bomVersionId: bomVersion.id,
           rawMaterialId,
+          quantity,
+          unit,
         },
-      },
-      create: {
-        bomVersionId: bomVersion.id,
-        rawMaterialId,
-        quantity,
-        unit,
-      },
-      update: { quantity, unit },
-      include: { rawMaterial: true },
+        update: { quantity, unit },
+        include: { rawMaterial: true },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, result);
+      return result;
     });
   }
 

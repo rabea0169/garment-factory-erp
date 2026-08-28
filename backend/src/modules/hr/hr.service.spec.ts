@@ -11,6 +11,12 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
 
   beforeEach(() => {
     prisma = createPrismaMock();
+    // RES-F02: make $transaction invoke the callback with prisma so all the
+    // tx.* mocks we set up below resolve correctly.
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     service = new HrService(
       prisma as unknown as PrismaService,
       {} as FinancialPostingService,

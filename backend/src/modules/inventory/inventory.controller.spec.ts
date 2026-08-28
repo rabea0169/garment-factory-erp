@@ -59,6 +59,7 @@ describe('InventoryController — التفويض وتمرير العمليات (
       50,
       45.5,
       'user-1',
+      undefined,
     );
   });
 

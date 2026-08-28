@@ -30,10 +30,15 @@ export class PrismaService
   private readonly logger = new Logger(PrismaService.name);
 
   // C5: قائمة الأخطاء التي تُعاد محاولتها (transient — عابرة).
+  // RES-F01 fix: أضفنا P2034 (التعارض على نسخة السجل في update/update الآمنة
+  // بـ optimistic concurrency) و P2031 (المعاملة لا تزال مفتوحة — تظهر عند
+  // انقطاع الاتصال أثناء المعاملة). كلاهما عابر بكل المعنى.
   private static readonly RETRYABLE_CODES = new Set<string>([
     'P1001', // cannot reach database server
     'P1002', // server reached but invalid
     'P1017', // transaction conflict (typically serializable isolation violation)
+    'P2034', // conflict on optimistic concurrency version field — retry-safe
+    'P2031', // transaction still open after timeout — transient
   ]);
 
   // C5: محاولات إعادة + أزمنة backoff.

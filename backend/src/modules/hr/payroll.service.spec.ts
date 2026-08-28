@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unsafe-assignment */
 import { ConflictException, NotFoundException } from '@nestjs/common';
 import { PayrollStatus, Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';

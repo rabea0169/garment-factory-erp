@@ -62,7 +62,7 @@ describe('ProductsController — التفويض والتحقق من المسار
       ],
     };
     await controller.createFullProduct(body);
-    expect(service.createFullProduct).toHaveBeenCalledWith(body);
+    expect(service.createFullProduct).toHaveBeenCalledWith(body, undefined);
   });
 
   it('ينشئ منتجًا عبر الخدمة ببيانات الطلب كما هي', async () => {
@@ -74,7 +74,7 @@ describe('ProductsController — التفويض والتحقق من المسار
       wholesalePrice: 220,
     };
     await controller.createProduct(body);
-    expect(service.createProduct).toHaveBeenCalledWith(body);
+    expect(service.createProduct).toHaveBeenCalledWith(body, undefined);
   });
 
   it.each([
@@ -95,7 +95,12 @@ describe('ProductsController — التفويض والتحقق من المسار
   it('يفوّض إضافة متغير إلى الخدمة', async () => {
     const productId = '123e4567-e89b-12d3-a456-426614174000';
     await controller.createVariant(productId, { size: 'L', color: 'أزرق' });
-    expect(service.createVariant).toHaveBeenCalledWith(productId, 'L', 'أزرق');
+    expect(service.createVariant).toHaveBeenCalledWith(
+      productId,
+      'L',
+      'أزرق',
+      undefined,
+    );
   });
 
   it('يفوّض إضافة BOM إلى الخدمة', async () => {
@@ -111,6 +116,7 @@ describe('ProductsController — التفويض والتحقق من المسار
       rawMaterialId,
       1.25,
       'METER',
+      undefined,
     );
   });
 

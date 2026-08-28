@@ -65,6 +65,7 @@ model ActivityLog {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
+  @@index([userId])
 
   @@map("activity_logs")
 }
@@ -105,6 +106,7 @@ model Product {
 
   // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
   @@index([isActive, deletedAt])
+  @@index([seasonId])
   @@map("products")
 }
 
@@ -137,6 +139,7 @@ model BomVersion {
   product    Product     @relation(fields: [productId], references: [id])
   lines      BomLine[]
   workOrders WorkOrder[]
+  @@index([productId])
 
   @@map("bom_versions")
 }
@@ -192,6 +195,7 @@ model RawMaterial {
   ledgerEntries          StockLedgerEntry[]
 
   @@index([code, isActive])
+  @@index([supplierId])
   @@map("raw_materials")
 }
 
@@ -217,6 +221,7 @@ model RawMaterialTransaction {
   createdAt     DateTime        @default(now())
 
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  @@index([rawMaterialId])
 
   @@map("raw_material_transactions")
 }
@@ -328,6 +333,7 @@ model StockLedgerEntry {
   @@index([type, createdAt])
   @@index([createdAt])
   @@index([idempotencyKeyId])
+  @@index([createdById])
   @@map("stock_ledger_entries")
 }
 
@@ -428,6 +434,8 @@ model WorkOrder {
 
   @@index([status, currentStage])
   @@index([productVariantId, status])
+  @@index([bomVersionId])
+  @@index([createdById])
   @@map("work_orders")
 }
 
@@ -442,6 +450,7 @@ model WorkOrderStage {
   createdAt   DateTime        @default(now())
 
   workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
+  @@index([workOrderId])
 
   @@map("work_order_stages")
 }
@@ -523,6 +532,9 @@ model WorkOrderStageTransition {
 
   @@index([workOrderId, createdAt])
   @@index([workOrderId, toStage])
+  @@index([actorId])
+  @@index([fromRunId])
+  @@index([toRunId])
   @@map("work_order_stage_transitions")
 }
 
@@ -583,6 +595,7 @@ model ProductionCostSnapshot {
 
   @@unique([workOrderId, status])
   @@index([workOrderId, capturedAt])
+  @@index([createdById])
   @@map("production_cost_snapshots")
 }
 
@@ -596,6 +609,8 @@ model MaterialConsumption {
 
   workOrder   WorkOrder   @relation(fields: [workOrderId], references: [id])
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+  @@index([rawMaterialId])
+  @@index([workOrderId])
 
   @@map("material_consumptions")
 }
@@ -711,6 +726,8 @@ model DailyProduction {
 
   worker    Worker     @relation(fields: [workerId], references: [id])
   workOrder WorkOrder? @relation(fields: [workOrderId], references: [id])
+  @@index([workOrderId])
+  @@index([workerId])
 
   @@map("daily_production")
 }
@@ -723,6 +740,7 @@ model WorkerAdvance {
   notes    String?
 
   worker Worker @relation(fields: [workerId], references: [id])
+  @@index([workerId])
 
   @@map("worker_advances")
 }
@@ -754,6 +772,7 @@ model Payroll {
   @@unique([idempotencyKeyId])
   @@index([status, periodStart, periodEnd])
   @@index([createdById, createdAt])
+  @@index([approvedById])
   @@map("payrolls")
 }
 
@@ -848,6 +867,8 @@ model SalesOrder {
 
   // Cluster 2 — A4/B3: فهرس مركب على (status, createdAt) لاستعلامات الـ dashboard
   @@index([status, createdAt])
+  @@index([customerId])
+  @@index([userId])
   @@map("sales_orders")
 }
 
@@ -862,6 +883,8 @@ model SalesOrderItem {
   salesOrder  SalesOrder        @relation(fields: [salesOrderId], references: [id])
   variant     ProductVariant    @relation(fields: [productVariantId], references: [id])
   returnItems SalesReturnItem[]
+  @@index([productVariantId])
+  @@index([salesOrderId])
 
   @@map("sales_order_items")
 }
@@ -876,6 +899,8 @@ model CustomerPayment {
 
   customer   Customer    @relation(fields: [customerId], references: [id])
   salesOrder SalesOrder? @relation(fields: [salesOrderId], references: [id])
+  @@index([customerId])
+  @@index([salesOrderId])
 
   @@map("customer_payments")
 }
@@ -906,6 +931,7 @@ model SalesReturn {
 
   @@index([salesOrderId, createdAt])
   @@index([customerId, createdAt])
+  @@index([userId])
   @@map("sales_returns")
 }
 
@@ -943,6 +969,8 @@ model PurchaseOrder {
   items    PurchaseOrderItem[]
   receipts PurchaseReceipt[]
   payments SupplierPayment[]
+  @@index([supplierId])
+  @@index([userId])
 
   @@map("purchase_orders")
 }
@@ -958,6 +986,8 @@ model PurchaseOrderItem {
   purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
   rawMaterial   RawMaterial           @relation(fields: [rawMaterialId], references: [id])
   receiptItems  PurchaseReceiptItem[]
+  @@index([purchaseOrderId])
+  @@index([rawMaterialId])
 
   @@map("purchase_order_items")
 }
@@ -976,6 +1006,7 @@ model PurchaseReceipt {
   items            PurchaseReceiptItem[]
 
   @@index([purchaseOrderId, receivedAt])
+  @@index([userId])
   @@map("purchase_receipts")
 }
 
@@ -1002,6 +1033,8 @@ model SupplierPayment {
 
   supplier      Supplier       @relation(fields: [supplierId], references: [id])
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  @@index([purchaseOrderId])
+  @@index([supplierId])
 
   @@map("supplier_payments")
 }
@@ -1047,6 +1080,9 @@ model Shipment {
   deliveredBy     User?            @relation("ShipmentDeliverer", fields: [deliveredById], references: [id], onDelete: SetNull)
   shippingCompany ShippingCompany? @relation(fields: [shippingCompanyId], references: [id])
   idempotencyKey  IdempotencyKey?  @relation(fields: [idempotencyKeyId], references: [id])
+  @@index([deliveredById])
+  @@index([salesOrderId])
+  @@index([shippingCompanyId])
 
   @@map("shipments")
 }
@@ -1073,6 +1109,7 @@ model FiscalPeriod {
 
   @@unique([startDate, endDate])
   @@index([status, startDate, endDate])
+  @@index([createdById])
   @@map("fiscal_periods")
 }
 
@@ -1099,6 +1136,7 @@ model Account {
   children    Account[]     @relation("AccountHierarchy")
   debitLines  JournalLine[] @relation("DebitAccount")
   creditLines JournalLine[] @relation("CreditAccount")
+  @@index([parentId])
 
   @@map("accounts")
 }
@@ -1154,6 +1192,7 @@ model JournalEntry {
   @@index([isReversed])
   @@index([currencyId])
   @@index([fiscalPeriodId, date])
+  @@index([reversedById])
   @@map("journal_entries")
 }
 
@@ -1168,6 +1207,9 @@ model JournalLine {
   journalEntry  JournalEntry @relation(fields: [journalEntryId], references: [id])
   debitAccount  Account      @relation("DebitAccount", fields: [debitAccountId], references: [id])
   creditAccount Account      @relation("CreditAccount", fields: [creditAccountId], references: [id])
+  @@index([creditAccountId])
+  @@index([debitAccountId])
+  @@index([journalEntryId])
 
   @@map("journal_lines")
 }
@@ -1218,6 +1260,10 @@ model Voucher {
 
   // Cluster 2 — C5/C8: فهارس لتسريع استعلامات الـ treasury حسب النوع والتاريخ
   @@index([type, date])
+  @@index([counterpartyId])
+  @@index([createdById])
+  @@index([journalEntryId])
+  @@index([treasuryId])
   @@map("vouchers")
 }
 

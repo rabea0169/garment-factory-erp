@@ -52,10 +52,13 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
 
     await controller.createWorker(body);
 
-    expect(service.createWorker).toHaveBeenCalledWith({
-      ...body,
-      hireDate: new Date(body.hireDate),
-    });
+    expect(service.createWorker).toHaveBeenCalledWith(
+      {
+        ...body,
+        hireDate: new Date(body.hireDate),
+      },
+      undefined,
+    );
   });
 
   it('إنشاء عامل مقيّد بـ HR_MANAGER وGENERAL_MANAGER', () => {
@@ -75,10 +78,13 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       notes: 'حضور يدوي',
     };
     await controller.recordAttendance(body);
-    expect(service.recordAttendance).toHaveBeenCalledWith({
-      ...body,
-      date: new Date(body.date),
-    });
+    expect(service.recordAttendance).toHaveBeenCalledWith(
+      {
+        ...body,
+        date: new Date(body.date),
+      },
+      undefined,
+    );
   });
 
   it('تسجيل حضور مقيّد بـ HR_MANAGER وGENERAL_MANAGER', () => {
@@ -97,7 +103,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       piecesCount: 100,
     };
     await controller.recordProduction(body);
-    expect(service.recordDailyProduction).toHaveBeenCalledWith(body);
+    expect(service.recordDailyProduction).toHaveBeenCalledWith(body, undefined);
   });
 
   it('تسجيل إنتاج مقيّد بـ PRODUCTION_MANAGER وHR_MANAGER وGENERAL_MANAGER', () => {
@@ -116,7 +122,7 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
   it('تسجيل سلفة يمرر البيانات كما وردت', async () => {
     const body = { workerId: 'w-1', amount: 200 };
     await controller.recordAdvance(body);
-    expect(service.recordAdvance).toHaveBeenCalledWith(body);
+    expect(service.recordAdvance).toHaveBeenCalledWith(body, undefined);
   });
 
   it('إنشاء payroll يمرر تواريخ الفترة وactor وIdempotency-Key', async () => {

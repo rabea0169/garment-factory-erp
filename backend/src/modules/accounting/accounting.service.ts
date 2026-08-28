@@ -10,6 +10,11 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import {
+  computeRequestHash,
+  storeIdempotencyResponse,
+  tryReplayIdempotencyKey,
+} from '../../core/common/idempotency.util';
 
 @Injectable()
 export class AccountingService {
@@ -32,21 +37,47 @@ export class AccountingService {
     return new PaginatedResult(data, total, page, pageSize);
   }
 
-  async createAccount(data: {
-    code: string;
-    name: string;
-    type: AccountType;
-    parentId?: string;
-    isGroup?: boolean;
-  }) {
-    return this.prisma.account.create({
-      data: {
-        code: data.code,
-        name: data.name,
-        type: data.type,
-        parentId: data.parentId,
-        isGroup: data.isGroup || false,
-      },
+  async createAccount(
+    data: {
+      code: string;
+      name: string;
+      type: AccountType;
+      parentId?: string;
+      isGroup?: boolean;
+    },
+    idempotencyKey?: string,
+  ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      code: data.code,
+      name: data.name,
+      type: data.type,
+      parentId: data.parentId ?? null,
+      isGroup: data.isGroup ?? false,
+    });
+    const scope = 'account-create';
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.account.create>> & {
+          replayed: true;
+        };
+      const created = await tx.account.create({
+        data: {
+          code: data.code,
+          name: data.name,
+          type: data.type,
+          parentId: data.parentId,
+          isGroup: data.isGroup || false,
+        },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
     });
   }
 
@@ -94,7 +125,16 @@ export class AccountingService {
   async createFiscalPeriod(
     data: { name: string; startDate: string; endDate: string },
     createdById: string,
+    idempotencyKey?: string,
   ) {
+    // RES-F02: replay-safe retry via Idempotency-Key header.
+    const requestHash = computeRequestHash({
+      name: data.name,
+      startDate: data.startDate,
+      endDate: data.endDate,
+      createdById,
+    });
+    const scope = 'fiscal-period-create';
     const startDate = new Date(data.startDate);
     const endDate = new Date(data.endDate);
     if (
@@ -113,8 +153,22 @@ export class AccountingService {
     if (overlap) {
       throw new ConflictException('الفترة المالية تتداخل مع فترة موجودة');
     }
-    return this.prisma.fiscalPeriod.create({
-      data: { ...data, startDate, endDate, createdById },
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay)
+        return replay as Awaited<ReturnType<typeof tx.fiscalPeriod.create>> & {
+          replayed: true;
+        };
+      const created = await tx.fiscalPeriod.create({
+        data: { ...data, startDate, endDate, createdById },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, created);
+      return created;
     });
   }
 
@@ -155,11 +209,14 @@ export class AccountingService {
       }[];
     },
     userId: string,
+    idempotencyKey?: string,
   ) {
     const date = data.date ? new Date(data.date) : new Date();
     if (!Number.isFinite(date.getTime())) {
       throw new BadRequestException('تاريخ القيد غير صالح');
     }
+    // RES-F02: forward the idempotency key as postingKey — the financial
+    // posting service already uses it to detect and return replays.
     return this.financial.postJournalEntry(
       {
         description: data.description,
@@ -168,6 +225,7 @@ export class AccountingService {
         date,
         lines: data.lines,
         userId,
+        postingKey: idempotencyKey ? `journal:${idempotencyKey}` : undefined,
       },
       userId,
     );
@@ -329,11 +387,15 @@ export class AccountingService {
     originalEntryId: string,
     userId: string,
     description?: string,
+    idempotencyKey?: string,
   ) {
+    // RES-F02: forward idempotencyKey as postingKey for the reversal entry;
+    // financial.postJournalEntry already detects replay via postingKey.
     return this.financial.reverseJournalEntry(
       originalEntryId,
       userId,
       description,
+      idempotencyKey,
     );
   }
 }
