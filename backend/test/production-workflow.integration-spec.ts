@@ -1,4 +1,5 @@
 import {
+  AccountType,
   Prisma,
   ProductionStage,
   ProductionStageRunStatus,
@@ -15,6 +16,7 @@ import { InventoryService } from '../src/modules/inventory/inventory.service';
 import { ProductionWorkflowService } from '../src/modules/production/production-workflow.service';
 import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -678,6 +680,33 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
       "bom_lines", "bom_versions", "finished_good_stocks", "finished_goods",
       "product_variants", "products", "raw_materials", "warehouses", "users"
       CASCADE`);
+    // SELF-SUFFICIENCY (test hygiene): the PACKING completion posting resolves
+    // FINISHED_GOOD_STOCK and WIP from CHART_OF_ACCOUNTS. On a freshly migrated
+    // database these rows exist via the wave-2 account seed migration, but other
+    // integration suites (e.g. payroll) TRUNCATE the accounts table and re-seed
+    // only their own subset, so running this suite after them would break the
+    // lookup (P2022-style NotFound). Upsert both accounts so this suite passes
+    // in ANY suite order and on ANY database state.
+    await prisma.account.upsert({
+      where: { id: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK },
+      create: {
+        id: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+        code: `1310-C5-${randomUUID().slice(0, 8)}`,
+        name: 'Cluster 5 Finished Goods Stock',
+        type: AccountType.ASSET,
+      },
+      update: { isActive: true },
+    });
+    await prisma.account.upsert({
+      where: { id: CHART_OF_ACCOUNTS.WIP },
+      create: {
+        id: CHART_OF_ACCOUNTS.WIP,
+        code: `1320-C5-${randomUUID().slice(0, 8)}`,
+        name: 'Cluster 5 Work in Progress',
+        type: AccountType.ASSET,
+      },
+      update: { isActive: true },
+    });
     scenario = await createScenarioForPosting(prisma, inventoryService);
   });
 

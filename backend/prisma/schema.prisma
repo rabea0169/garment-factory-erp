@@ -20,18 +20,20 @@ enum UserRole {
 }
 
 model User {
-  id        String   @id @default(uuid())
-  name      String
-  email     String   @unique
-  phone     String?  @unique
-  password  String
-  role      UserRole @default(VIEWER)
-  isActive  Boolean  @default(true)
+  id         String   @id @default(uuid())
+  name       String
+  email      String   @unique
+  phone      String?  @unique
+  password   String
+  role       UserRole @default(VIEWER)
+  isActive   Boolean  @default(true)
   // SEC-F04: رقم إصدار جلسة JWT — كل logout/refresh-rotation يزيّده
   // فيبطل كل الـ access tokens السابقة. تدقق عليه JwtStrategy.validate.
-  jwtVersion   Int      @default(0)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  // P0 fix (wave 7): @map يطابق العمود jwt_version الذي أنشأته migration
+  // 20260902000000_wave4_sec_f04_refresh_tokens — بدونه كل استعلام يفشل بـ P2022.
+  jwtVersion Int      @default(0) @map("jwt_version")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   activityLogs           ActivityLog[]
   salesOrders            SalesOrder[]
@@ -56,7 +58,7 @@ model User {
   salesReturns         SalesReturn[]
 
   // SEC-F04: refresh tokens الصادرة لهذا المستخدم (نشطة أو ملغاة).
-  refreshTokens        RefreshToken[]
+  refreshTokens RefreshToken[]
 
   @@map("users")
 }
@@ -68,21 +70,24 @@ model User {
 // - replacedById: الـ token الذي حلّ محلّه بعد rotation — يسهّل تدقيق السلسلة.
 model RefreshToken {
   id           String    @id @default(uuid())
-  userId       String
+  // P0 fix (wave 7): أعمدة snake_case بـ @map — migration الموجة 4 أنشأ الجدول
+  // بأسماء snake_case بينما النموذج كان بلا @map → P2022 ColumnNotFound على
+  // كل استعلام (login/refresh/logout). لا تغيير في القاعدة نفسها — مطابقة فقط.
+  userId       String    @map("user_id")
   // sha256 hex — 64 حرفًا. لا نقارن بالنص الأصلي أبدًا.
-  tokenHash    String    @unique
-  expiresAt    DateTime
-  revokedAt    DateTime?
-  replacedById String?
-  userAgent    String?
-  ipAddress    String?
-  createdAt    DateTime  @default(now())
+  tokenHash    String    @unique @map("token_hash")
+  expiresAt    DateTime  @map("expires_at")
+  revokedAt    DateTime? @map("revoked_at")
+  replacedById String?   @map("replaced_by_id")
+  userAgent    String?   @map("user_agent")
+  ipAddress    String?   @map("ip_address")
+  createdAt    DateTime  @default(now()) @map("created_at")
 
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   // SEC-F04: علاقة استبدال (rotation). كل token قد يُستبدل بواحد جديد؛
   // ونُبقيها one-to-many للسماح بتدقيق السلسلة دون قيد uniqueness معيق.
-  replacedBy   RefreshToken? @relation("RefreshTokenReplacedBy", fields: [replacedById], references: [id])
-  replaces     RefreshToken[] @relation("RefreshTokenReplacedBy")
+  replacedBy RefreshToken?  @relation("RefreshTokenReplacedBy", fields: [replacedById], references: [id])
+  replaces   RefreshToken[] @relation("RefreshTokenReplacedBy")
 
   @@index([userId])
   @@index([expiresAt])
@@ -99,8 +104,8 @@ model ActivityLog {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
-  @@index([userId])
 
+  @@index([userId])
   @@map("activity_logs")
 }
 
@@ -173,8 +178,8 @@ model BomVersion {
   product    Product     @relation(fields: [productId], references: [id])
   lines      BomLine[]
   workOrders WorkOrder[]
-  @@index([productId])
 
+  @@index([productId])
   @@map("bom_versions")
 }
 
@@ -255,8 +260,8 @@ model RawMaterialTransaction {
   createdAt     DateTime        @default(now())
 
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
-  @@index([rawMaterialId])
 
+  @@index([rawMaterialId])
   @@map("raw_material_transactions")
 }
 
@@ -484,8 +489,8 @@ model WorkOrderStage {
   createdAt   DateTime        @default(now())
 
   workOrder WorkOrder @relation(fields: [workOrderId], references: [id])
-  @@index([workOrderId])
 
+  @@index([workOrderId])
   @@map("work_order_stages")
 }
 
@@ -643,9 +648,9 @@ model MaterialConsumption {
 
   workOrder   WorkOrder   @relation(fields: [workOrderId], references: [id])
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
+
   @@index([rawMaterialId])
   @@index([workOrderId])
-
   @@map("material_consumptions")
 }
 
@@ -760,9 +765,9 @@ model DailyProduction {
 
   worker    Worker     @relation(fields: [workerId], references: [id])
   workOrder WorkOrder? @relation(fields: [workOrderId], references: [id])
+
   @@index([workOrderId])
   @@index([workerId])
-
   @@map("daily_production")
 }
 
@@ -774,8 +779,8 @@ model WorkerAdvance {
   notes    String?
 
   worker Worker @relation(fields: [workerId], references: [id])
-  @@index([workerId])
 
+  @@index([workerId])
   @@map("worker_advances")
 }
 
@@ -813,23 +818,23 @@ model Payroll {
 // ===== M-08: SALES & PURCHASING =====
 
 model Customer {
-  id        String    @id @default(uuid())
-  code      String    @unique
-  name      String
-  phone     String?
-  address   String?
-  email     String?
-  notes     String?
-  balance   Decimal   @default(0) @db.Decimal(10, 2)
+  id              String    @id @default(uuid())
+  code            String    @unique
+  name            String
+  phone           String?
+  address         String?
+  email           String?
+  notes           String?
+  balance         Decimal   @default(0) @db.Decimal(10, 2)
   // Wave 6 — COMM-F07: Customer credit limit (NULL = unlimited).
   // creditLimit من NULL يعني "لا حد ائتماني" (متوافق مع السلوك التاريخي).
   // creditTermsDays: شروط السداد الآجل بالأيام (0 = فوري، 30 = آجل شهر، إلخ).
-  creditLimit     Decimal? @db.Decimal(12, 2)
-  creditTermsDays Int      @default(0)
-  isActive  Boolean   @default(true)
+  creditLimit     Decimal?  @db.Decimal(12, 2)
+  creditTermsDays Int       @default(0)
+  isActive        Boolean   @default(true)
   // E2: soft-delete — العميل يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
-  deletedAt DateTime?
-  createdAt DateTime  @default(now())
+  deletedAt       DateTime?
+  createdAt       DateTime  @default(now())
 
   salesOrders  SalesOrder[]
   payments     CustomerPayment[]
@@ -922,9 +927,9 @@ model SalesOrderItem {
   salesOrder  SalesOrder        @relation(fields: [salesOrderId], references: [id])
   variant     ProductVariant    @relation(fields: [productVariantId], references: [id])
   returnItems SalesReturnItem[]
+
   @@index([productVariantId])
   @@index([salesOrderId])
-
   @@map("sales_order_items")
 }
 
@@ -938,9 +943,9 @@ model CustomerPayment {
 
   customer   Customer    @relation(fields: [customerId], references: [id])
   salesOrder SalesOrder? @relation(fields: [salesOrderId], references: [id])
+
   @@index([customerId])
   @@index([salesOrderId])
-
   @@map("customer_payments")
 }
 
@@ -1008,9 +1013,9 @@ model PurchaseOrder {
   items    PurchaseOrderItem[]
   receipts PurchaseReceipt[]
   payments SupplierPayment[]
+
   @@index([supplierId])
   @@index([userId])
-
   @@map("purchase_orders")
 }
 
@@ -1025,9 +1030,9 @@ model PurchaseOrderItem {
   purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
   rawMaterial   RawMaterial           @relation(fields: [rawMaterialId], references: [id])
   receiptItems  PurchaseReceiptItem[]
+
   @@index([purchaseOrderId])
   @@index([rawMaterialId])
-
   @@map("purchase_order_items")
 }
 
@@ -1072,9 +1077,9 @@ model SupplierPayment {
 
   supplier      Supplier       @relation(fields: [supplierId], references: [id])
   purchaseOrder PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+
   @@index([purchaseOrderId])
   @@index([supplierId])
-
   @@map("supplier_payments")
 }
 
@@ -1119,10 +1124,10 @@ model Shipment {
   deliveredBy     User?            @relation("ShipmentDeliverer", fields: [deliveredById], references: [id], onDelete: SetNull)
   shippingCompany ShippingCompany? @relation(fields: [shippingCompanyId], references: [id])
   idempotencyKey  IdempotencyKey?  @relation(fields: [idempotencyKeyId], references: [id])
+
   @@index([deliveredById])
   @@index([salesOrderId])
   @@index([shippingCompanyId])
-
   @@map("shipments")
 }
 
@@ -1175,8 +1180,8 @@ model Account {
   children    Account[]     @relation("AccountHierarchy")
   debitLines  JournalLine[] @relation("DebitAccount")
   creditLines JournalLine[] @relation("CreditAccount")
-  @@index([parentId])
 
+  @@index([parentId])
   @@map("accounts")
 }
 
@@ -1253,10 +1258,10 @@ model JournalLine {
   journalEntry  JournalEntry @relation(fields: [journalEntryId], references: [id])
   debitAccount  Account      @relation("DebitAccount", fields: [debitAccountId], references: [id])
   creditAccount Account      @relation("CreditAccount", fields: [creditAccountId], references: [id])
+
   @@index([creditAccountId])
   @@index([debitAccountId])
   @@index([journalEntryId])
-
   @@map("journal_lines")
 }
 

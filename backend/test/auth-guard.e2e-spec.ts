@@ -84,6 +84,10 @@ describe('Auth guard (e2e) — GF-0002', () => {
     account: { create: jest.fn() },
     voucher: { create: jest.fn(), findFirst: jest.fn() },
     workerAdvance: { create: jest.fn() },
+    // الموجة 5 (COMM-F05): recordAdvance يتحقق من العامل ويسجل activityLog
+    // داخل الـ transaction — بدونها يرمي TypeError → 500.
+    worker: { findUnique: jest.fn() },
+    activityLog: { create: jest.fn() },
     product: { create: jest.fn(), findFirst: jest.fn() },
     productVariant: { create: jest.fn() },
     rawMaterial: { findFirst: jest.fn() },
@@ -587,6 +591,12 @@ describe('Auth guard (e2e) — GF-0002', () => {
 
     it('طلب صالح كامل يمر الـ validation بنجاح (لا 400 كاذبة) — تسجيل سلفة → 201', async () => {
       prismaFns.workerAdvance.create.mockResolvedValue({ id: 'adv-1' });
+      // الموجة 5: الخدمة تتحقق من وجود العامل داخل tx قبل إنشاء السلفة
+      prismaFns.worker.findUnique.mockResolvedValue({
+        id: UUID,
+        name: 'عامل اختبار',
+        code: 'WK-TEST',
+      });
       return request(app.getHttpServer())
         .post('/hr/advances')
         .set('Authorization', `Bearer ${adminToken()}`)
