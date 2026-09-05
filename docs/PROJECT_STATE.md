@@ -2,6 +2,23 @@
 
 > هذا الملف هو مصدر الحقيقة لحالة المشروع. يجب تحديثه في نفس commit كلما أُغلقت مهمة، ولا يبدأ أي نموذج مهمة جديدة قبل قراءته.
 
+## تحديث الموجة 8 — الدمج، الإنتاج المباشر، وoffline (2026-09-05/06)
+
+**إغلاق GF-REMAINING-010 (الموجة 7):** فرع `fix/uat-remediation-wave7-p0` اكتمل بـ commit رابع إضافي (`d052042` — إصلاح 33 اختبار تكامل كانت كامنة: SoD برواتب payroll بنفس الفاعل، واعتماد accounts مُزروعة بمigration في production-workflow) ثم دُمج عبر PR #77 (`d6ad465`). النتيجة على `main`: **CI أخضر** للمرة الأولى منذ 2026-08-28 — تشغيل `33963217026` نجح بوظائفه الأربع (Flutter Analyze/Test، Performance — Dashboard baseline بما فيها خطوة Seed سابقًا الفاشلة، Backend Prisma/Lint/Build/Unit/E2E/Integration، Secret Scan). إصلاح انحراف schema نهائي على main.
+
+**الإنتاج على Railway (أول نشر ناجح):** خدمة `garment-factory-erp` (المشروع `fulfilling-serenity`) نُشرت من `main@d6ad465` بنجاح (deployment `14c219e8`): `preDeployCommand` طبّق migrations، والتطبيق أقلع بـ 73 مسارًا و`NODE_ENV=production`. أُجري seed لمرة واحدة عبر commit مؤقت (`b2fcea2`) يضيف `prisma db seed` إلى preDeploy ثم رُدّ فورًا (`ca067da`) لأن الـ seed غير idempotent — كلمة مرور admin الأولية مضبوطة كمتغير بيئة `SEED_ADMIN_PASSWORD` على الخدمة (لا تُخزن في Git). السجل يوثق اكتمال الـ seed: المخازن، الخامات برصيد ledger، المنتجات وBOM، أمر عمل، العمال، 19 حسابًا محاسبيًا، وعملتين.
+
+**تحقق الإنتاج المباشر (2026-09-05):** على `https://garment-factory-erp-production.up.railway.app`: `/health` و`/health/ready` (database: ok) — 200؛ `POST /auth/login` ببيانات admin المُبذرة — 200 مع tokens؛ `GET /dashboard/stats` — 200 ببيانات فعلية؛ دورة SEC-F04 كاملة: refresh rotation 200، logout 200، الـ access tokens القديمة والمدوّرة كلاهما 401 بعد logout (jwtVersion revocation)، وإعادة استخدام الـ refresh token القديم والمدوّر كلاهما 401. الإنتاج الآن صالح لـ UAT فعلي وفق `docs/UAT_SCENARIOS.md`.
+
+**تنفيذ GF-REMAINING-008 (offline + barcode):** كانت `BarcodeScannerScreen` (mobile_scanner) موجودة لكن غير موصولة بأي شاشة، ولا حزمة connectivity في المشروع، والمخزون يعرض انقطاع الشبكة كخطأ عام. المنفذ:
+
+- `core/services/connectivity_service.dart` (جديد): `ConnectivityService` فوق `connectivity_plus` يبثّ حالة الاتصال مع تدهور آمن (فشل قراءة المنصة ⇒ افتراض متصل، والتصنيف النهائي يبقى لطبقة الشبكة).
+- `core/widgets/offline_banner.dart` (جديد): شريط "أنت غير متصل" يلتفّ عبر `MaterialApp.builder` فيظهر على كل الشاشات ويختفي تلقائيًا عند عودة الاتصال — قابل للحقن في الاختبارات.
+- `ApiClient.isNetworkError` (جديد): مصنّف مشترك لأخطاء connection/timeout يميّزها عن 4xx/5xx — يطابق تصنيف `ProductionNetworkFailure` ويوحّد المنطق.
+- `InventoryOffline` (حالة جديدة) + `AppOfflineView` في `app_feedback.dart`: شاشة "لا يوجد اتصال" مخصصة مع إعادة محاولة، منفصلة عن `AppErrorView`.
+- سلك الماسح في شاشة المخزون: زر `qr_code_scanner` بجانب البحث يفتح `BarcodeScannerScreen` الحقيقي عبر `BarcodeScannerLauncher` (قابل للحقن) ويرجع الـ SKU فيملأ البحث ويصفّي القائمة؛ الإلغاء لا يغيّر شيئًا.
+- الاختبارات: 22 اختبارًا جديدًا (مصنّف الأخطاء، الشريط بكل انتقالاته، cubit بالمخزون بحقن Dio يحلّ/يرفض، والشاشة بكل حالات loading/loaded/empty/offline/error + سلك الماسح وحالة الإلغاء) — السuite كاملة **55/55 ناجحة** و`flutter analyze` نظيف محليًا على Flutter 3.47.2.
+
 ## تحديث الموجة 7 — إصلاح P0 (2026-09-05)
 
 كشف فحص شامل أُجري في 2026-09-05 أن `main` دُمجت فيه موجات UAT كاملة بـ CI أحمر، وأن آخر 8 تشغيلات CI على `main` فاشلة منذ 2026-08-28 (تحقق مباشر عبر GitHub Actions API؛ آخر تشغيل `33214907002` على `main@e72ee94` — فشل). وظيفتا CI الفاشلتان: E2E tests ووظيفة Performance التي تتوقف عند خطوة Seed. الموجات المعنية: موجة 1-3 عبر PR #73، الموجة 4 عبر PR #74، الموجة 5 عبر PR #75، الموجة 6 عبر PR #76.
@@ -30,24 +47,21 @@
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `e72ee94` — fix(uat): wave 6 — COMM-F07 customer credit limit + SCHEMA-F01 follow-up (#76) بتاريخ 2026-08-29 |
-| فرع العمل الحالي | `fix/uat-remediation-wave7-p0` — إصلاح P0 انحراف schema + إصلاح اختباري E2E؛ لم يُرفع إلى GitHub بعد عند إعداد هذا التحديث |
-| Pull Requests الأخيرة | #73 (موجات 1-3) و#74 (موجة 4) و#75 (موجة 5) و#76 (موجة 6) مدمجة في main وكلها بـ CI أحمر؛ لا يُدمج PR جديد قبل CI أخضر وموافقة المالك |
-| آخر مرحلة مكتملة بالكامل على main | الموجات 1-6 مدمجة كوديًا لكن بوابة CI غير متحققة؛ آخر حالة CI أخضر موثقة على main قبل هذه الموجات |
-| حالة CI على main | فاشلة — آخر 8 تشغيلات منذ 2026-08-28 (آخرها Run `33214907002` على `e72ee94`: فشل E2E tests وPerformance عند Seed) |
-| حالة قاعدة البيانات | 36 migration حتى `20260903000000_wave6_comm_f07_customer_credit_limit`؛ انحراف schema الذي أدخلته migration الموجة 4 أُصلح في النموذج على فرع العمل (بلا migration جديد) وينتظر الدمج |
+| آخر commit على main | `ca067da` — Revert one-off production seed (بعد دمج PR #77 وseed الإنتاج) بتاريخ 2026-09-05 |
+| Pull Requests الأخيرة | #73-#76 (موجات 1-6، مدمجة بـ CI أحمر سابقًا) و**#77 (الموجة 7) مدمج بـ CI أخضر**؛ لا يُدمج PR جديد قبل CI أخضر وموافقة المالك |
+| آخر مرحلة مكتملة بالكامل على main | الموجة 7 مدمجة ومتحقق منها: CI أخضر (تشغيل 33963217026) وربط ملاحظات الإنتاج أدناه |
+| حالة CI على main | **خضراء** — آخر 3 تشغيلات متتالية ناجحة (d6ad465 وb2fcea2 وca067da) بعد 8 فاشلة سابقًا |
+| حالة قاعدة البيانات | 36 migration مطبقة على الإنتاج (Railway) عبر preDeploy؛ الـ seed نُفّذ مرة واحدة ونجح |
+| الإنتاج (Railway) | `garment-factory-erp-production.up.railway.app` — نشر ناجح من main@d6ad465 (deployment 14c219e8)؛ health/ready 200، login 200، دورة SEC-F04 كاملة مُتحقق منها |
 | إصدار API | `1.0` (وفق `setVersion` في `main.ts`)؛ 11 وحدة و73 endpoint تشغيليًا |
-| قاعدة البيانات المحلية | `GF_INTEGRATION_DATABASE_URL` غير مضبوط؛ تحقق الموجة 7 استعمل PostgreSQL 16 محمولًا على 5433 مباشرة عبر `DATABASE_URL` (migrate deploy + seed + login)، واختبارات PostgreSQL التكاملية لم تُشغّل محليًا وتظل مسؤولية CI |
-| الإصدار | `pre-release`؛ غير معتمد لتشغيل مؤسسي أو إنتاجي |
-| المهمة النشطة | GF-REMAINING-010 — إصلاح انحراف schema الموجة 4 وإعادة CI أخضر، ثم إكمال شروط Pilot |
-| المرحلة النشطة | إصلاح P0 منفذ على `fix/uat-remediation-wave7-p0` ومتحقق محليًا؛ ينتظر مراجعة PR وتشغيل CI والدمج |
-| سبب عدم الإغلاق النهائي | CI أحمر على main، مراجعة PR وموافقة المالك على الدمج، فحص قاعدة Railway الإنتاجية، UAT فعلي وbackup/restore قبل أي إطلاق |
-| حالة GF-0014 | مكتملة ومُدمجة في main عبر PR #25؛ CI على merge commit أخضر |
-| حالة GF-0015 | attendance عبر PR #24 وpayroll draft/approval عبر PR #30 مدمجان؛ main CI أخضر |
-| Security blockers | لا أسرار في الفحص الحالي؛ `npm audit` بعد fix غير كاسر: أُغلقت ثغرتا qs والمتبقي ثغرتا سلسلة mysql2 داخل Prisma (غير مستخدمة — المشروع PostgreSQL حصريًا، والإصلاح الكاسر مؤجل بقرار MASTER_BACKLOG)؛ قاعدة Railway الإنتاجية قد تكون متأثرة بانحراف schema وتحتاج فحصًا بعد الدمج |
-| Open decisions | قرار ثغرتا mysql2 داخل Prisma (`npm audit fix --force` يثبّت Prisma 6.19.3 — كاسر، مؤجل بقرار MASTER_BACKLOG)؛ طريقة فحص قاعدة Railway الإنتاجية بعد الدمج؛ نطاق UAT الفعلي وتوقيته وفق `docs/UAT_SCENARIOS.md` |
-| Last handoff | `docs/handoffs/HANDOFF-UAT-REMEDIATION-WAVE7.md` (الموجة 7)؛ سلسلة البطاقات السابقة في `docs/handoffs/` |
-| Next exact action | مراجعة PR لفرع `fix/uat-remediation-wave7-p0`، تشغيل CI والتحقق من اخضراره على main بعد الدمج بموافقة المالك، ثم فحص قاعدة Railway الإنتاجية من نفس الانحراف |
+| الإصدار | `pre-release`؛ مطلق لـ UAT/pilot على Railway، غير معتمد لتشغيل مؤسسي رسمي |
+| المهمة النشطة | GF-REMAINING-008 منفذة على main (هذا التحديث) — تنقصها بوابة CI على الـ push نفسه؛ التالي: تنفيذ UAT الفعلي (G9→G10) وبناء APK موقّع |
+| المرحلة النشطة | ما بعد الموجة 8: كل الأكواد على main؛ UAT على جهاز Android فعلي وفق docs/UAT_SCENARIOS.md (16 سيناريو) وقرار Go/No-Go |
+| سبب عدم الإغلاق النهائي | UAT فعلي على جهاز حقيقي (16/16)، بروفة backup/restore موثقة على الإنتاج، APK موقّع، وقرار إطلاق المالك (G10/G11) |
+| Security blockers | لا أسرار في المستودع (SEED_ADMIN_PASSWORD متغير بيئة على Railway فقط)؛ `npm audit`: أُغلقت ثغرتا qs، والمتبقي سلسلة mysql2 داخل Prisma (مؤجل بقرار MASTER_BACKLOG) |
+| Open decisions | قرار ثغرتي mysql2 داخل Prisma؛ نطاق/توقيت UAT الفعلي؛ آلية توقيع APK (keystore) |
+| Last handoff | `docs/handoffs/HANDOFF-WAVE8.md` (الموجة 8)؛ سلسلة البطاقات السابقة في `docs/handoffs/` |
+| Next exact action | تشغيل CI على push الموجة 8 والتحقق من اخضراره، ثم تنفيذ UAT على جهاز Android فعلي بقاعدة الإنتاج |
 
 ## المهام المكتملة على main
 
