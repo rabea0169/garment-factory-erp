@@ -290,7 +290,13 @@ describe('GF-0013 production workflow HTTP API (e2e)', () => {
       },
       users[0].id,
     );
-    expect(workflowMock.finalizeCost).toHaveBeenCalledWith(UUID, users[0].id);
+    // RES-F02: توقيع finalizeCost أصبح يستقبل idempotencyKey ثالثًا —
+    // الطلب لا يرسل Header مفتاح → undefined.
+    expect(workflowMock.finalizeCost).toHaveBeenCalledWith(
+      UUID,
+      users[0].id,
+      undefined,
+    );
   });
 
   it('يعيد نتيجة replay لمخرج المرحلة دون أثر إضافي عند تكرار المفتاح', async () => {
