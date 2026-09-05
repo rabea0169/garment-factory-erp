@@ -14,6 +14,7 @@ import '../../features/shipping/presentation/screens/shipping_screen.dart';
 import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
 import '../storage/auth_storage.dart';
+import '../widgets/barcode_scanner_screen.dart';
 
 class AppRouter {
   AppRouter._();
@@ -22,6 +23,9 @@ class AppRouter {
   static const String login = '/login';
   static const String dashboard = '/dashboard';
   static const String inventory = '/inventory';
+  // GF-REMAINING-008: شاشة ماسح الباركود — يفتحها زر المسح في المخزون
+  // وترجع الكود/الـ SKU عبر pop (context.push<String>).
+  static const String barcodeScanner = '/barcode-scanner';
   static const String purchasing = '/purchasing';
   static const String production = '/production';
   static const String quality = '/quality';
@@ -85,6 +89,11 @@ class AppRouter {
         path: inventory,
         name: 'inventory',
         builder: (context, state) => const InventoryScreen(),
+      ),
+      GoRoute(
+        path: barcodeScanner,
+        name: 'barcodeScanner',
+        builder: (context, state) => const BarcodeScannerScreen(),
       ),
       GoRoute(
         path: purchasing,
