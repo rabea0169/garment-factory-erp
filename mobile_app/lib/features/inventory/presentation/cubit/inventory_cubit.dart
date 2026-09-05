@@ -7,18 +7,23 @@ import '../../../../core/network/api_parsing.dart';
 import 'inventory_state.dart';
 
 class InventoryCubit extends Cubit<InventoryState> {
-  InventoryCubit({Uuid? uuid})
+  /// [dio] يُحقن في الاختبارات؛ الافتراضي عميل التطبيق المشترك.
+  InventoryCubit({Uuid? uuid, Dio? dio})
       : _uuid = uuid ?? const Uuid(),
+        _injectedDio = dio,
         super(InventoryInitial());
 
   final Uuid _uuid;
+  final Dio? _injectedDio;
+
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   Future<void> fetchRawMaterials() => fetchInventoryData();
 
   Future<void> fetchInventoryData() async {
     emit(InventoryLoading());
     try {
-      final dio = ApiClient.instance.dio;
+      final dio = _dio;
       final responses = await Future.wait([
         dio.get('/inventory/raw-materials'),
         dio.get('/inventory/finished-goods'),
@@ -47,6 +52,12 @@ class InventoryCubit extends Cubit<InventoryState> {
         ),
       );
     } catch (error) {
+      // GF-REMAINING-008: انقطاع الشبكة له حالة مخصصة حتى تظهر الواجهة
+      // شاشة "لا يوجد اتصال" بدل خطأ عام غير مفهوم.
+      if (ApiClient.isNetworkError(error)) {
+        emit(InventoryOffline());
+        return;
+      }
       emit(InventoryError(ApiClient.instance.messageFor(error)));
     }
   }

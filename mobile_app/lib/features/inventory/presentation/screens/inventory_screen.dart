@@ -3,24 +3,40 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/services/barcode_scanner_launcher.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
 
 class InventoryScreen extends StatelessWidget {
-  const InventoryScreen({super.key});
+  const InventoryScreen({super.key, this.cubit, this.scannerLauncher});
+
+  /// يُحقن في الاختبارات لضبط الحالة دون شبكة حقيقية.
+  final InventoryCubit? cubit;
+
+  /// GF-REMAINING-008: مُطلِق الماسح (يُحقن في الاختبارات بديلاً عن الكاميرا).
+  final BarcodeScannerLauncher? scannerLauncher;
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => InventoryCubit()..fetchInventoryData(),
-      child: const _InventoryScreenView(),
+    final content = _InventoryScreenView(
+      scannerLauncher: scannerLauncher ?? const BarcodeScannerLauncher(),
+    );
+    if (cubit != null) {
+      return BlocProvider<InventoryCubit>.value(value: cubit!, child: content);
+    }
+    return BlocProvider<InventoryCubit>(
+      create: (_) => InventoryCubit()..fetchInventoryData(),
+      child: content,
     );
   }
 }
 
 class _InventoryScreenView extends StatefulWidget {
-  const _InventoryScreenView();
+  const _InventoryScreenView({this.scannerLauncher});
+
+  /// GF-REMAINING-008: مُطلِع الماسح المستخدم من زر البحث بالماسح.
+  final BarcodeScannerLauncher? scannerLauncher;
 
   @override
   State<_InventoryScreenView> createState() => _InventoryScreenViewState();
@@ -29,6 +45,7 @@ class _InventoryScreenView extends StatefulWidget {
 class _InventoryScreenViewState extends State<_InventoryScreenView>
     with SingleTickerProviderStateMixin {
   late TabController _tabController;
+  late final BarcodeScannerLauncher _scannerLauncher;
   final _searchController = TextEditingController();
   var _searchQuery = '';
 
@@ -36,6 +53,8 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
+    _scannerLauncher =
+        widget.scannerLauncher ?? const BarcodeScannerLauncher();
   }
 
   @override
@@ -77,6 +96,12 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
         builder: (context, state) {
           if (state is InventoryLoading || state is InventoryInitial) {
             return const AppLoadingView();
+          } else if (state is InventoryOffline) {
+            // GF-REMAINING-008: شاشة مخصصة لانقطاع الشبكة بدل الخطأ العام.
+            return AppOfflineView(
+              onRetry: () =>
+                  context.read<InventoryCubit>().fetchInventoryData(),
+            );
           } else if (state is InventoryError) {
             return AppErrorView(
               message: state.message,
@@ -94,9 +119,18 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
                       labelText: 'بحث في المخزون',
                       hintText: 'الاسم أو الكود',
                       prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _searchQuery.isEmpty
-                          ? null
-                          : IconButton(
+                      suffixIcon: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // GF-REMAINING-008: مسح باركود حقيقي يرجع SKU/كود
+                          // المادة ويملأ خانة البحث به مباشرة.
+                          IconButton(
+                            tooltip: 'مسح باركود',
+                            icon: const Icon(Icons.qr_code_scanner),
+                            onPressed: _openScanner,
+                          ),
+                          if (_searchQuery.isNotEmpty)
+                            IconButton(
                               tooltip: 'مسح البحث',
                               onPressed: () {
                                 _searchController.clear();
@@ -104,6 +138,8 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
                               },
                               icon: const Icon(Icons.clear),
                             ),
+                        ],
+                      ),
                     ),
                     onChanged: (value) => setState(
                         () => _searchQuery = value.trim().toLowerCase()),
@@ -142,6 +178,18 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
           .map((value) => value.toString().toLowerCase());
       return values.any((value) => value.contains(_searchQuery));
     }).toList();
+  }
+
+  /// GF-REMAINING-008: يفتح الماسح الحقيقي (mobile_scanner) عبر
+  /// [_scannerLauncher] ويملأ البحث بالكود الممسوح (SKU) عند العودة.
+  /// الإلغاء (null) أو كود فارغ لا يغيّر شيئًا.
+  Future<void> _openScanner() async {
+    final code = await _scannerLauncher.scan(context);
+    if (!mounted) return;
+    final trimmed = code?.trim() ?? '';
+    if (trimmed.isEmpty) return;
+    _searchController.text = trimmed;
+    setState(() => _searchQuery = trimmed.toLowerCase());
   }
 
   Widget _buildRawMaterialsTab(List<dynamic> materials) {

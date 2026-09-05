@@ -25,3 +25,7 @@ class InventoryError extends InventoryState {
   final String message;
   InventoryError(this.message);
 }
+
+/// GF-REMAINING-008: انقطاع الشبكة أثناء جلب المخزون — منفصلة عن
+/// [InventoryError] لأن الواجهة تعرض لها حالة "لا يوجد اتصال" مخصصة.
+class InventoryOffline extends InventoryState {}

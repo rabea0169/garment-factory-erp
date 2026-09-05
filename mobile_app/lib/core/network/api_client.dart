@@ -170,6 +170,21 @@ class ApiClient {
     throw const FormatException('استجابة قائمة غير متوافقة مع عقد Pagination');
   }
 
+  /// GF-REMAINING-008: هل الخطأ خطأ شبكة (انقطاع اتصال / مهلة اتصال)؟
+  ///
+  /// تصنيف مشترك للـ cubits حتى تُصدر حالة offline مميزة بدل خطأ عام —
+  /// يطابق تصنيف طبقة الإنتاج (ProductionNetworkFailure) ويبقيه متاحًا
+  /// لباقي الميزات دون تكرار المنطق. الأخطاء 5xx و4xx ليست "offline".
+  static bool isNetworkError(Object error) {
+    if (error is DioException) {
+      return error.type == DioExceptionType.connectionError ||
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout;
+    }
+    return false;
+  }
+
   String messageFor(Object error) {
     if (error is DioException) {
       final status = error.response?.statusCode;

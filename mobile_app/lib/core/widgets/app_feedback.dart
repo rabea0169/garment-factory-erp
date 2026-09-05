@@ -83,7 +83,6 @@ class AppErrorView extends StatelessWidget {
     this.onRetry,
     super.key,
   });
-
   final String message;
   final VoidCallback? onRetry;
 
@@ -182,4 +181,48 @@ Future<bool> confirmAppAction(
     ),
   );
   return result ?? false;
+}
+
+/// GF-REMAINING-008: حالة "لا يوجد اتصال" — منفصلة عن [AppErrorView]
+/// لأن رسالتها وإجراءها مختلفان: الخطأ يحتاج "إعادة محاولة"، أما انقطاع
+/// الشبكة فيحتاج "إعادة المحاولة عند عودة الاتصال" مع تلميح واضح للسبب.
+class AppOfflineView extends StatelessWidget {
+  const AppOfflineView({this.onRetry, super.key});
+
+  final VoidCallback? onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off, size: 52, color: AppColors.error),
+            const SizedBox(height: 12),
+            const Text(
+              'لا يوجد اتصال بالإنترنت',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            const Text(
+              'تأكد من اتصال الجهاز بالشبكة ثم أعد المحاولة',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: AppColors.textSecondary),
+            ),
+            if (onRetry != null) ...[
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: onRetry,
+                icon: const Icon(Icons.refresh),
+                label: const Text('إعادة المحاولة'),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }
