@@ -8,13 +8,24 @@ import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
 
 class InventoryScreen extends StatelessWidget {
-  const InventoryScreen({super.key});
+  // حقن الـ cubit للاختبارات (نفس نمط SalesScreen/QualityScreen).
+  const InventoryScreen({super.key, this.cubit});
+
+  final InventoryCubit? cubit;
 
   @override
   Widget build(BuildContext context) {
-    return BlocProvider(
-      create: (context) => InventoryCubit()..fetchInventoryData(),
-      child: const _InventoryScreenView(),
+    const content = _InventoryScreenView();
+
+    if (cubit != null) {
+      return BlocProvider<InventoryCubit>.value(
+        value: cubit!,
+        child: content,
+      );
+    }
+    return BlocProvider<InventoryCubit>(
+      create: (_) => InventoryCubit()..fetchInventoryData(),
+      child: content,
     );
   }
 }
@@ -83,44 +94,38 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
               onRetry: () =>
                   context.read<InventoryCubit>().fetchInventoryData(),
             );
-          } else if (state is InventoryLoaded) {
+          } else if (state is InventoryUnauthorized) {
+            // 401: عميل ApiClient يمسح الجلسة ويعيد التوجيه لشاشة الدخول
+            // (onUnauthorized → AppRouter.goToLogin في main.dart) — هنا
+            // نعرض رسالة انتهاء الجلسة فقط.
+            return const Center(
+              child: Text(
+                'انتهت الجلسة، يرجى تسجيل الدخول مرة أخرى',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+            );
+          } else if (state is InventoryOffline) {
+            final snapshot = state.snapshot;
+            if (snapshot == null) {
+              return _OfflineView(
+                onRetry: () =>
+                    context.read<InventoryCubit>().fetchInventoryData(),
+              );
+            }
+            // انقطاع الاتصال مع توفر آخر بيانات ناجحة: لافتة في الأعلى +
+            // القوائم المحفوظة في الذاكرة (بيانات حقيقية، لا mock صامت).
             return Column(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'بحث في المخزون',
-                      hintText: 'الاسم أو الكود',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: _searchQuery.isEmpty
-                          ? null
-                          : IconButton(
-                              tooltip: 'مسح البحث',
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchQuery = '');
-                              },
-                              icon: const Icon(Icons.clear),
-                            ),
-                    ),
-                    onChanged: (value) => setState(
-                        () => _searchQuery = value.trim().toLowerCase()),
-                  ),
+                _OfflineBanner(
+                  onRetry: () =>
+                      context.read<InventoryCubit>().fetchInventoryData(),
                 ),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildRawMaterialsTab(_filterItems(state.rawMaterials)),
-                      _buildFinishedGoodsTab(_filterItems(state.finishedGoods)),
-                      _buildLowStockTab(_filterItems(state.lowStockMaterials)),
-                    ],
-                  ),
-                ),
+                Expanded(child: _buildLoadedContent(snapshot)),
               ],
             );
+          } else if (state is InventoryLoaded) {
+            return _buildLoadedContent(state);
           }
           return const SizedBox();
         },
@@ -130,6 +135,69 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
         icon: const Icon(Icons.add),
         label: const Text('إضافة رصيد', style: TextStyle(fontFamily: 'Cairo')),
       ),
+    );
+  }
+
+  // GF-REMAINING-008: زر المسح يفتح شاشة الماسح الحقيقية (GoRoute في
+  // AppRouter) وينتظر النتيجة؛ الماسح يرجع الكود/الـ SKU عبر pop، فيملأ
+  // حقل البحث وتُفعَّل الفلترة فورًا (نفس مسار onChanged).
+  Future<void> _scanBarcode() async {
+    final code = await context.push<String>(AppRouter.barcodeScanner);
+    final sku = code?.trim();
+    if (sku == null || sku.isEmpty) return;
+    _searchController.text = sku;
+    setState(() => _searchQuery = sku.toLowerCase());
+  }
+
+  Widget _buildLoadedContent(InventoryLoaded state) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    labelText: 'بحث في المخزون',
+                    hintText: 'الاسم أو الكود',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchQuery.isEmpty
+                        ? null
+                        : IconButton(
+                            tooltip: 'مسح البحث',
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = '');
+                            },
+                            icon: const Icon(Icons.clear),
+                          ),
+                  ),
+                  onChanged: (value) => setState(
+                      () => _searchQuery = value.trim().toLowerCase()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton(
+                tooltip: 'مسح الباركود',
+                icon: const Icon(Icons.qr_code_scanner),
+                onPressed: _scanBarcode,
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildRawMaterialsTab(_filterItems(state.rawMaterials)),
+              _buildFinishedGoodsTab(_filterItems(state.finishedGoods)),
+              _buildLowStockTab(_filterItems(state.lowStockMaterials)),
+            ],
+          ),
+        ),
+      ],
     );
   }
 
@@ -430,6 +498,74 @@ class _AddRawMaterialStockDialogState
           child: Text(_isSaving ? 'جاري الحفظ...' : 'إضافة'),
         ),
       ],
+    );
+  }
+}
+
+// GF-REMAINING-008: لافتة انقطاع الاتصال — تظهر أعلى القوائم عند توفر
+// آخر بيانات ناجحة محفوظة في الذاكرة.
+class _OfflineBanner extends StatelessWidget {
+  const _OfflineBanner({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: AppColors.warning.withValues(alpha: 0.12),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(
+          children: [
+            const Icon(Icons.wifi_off, color: AppColors.warning),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'انقطع الاتصال — تُعرض آخر بيانات محفوظة',
+                style: TextStyle(fontFamily: 'Cairo'),
+              ),
+            ),
+            TextButton(
+              onPressed: onRetry,
+              child: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// GF-REMAINING-008: placeholder كامل عند الانقطاع بلا أي بيانات محفوظة.
+class _OfflineView extends StatelessWidget {
+  const _OfflineView({required this.onRetry});
+
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.wifi_off, size: 52, color: AppColors.warning),
+            const SizedBox(height: 12),
+            const Text(
+              'تعذر الاتصال بالخادم، تحقق من الشبكة وحاول مرة أخرى',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: onRetry,
+              icon: const Icon(Icons.refresh),
+              label: const Text('إعادة المحاولة'),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

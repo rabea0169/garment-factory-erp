@@ -6,48 +6,62 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/network/api_parsing.dart';
 import 'inventory_state.dart';
 
+/// جلب قائمة مخزون من الـ API. يُحقن تنفيذ بديل في الاختبارات (بدون
+/// مكتبات mock — نفس أسلوب الحقن في production feature عبر repository).
+typedef InventoryListFetcher =
+    Future<List<Map<String, dynamic>>> Function(String path, String context);
+
+/// التنفيذ الافتراضي عبر singleton ApiClient (كما كان قبل GF-REMAINING-008).
+Future<List<Map<String, dynamic>>> _apiListFetcher(
+  String path,
+  String context,
+) async {
+  final response = await ApiClient.instance.dio.get(path);
+  return ApiParsing.paginatedMaps(response.data, context: context);
+}
+
 class InventoryCubit extends Cubit<InventoryState> {
-  InventoryCubit({Uuid? uuid})
+  InventoryCubit({Uuid? uuid, InventoryListFetcher? listFetcher})
       : _uuid = uuid ?? const Uuid(),
+        _listFetcher = listFetcher ?? _apiListFetcher,
         super(InventoryInitial());
 
   final Uuid _uuid;
+  final InventoryListFetcher _listFetcher;
+
+  // GF-REMAINING-008: كاش آخر قوائم ناجحة في الذاكرة فقط. Hive معلن في
+  // pubspec لكنه غير مستخدم في أي ملف تحت lib/، لذا لا نُدخل بنية تخزين
+  // جديدة؛ اللقطة تكفي لعرض "آخر بيانات" أثناء الانقطاع (لا mock صامت).
+  InventoryLoaded? _lastLoaded;
 
   Future<void> fetchRawMaterials() => fetchInventoryData();
 
   Future<void> fetchInventoryData() async {
     emit(InventoryLoading());
     try {
-      final dio = ApiClient.instance.dio;
       final responses = await Future.wait([
-        dio.get('/inventory/raw-materials'),
-        dio.get('/inventory/finished-goods'),
-        dio.get('/inventory/raw-materials/low-stock'),
-        dio.get('/inventory/warehouses'),
+        _listFetcher('/inventory/raw-materials', 'المواد الخام'),
+        _listFetcher('/inventory/finished-goods', 'المنتجات التامة'),
+        _listFetcher('/inventory/raw-materials/low-stock', 'تنبيهات المخزون'),
+        _listFetcher('/inventory/warehouses', 'المخازن'),
       ]);
 
-      emit(
-        InventoryLoaded(
-          rawMaterials: ApiParsing.paginatedMaps(
-            responses[0].data,
-            context: 'المواد الخام',
-          ),
-          finishedGoods: ApiParsing.paginatedMaps(
-            responses[1].data,
-            context: 'المنتجات التامة',
-          ),
-          lowStockMaterials: ApiParsing.paginatedMaps(
-            responses[2].data,
-            context: 'تنبيهات المخزون',
-          ),
-          warehouses: ApiParsing.paginatedMaps(
-            responses[3].data,
-            context: 'المخازن',
-          ),
-        ),
+      final loaded = InventoryLoaded(
+        rawMaterials: responses[0],
+        finishedGoods: responses[1],
+        lowStockMaterials: responses[2],
+        warehouses: responses[3],
       );
+      _lastLoaded = loaded;
+      emit(loaded);
     } catch (error) {
-      emit(InventoryError(ApiClient.instance.messageFor(error)));
+      if (_isUnauthorized(error)) {
+        emit(InventoryUnauthorized());
+      } else if (_isNetworkError(error)) {
+        emit(InventoryOffline(snapshot: _lastLoaded));
+      } else {
+        emit(InventoryError(ApiClient.instance.messageFor(error)));
+      }
     }
   }
 
@@ -168,4 +182,17 @@ class InventoryCubit extends Cubit<InventoryState> {
       rethrow;
     }
   }
+
+  // 401: يميّز انتهاء الجلسة — ApiClient يمسح الجلسة ويعيد التوجيه للدخول.
+  static bool _isUnauthorized(Object error) =>
+      error is DioException && error.response?.statusCode == 401;
+
+  // فشل الشبكة: نفس أنواع DioException في mapProductionFailure (production)
+  // وmessageFor (ApiClient) — connectionError وكل أنواع timeout.
+  static bool _isNetworkError(Object error) =>
+      error is DioException &&
+      (error.type == DioExceptionType.connectionError ||
+          error.type == DioExceptionType.connectionTimeout ||
+          error.type == DioExceptionType.sendTimeout ||
+          error.type == DioExceptionType.receiveTimeout);
 }
