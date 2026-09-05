@@ -20,6 +20,7 @@
 
 | ID | المهمة | الملفات الأساسية | التبعيات | معيار القبول | الحالة |
 |---|---|---|---|---|---|
+| GF-REMAINING-010 | إصلاح انحراف schema الموجة 4 + إعادة CI أخضر | `backend/prisma/schema.prisma` (إضافة `@map` لـ `jwtVersion` وكل حقول `RefreshToken` — بلا migration جديد لأن بنية القاعدة صحيحة)، `backend/test/auth-guard.e2e-spec.ts`، `backend/test/production-workflow-api.e2e-spec.ts` | migration `20260902000000_wave4_sec_f04_refresh_tokens`؛ تصحيح CI الأحمر على آخر 8 تشغيلات منذ 2026-08-28 | seed ناجح على قاعدة نظيفة (خطوة Seed في CI) + login يعمل (200) + E2E 64/64 + CI أخضر على main بعد الدمج | 🟡 منفذة على فرع `fix/uat-remediation-wave7-p0`؛ تنتظر PR/CI |
 | GF-REMAINING-001 | حماية ProductsController الحساسة واختبار RBAC | `backend/src/modules/products/products.controller.ts`، الاختبارات، `docs/API_CONTRACT.md` | خط الأساس `ab8f87d` | كل مسار تعديل/حذف/BOM يحمل دورًا مناسبًا؛ `401` بلا token و`403` للدور الخطأ ونجاح للدور الصحيح، مع تحقق DTO | 🟡 منفذة على فرع `fix/gf-remaining-001-products-rbac`؛ تنتظر PR/CI |
 | GF-REMAINING-002 | إصلاح رصيد المستودع في القراءة والـledger | `backend/src/modules/inventory/**`، اختبارات التكامل، `docs/DATA_AND_MIGRATIONS.md` | GF-0007 وGF-REMAINING-001 بعد الدمج والتحقق | حركات في مستودعين تعطي رصيد كل مستودع بدقة؛ لا كتابة رصيد مباشر؛ اختبار PostgreSQL على CI | ✅ مدمجة في `main@c18a2aa`؛ PR #49 وCI أخضر |
 
@@ -31,7 +32,7 @@
 | GF-REMAINING-004 | Backend Dashboard/Reports حقيقي | `backend/src/modules/dashboard/**`، `mobile_app/lib/features/reports/**`، docs، اختبارات | GF-REMAINING-003 بعد الدمج والتحقق؛ تثبيت تعريفات KPI | `/dashboard/stats` محمي ويعيد KPIs من قاعدة البيانات مع فترة ومصدر واضحين؛ لا static/mock fallback | ✅ مدمجة في `main@dd200c5`؛ PR #51 وCI أخضر |
 | GF-REMAINING-005 | ربط استلام المشتريات بالترحيل المالي | `backend/src/modules/purchasing/**`، financial posting، schema إن لزم، اختبارات | GF-REMAINING-004 بعد الدمج والتحقق؛ GF-0018 أو قرار transaction موثق | `receiveOrder` يغيّر المخزون ويسجل قيدًا متوازنًا داخل transaction واحدة وبـidempotency؛ rollback عند الفشل | ✅ مدمجة في `main@1bc1fc4`؛ PR #55 وCI PostgreSQL أخضر |
 | GF-REMAINING-006 | توسيع اختبارات PostgreSQL الحقيقية وRBAC | `backend/test/**`، CI، `.github/workflows/ci.yml` | GF-REMAINING-001 إلى 005 بحسب المسار | migration deploy وintegration suites على PostgreSQL 16؛ اختبارات 401/403 والتكرار والrollback، مع عدم إخفاء فشل | ✅ مدمجة في `main@0b34949`؛ PR #56 وCI PostgreSQL أخضران |
-| GF-REMAINING-007 | اختبار الأداء القابل للتكرار | `backend/test/performance/**` أو أداة معتمدة، CI/docs | GF-REMAINING-006 بعد الدمج والتحقق؛ استقرار API وبيئة PostgreSQL | قياس p95 وthroughput وpool saturation لحمل موثق؛ العتبات تعتمد قرارًا لا تخمينًا | 🟡 منفذة في PR #62؛ CI run `32954663324` أخضر؛ بانتظار تفويض الدمج |
+| GF-REMAINING-007 | اختبار الأداء القابل للتكرار | `backend/test/performance/**` أو أداة معتمدة، CI/docs | GF-REMAINING-006 بعد الدمج والتحقق؛ استقرار API وبيئة PostgreSQL | قياس p95 وthroughput وpool saturation لحمل موثق؛ العتبات تعتمد قرارًا لا تخمينًا | 🟡 منفذة في PR #62؛ CI run `32954663324` أخضر تاريخيًا؛ حاليًا وظيفة Performance على main تسقط عند خطوة Seed بسبب انحراف schema الموجة 4 نفسه (انظر GF-REMAINING-010) — تُستعاد بعد إغلاقه |
 
 ## P2 — تجربة الهاتف والإطلاق
 
