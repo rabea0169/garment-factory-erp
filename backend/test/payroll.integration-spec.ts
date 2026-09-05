@@ -19,6 +19,7 @@ integrationDescribe('GF-0015 payroll integration', () => {
   let prisma: PrismaService;
   let hrService: HrService;
   let actorId: string;
+  let approverId: string;
   let workerId: string;
   let treasuryId: string;
   const periodStart = new Date('2026-08-01T00:00:00.000Z');
@@ -60,6 +61,19 @@ integrationDescribe('GF-0015 payroll integration', () => {
       },
     });
     actorId = actor.id;
+    // COMM-F02 (wave 5): SoD — the payroll creator may NOT approve it
+    // themselves. Every approvePayroll call below uses this second, distinct
+    // actor so the scenarios comply with the separation-of-duties rule while
+    // still exercising create/approve/pay idempotency end to end.
+    const approver = await prisma.user.create({
+      data: {
+        name: 'GF-0015 Payroll Approver (SoD second actor)',
+        email: `gf0015-approver-${randomUUID()}@example.test`,
+        password: 'integration-only-hash',
+        role: UserRole.ACCOUNTANT,
+      },
+    });
+    approverId = approver.id;
     await prisma.account.createMany({
       data: [
         {
@@ -211,12 +225,12 @@ integrationDescribe('GF-0015 payroll integration', () => {
     const approveKey = `gf0015-approve-${randomUUID()}`;
     const approved = await hrService.approvePayroll(
       first.id,
-      actorId,
+      approverId,
       approveKey,
     );
     const approvedReplay = await hrService.approvePayroll(
       first.id,
-      actorId,
+      approverId,
       approveKey,
     );
     expect(approved).toMatchObject({ status: PayrollStatus.APPROVED });
@@ -234,7 +248,7 @@ integrationDescribe('GF-0015 payroll integration', () => {
     );
     await hrService.approvePayroll(
       payroll.id,
-      actorId,
+      approverId,
       `gf0015-pay-approve-${randomUUID()}`,
     );
     const paymentKey = `gf0015-pay-${randomUUID()}`;
