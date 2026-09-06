@@ -13,6 +13,7 @@ import {
 } from '@prisma/client';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { QualityService } from './quality.service';
+import { QualityCheckQueryDto } from './dto/quality-check-query.dto';
 
 describe('QualityService — GF-0014', () => {
   let service: QualityService;
@@ -329,6 +330,87 @@ describe('QualityService — GF-0014', () => {
           'quality-waste-fail-key',
         ),
       ).rejects.toThrow('posting failed');
+    });
+  });
+
+  // QLT-3 (P1 — GF-IMP-W2): فلاتر قائمة الفحوص (نفس مرشحات KPI).
+  describe('QLT-3 — فلاتر قائمة الفحوصات', () => {
+    it('يطبّق stage وworkOrderId وfrom/to في where (نفس مرشحات KPI)', async () => {
+      prisma.qualityCheck.findMany.mockResolvedValue([]);
+      prisma.qualityCheck.count.mockResolvedValue(0);
+
+      const query = {
+        stage: ProductionStage.SEWING,
+        workOrderId: 'wo-1',
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-08-31T23:59:59.999Z',
+        page: 1,
+        limit: 20,
+      } as QualityCheckQueryDto;
+
+      await service.getQualityChecks(query);
+
+      const expectedWhere = {
+        workOrderId: 'wo-1',
+        stage: WorkOrderStatus.SEWING,
+        checkedAt: {
+          gte: new Date(query.from as string),
+          lte: new Date(query.to as string),
+        },
+      };
+      expect(prisma.qualityCheck.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+      expect(prisma.qualityCheck.count).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+    });
+
+    it('بلا مرشحات → where فارغة (توافق خلفي) مع ترقيم الصفحات', async () => {
+      prisma.qualityCheck.findMany.mockResolvedValue([]);
+      prisma.qualityCheck.count.mockResolvedValue(0);
+
+      await service.getQualityChecks({
+        page: 2,
+        limit: 5,
+      });
+
+      expect(prisma.qualityCheck.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: {}, skip: 5, take: 5 }),
+      );
+      expect(prisma.qualityCheck.count).toHaveBeenCalledWith({ where: {} });
+    });
+
+    it('تاريخ غير صالح → 400 قبل أي استعلام', async () => {
+      await expect(
+        service.getQualityChecks({
+          from: 'not-a-date',
+        }),
+      ).rejects.toThrow('فلاتر الفحوصات تتطلب تواريخ ISO صالحة');
+      expect(prisma.qualityCheck.findMany).not.toHaveBeenCalled();
+    });
+
+    it('from بعد to → 400', async () => {
+      await expect(
+        service.getQualityChecks({
+          from: '2026-09-01T00:00:00.000Z',
+          to: '2026-08-01T00:00:00.000Z',
+        }),
+      ).rejects.toThrow(
+        'تاريخ بداية الفلاتر لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    });
+
+    it('الاستدعاء بلا وسيطات يعمل (الافتراض من الخدمة)', async () => {
+      prisma.qualityCheck.findMany.mockResolvedValue([]);
+      prisma.qualityCheck.count.mockResolvedValue(0);
+
+      const result = await service.getQualityChecks();
+
+      expect(result.data).toEqual([]);
+      expect(prisma.qualityCheck.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: {} }),
+      );
     });
   });
 

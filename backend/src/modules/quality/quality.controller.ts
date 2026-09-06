@@ -3,9 +3,9 @@ import { ApiHeader, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { CreateQualityCheckDto } from './dto/create-quality-check.dto';
 import { QualityKpiQueryDto } from './dto/quality-kpi-query.dto';
+import { QualityCheckQueryDto } from './dto/quality-check-query.dto';
 import { QualityService } from './quality.service';
 
 @ApiTags('Quality Control (مراقبة الجودة)')
@@ -19,8 +19,12 @@ export class QualityController {
   }
 
   @Get()
-  async getChecks(@Query() pagination: PaginationDto = new PaginationDto()) {
-    return this.qualityService.getQualityChecks(pagination);
+  // QLT-3 (GF-IMP-W2): فلاتر اختيارية (stage/workOrderId/from/to) + ترقيم.
+  // الأدوار كما هي (قراءة مفتوحة للمصادقين) — بلا قيود جديدة.
+  async getChecks(
+    @Query() query: QualityCheckQueryDto = new QualityCheckQueryDto(),
+  ) {
+    return this.qualityService.getQualityChecks(query);
   }
 
   @Post()

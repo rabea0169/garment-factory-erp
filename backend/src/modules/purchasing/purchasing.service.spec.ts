@@ -4,7 +4,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { PaymentType, PurchaseOrderStatus } from '@prisma/client';
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { computeRequestHash } from '../../core/common/idempotency.util';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 
@@ -17,6 +17,11 @@ describe('PurchasingService (GF-0009)', () => {
   beforeEach(() => {
     prisma = createPrismaMock();
     prisma.$queryRaw.mockResolvedValue([{ id: 'po-1' }]);
+
+    // PUR-5 (GF-IMP-W2): purchaseOrder.updateMany غير موجودة في
+    // prisma-mock المشترك — توسعة محلية (نمط W1-C) بدل تعديل مساعد مشترك.
+    (prisma.purchaseOrder as unknown as { updateMany: jest.Mock }).updateMany =
+      jest.fn().mockResolvedValue({ count: 1 });
 
     // SEC-F02 + RES-F02: $transaction must invoke the callback with the
     // prisma mock so the inner tx.purchaseOrder.create / tx.activityLog.create
@@ -47,7 +52,7 @@ describe('PurchasingService (GF-0009)', () => {
       prisma.purchaseOrder.create.mockResolvedValue({ id: 'po-1', ...dto });
 
       const res = await service.createPurchaseOrder(dto, 'user-1');
-      expect(res.id).toBe('po-1');
+      expect((res as { id: string }).id).toBe('po-1');
 
       expect(prisma.purchaseOrder.create).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -91,14 +96,114 @@ describe('PurchasingService (GF-0009)', () => {
         }),
       );
     });
+
+    it('PUR-3: يرفض موردًا غير موجود داخل المعاملة قبل إنشاء الأمر', async () => {
+      const dto = {
+        supplierId: 'sup-missing',
+        paymentType: PaymentType.CASH,
+        items: [{ rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 }],
+      };
+      prisma.supplier.findFirst.mockResolvedValue(null);
+
+      await expect(
+        service.createPurchaseOrder(dto, 'user-1', 'po-key-1'),
+      ).rejects.toThrow('المورد غير موجود');
+      expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+    });
+
+    it('PUR-3: نفس المفتاح + نفس المحتوى يعيد نفس الاستجابة بلا أمر ثانٍ (replay)', async () => {
+      const dto = {
+        supplierId: 'sup-1',
+        paymentType: PaymentType.CASH,
+        items: [{ rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 }],
+      };
+      const stored = { id: 'po-replayed', code: 'PO-R', items: [] };
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'po-key-replay',
+        scope: 'purchase-order-create',
+        requestHash: computeRequestHash({
+          operation: 'purchase-order-create',
+          creatorId: 'user-1',
+          supplierId: dto.supplierId,
+          paymentType: dto.paymentType,
+          dueDate: null,
+          notes: null,
+          items: dto.items,
+        }),
+        response: stored,
+      });
+
+      const result = await service.createPurchaseOrder(
+        dto,
+        'user-1',
+        'po-key-replay',
+      );
+
+      expect(result).toEqual({ ...stored, replayed: true });
+      expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+    });
+
+    it('PUR-3: نفس المفتاح + بصمة مختلفة → 409 (ConflictException)', async () => {
+      const dto = {
+        supplierId: 'sup-1',
+        paymentType: PaymentType.CASH,
+        items: [{ rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 }],
+      };
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'po-key-conflict',
+        scope: 'purchase-order-create',
+        requestHash: computeRequestHash({
+          operation: 'purchase-order-create',
+          creatorId: 'user-1',
+          supplierId: 'sup-1',
+          paymentType: PaymentType.CREDIT,
+          dueDate: null,
+          notes: null,
+          items: [{ rawMaterialId: 'rm-2', quantity: 1, unitCost: 99 }],
+        }),
+        response: { id: 'po-1' },
+      });
+
+      await expect(
+        service.createPurchaseOrder(dto, 'user-1', 'po-key-conflict'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.purchaseOrder.create).not.toHaveBeenCalled();
+    });
+
+    it('PUR-3: ينشئ مفتاح idempotency داخل المعاملة ويخزن الاستجابة', async () => {
+      const dto = {
+        supplierId: 'sup-1',
+        paymentType: PaymentType.CASH,
+        items: [{ rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 }],
+      };
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-po' });
+      prisma.purchaseOrder.create.mockResolvedValue({ id: 'po-1' });
+
+      await service.createPurchaseOrder(dto, 'user-1', 'po-key-new');
+
+      expect(prisma.idempotencyKey.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          key: 'po-key-new',
+          scope: 'purchase-order-create',
+        }),
+        select: { id: true },
+      });
+      expect(prisma.idempotencyKey.update).toHaveBeenCalledWith({
+        where: { key: 'po-key-new' },
+        data: { response: expect.anything() },
+      });
+    });
   });
 
   describe('createReceipt', () => {
     it('ينشئ إذن استلام جزئيًا ويرسل الكمية المستلمة فقط إلى المخزون', async () => {
+      // PUR-5 (أ): الاستلام أصبح على أوامر APPROVED فقط — الحالة المسبقة
+      // للإعداد تُهيّأ APPROVED بدل PENDING (نفس التعديل بكل مواصفات الاستلام).
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
         ],
@@ -112,7 +217,7 @@ describe('PurchasingService (GF-0009)', () => {
         items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }],
       });
       prisma.purchaseOrder.update.mockResolvedValue({
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
       });
 
       const result = await service.createReceipt(
@@ -129,7 +234,8 @@ describe('PurchasingService (GF-0009)', () => {
       );
       expect(prisma.purchaseOrder.update).toHaveBeenCalledWith({
         where: { id: 'po-1' },
-        data: { status: PurchaseOrderStatus.PENDING },
+        // PUR-5 (أ): الاستلام الجزئي يُبقي الأمر APPROVED (لم يعد PENDING)
+        data: { status: PurchaseOrderStatus.APPROVED },
       });
     });
 
@@ -137,7 +243,7 @@ describe('PurchasingService (GF-0009)', () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
         ],
@@ -152,7 +258,7 @@ describe('PurchasingService (GF-0009)', () => {
         items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }],
       });
       prisma.purchaseOrder.update.mockResolvedValue({
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
       });
 
       await service.createReceipt(
@@ -208,7 +314,7 @@ describe('PurchasingService (GF-0009)', () => {
     it('يرفض الاستلام الذي يتجاوز كمية أمر الشراء', async () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
         ],
@@ -229,7 +335,7 @@ describe('PurchasingService (GF-0009)', () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 3, unitCost: 5 },
         ],
@@ -243,7 +349,7 @@ describe('PurchasingService (GF-0009)', () => {
         items: [{ purchaseOrderItemId: 'poi-1', quantity: 2.5 }],
       });
       prisma.purchaseOrder.update.mockResolvedValue({
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
       });
 
       const result = await service.createReceipt(
@@ -265,7 +371,7 @@ describe('PurchasingService (GF-0009)', () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 0.3, unitCost: 10 },
         ],
@@ -299,6 +405,295 @@ describe('PurchasingService (GF-0009)', () => {
         data: { status: PurchaseOrderStatus.RECEIVED },
       });
     });
+
+    // PUR-5 (أ): بوابة الاعتماد — الاستلام على DRAFT يُرفض بـ 400 عربية
+    it('PUR-5 (أ): يرفض الاستلام على أمر DRAFT بـ 400 (أمر الشراء غير معتمد)', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.DRAFT,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+        ],
+      });
+
+      await expect(
+        service.createReceipt(
+          'po-1',
+          { items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }] },
+          'user-1',
+        ),
+      ).rejects.toThrow('أمر الشراء غير معتمد — اعتمده أولًا');
+      expect(prisma.purchaseReceipt.create).not.toHaveBeenCalled();
+      expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    });
+
+    it('PUR-5 (أ): يرفض الاستلام على أمر DRAFT داخل المعاملة أيضًا (إعادة قراءة تحت القفل)', async () => {
+      // الحالة المقروءة مسبقًا APPROVED لكن إعادة القراءة داخل المعاملة
+      // تُظهر DRAFT (تغيّر متزامن) → نفس البوابة تحت القفل
+      prisma.purchaseOrder.findUnique
+        .mockResolvedValueOnce({
+          id: 'po-1',
+          code: 'PO-100',
+          status: PurchaseOrderStatus.APPROVED,
+          items: [
+            { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+          ],
+        })
+        .mockResolvedValue({
+          id: 'po-1',
+          code: 'PO-100',
+          status: PurchaseOrderStatus.DRAFT,
+          items: [
+            { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
+          ],
+        });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+
+      await expect(
+        service.createReceipt(
+          'po-1',
+          { items: [{ purchaseOrderItemId: 'poi-1', quantity: 4 }] },
+          'user-1',
+        ),
+      ).rejects.toThrow('أمر الشراء غير معتمد — اعتمده أولًا');
+      expect(prisma.purchaseReceipt.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // PUR-5 (أ) (P1 — GF-IMP-W2): خطوة اعتماد أمر الشراء DRAFT → APPROVED
+  describe('PUR-5 (أ) — اعتماد أمر الشراء', () => {
+    const updateManyMock = () =>
+      prisma.purchaseOrder as unknown as { updateMany: jest.Mock };
+
+    it('يعتمد أمر DRAFT ذريًا (CAS) مع ActivityLog وidempotency', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-approve' });
+      prisma.purchaseOrder.findUnique
+        .mockResolvedValueOnce({
+          id: 'po-1',
+          code: 'PO-100',
+          status: PurchaseOrderStatus.DRAFT,
+          totalAmount: 50,
+          supplierId: 'sup-1',
+          userId: 'creator-1',
+        })
+        .mockResolvedValue({
+          id: 'po-1',
+          code: 'PO-100',
+          status: PurchaseOrderStatus.APPROVED,
+        });
+      updateManyMock().updateMany.mockResolvedValue({ count: 1 });
+
+      const result = await service.approvePurchaseOrder(
+        'po-1',
+        'approver-1',
+        'approve-key-1',
+      );
+
+      expect(result).toMatchObject({
+        id: 'po-1',
+        status: PurchaseOrderStatus.APPROVED,
+      });
+      expect(updateManyMock().updateMany).toHaveBeenCalledWith({
+        where: { id: 'po-1', status: PurchaseOrderStatus.DRAFT },
+        data: { status: PurchaseOrderStatus.APPROVED },
+      });
+      expect(prisma.activityLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'approver-1',
+          action: 'PURCHASE_ORDER_APPROVED',
+          module: 'PURCHASING',
+          details: expect.objectContaining({
+            purchaseOrderId: 'po-1',
+            approvedBy: 'approver-1',
+            previousStatus: PurchaseOrderStatus.DRAFT,
+            newStatus: PurchaseOrderStatus.APPROVED,
+          }),
+        }),
+      });
+      expect(prisma.idempotencyKey.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { key: 'approve-key-1' } }),
+      );
+    });
+
+    it('يرفض اعتماد المنشئ لنفسه بـ 409 (فصل واجبات) قبل أي كتابة', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.DRAFT,
+        totalAmount: 50,
+        supplierId: 'sup-1',
+        userId: 'creator-1',
+      });
+
+      await expect(
+        service.approvePurchaseOrder('po-1', 'creator-1'),
+      ).rejects.toThrow('فصل الواجبات');
+      expect(updateManyMock().updateMany).not.toHaveBeenCalled();
+      expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    });
+
+    it('يرفض اعتماد أمر غير DRAFT بـ 409 توضح الحالة الحالية', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.RECEIVED,
+        totalAmount: 50,
+        supplierId: 'sup-1',
+        userId: 'creator-1',
+      });
+      // CAS على WHERE status = DRAFT لا يمسّ صفًا (الأمر RECEIVED)
+      updateManyMock().updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.approvePurchaseOrder('po-1', 'approver-1'),
+      ).rejects.toThrow('حالته الحالية «RECEIVED»');
+      expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    });
+
+    it('نفس المفتاح يعيد replay بلا اعتماد ثانٍ', async () => {
+      const stored = { id: 'po-1', status: PurchaseOrderStatus.APPROVED };
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'approve-key-replay',
+        scope: 'purchase-order-approve',
+        requestHash: computeRequestHash({
+          operation: 'purchase-order-approve',
+          orderId: 'po-1',
+          userId: 'approver-1',
+        }),
+        response: stored,
+      });
+
+      const result = await service.approvePurchaseOrder(
+        'po-1',
+        'approver-1',
+        'approve-key-replay',
+      );
+
+      expect(result).toEqual({ ...stored, replayed: true });
+      expect(updateManyMock().updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PUR-5 (ب) — إلغاء أمر الشراء', () => {
+    it('يلغي أمر DRAFT ذريًا مع ActivityLog وidempotency', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-cancel' });
+      prisma.purchaseOrder.findUnique
+        .mockResolvedValueOnce({
+          id: 'po-1',
+          code: 'PO-100',
+          status: PurchaseOrderStatus.DRAFT,
+          totalAmount: 50,
+          supplierId: 'sup-1',
+        })
+        .mockResolvedValue({
+          id: 'po-1',
+          code: 'PO-100',
+          status: PurchaseOrderStatus.CANCELLED,
+        });
+
+      const result = await service.cancelPurchaseOrder(
+        'po-1',
+        'user-1',
+        'cancel-key-1',
+      );
+
+      expect(result).toMatchObject({
+        id: 'po-1',
+        status: PurchaseOrderStatus.CANCELLED,
+      });
+      expect(
+        (prisma.purchaseOrder as unknown as { updateMany: jest.Mock })
+          .updateMany,
+      ).toHaveBeenCalledWith({
+        where: { id: 'po-1', status: PurchaseOrderStatus.DRAFT },
+        data: { status: PurchaseOrderStatus.CANCELLED },
+      });
+      expect(prisma.activityLog.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          userId: 'user-1',
+          action: 'PURCHASE_ORDER_CANCELLED',
+          module: 'PURCHASING',
+          details: expect.objectContaining({
+            purchaseOrderId: 'po-1',
+            totalAmount: 50,
+          }),
+        }),
+      });
+      expect(prisma.idempotencyKey.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { key: 'cancel-key-1' } }),
+      );
+    });
+
+    it('يرفض إلغاء أمر غير DRAFT (400)', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.RECEIVED,
+        totalAmount: 50,
+        supplierId: 'sup-1',
+      });
+
+      await expect(
+        service.cancelPurchaseOrder('po-1', 'user-1'),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      expect(
+        (prisma.purchaseOrder as unknown as { updateMany: jest.Mock })
+          .updateMany,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('يرفض التزامن: updateMany صفر صفوف → 409', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.DRAFT,
+        totalAmount: 50,
+        supplierId: 'sup-1',
+      });
+      (
+        prisma.purchaseOrder as unknown as { updateMany: jest.Mock }
+      ).updateMany = jest.fn().mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.cancelPurchaseOrder('po-1', 'user-1'),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    });
+
+    it('نفس المفتاح يعيد replay بلا إلغاء ثانٍ', async () => {
+      const stored = { id: 'po-1', status: PurchaseOrderStatus.CANCELLED };
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'cancel-key-replay',
+        scope: 'purchasing-order-cancel',
+        requestHash: computeRequestHash({
+          operation: 'purchasing-order-cancel',
+          orderId: 'po-1',
+          userId: 'user-1',
+        }),
+        response: stored,
+      });
+
+      const result = await service.cancelPurchaseOrder(
+        'po-1',
+        'user-1',
+        'cancel-key-replay',
+      );
+
+      expect(result).toEqual({ ...stored, replayed: true });
+      expect(
+        (prisma.purchaseOrder as unknown as { updateMany: jest.Mock })
+          .updateMany,
+      ).not.toHaveBeenCalled();
+    });
   });
 
   describe('receiveOrder', () => {
@@ -317,7 +712,8 @@ describe('PurchasingService (GF-0009)', () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
-        status: PurchaseOrderStatus.PENDING,
+        // PUR-5 (أ): الاستلام على APPROVED فقط — كان PENDING
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
         ],
@@ -371,7 +767,8 @@ describe('PurchasingService (GF-0009)', () => {
       prisma.purchaseOrder.findUnique.mockResolvedValue({
         id: 'po-1',
         code: 'PO-100',
-        status: PurchaseOrderStatus.PENDING,
+        // PUR-5 (أ): الاستلام على APPROVED فقط — كان PENDING
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 10, unitCost: 5 },
         ],

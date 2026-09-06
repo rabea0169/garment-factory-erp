@@ -17,7 +17,12 @@ import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
 import { UserRole } from '@prisma/client';
-import { ApiTags, ApiBearerAuth, ApiOperation } from '@nestjs/swagger';
+import {
+  ApiTags,
+  ApiBearerAuth,
+  ApiOperation,
+  ApiHeader,
+} from '@nestjs/swagger';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Purchasing')
@@ -36,11 +41,22 @@ export class PurchasingController {
   @Post()
   @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Create a new purchase order' })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description:
+      'PUR-3: مفتاح ثابت لإعادة إرسال نفس أمر الشراء بأمان — نفس المفتاح + نفس المحتوى = نفس الاستجابة، ومحتوى مختلف = 409',
+  })
   async create(
     @Body() dto: CreatePurchaseOrderDto,
     @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.purchasingService.createPurchaseOrder(dto, userId);
+    return this.purchasingService.createPurchaseOrder(
+      dto,
+      userId,
+      idempotencyKey,
+    );
   }
 
   @Post(':id/receipts')
@@ -65,6 +81,48 @@ export class PurchasingController {
   @ApiOperation({ summary: 'Receive purchase order into inventory' })
   async receive(@Param('id') id: string, @CurrentUser('id') userId: string) {
     return this.purchasingService.receiveOrder(id, userId);
+  }
+
+  @Post(':id/approve')
+  @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({
+    summary: 'PUR-5 (أ): اعتماد أمر شراء DRAFT (فصل واجبات — المنشئ لا يعتمد)',
+  })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'PUR-5 (أ): مفتاح ثابت لإعادة إرسال طلب الاعتماد بأمان',
+  })
+  async approveOrder(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.purchasingService.approvePurchaseOrder(
+      id,
+      userId,
+      idempotencyKey,
+    );
+  }
+
+  @Post(':id/cancel')
+  @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({ summary: 'PUR-5: إلغاء أمر شراء مسودة (DRAFT فقط)' })
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'PUR-5: مفتاح ثابت لإعادة إرسال طلب الإلغاء بأمان',
+  })
+  async cancelOrder(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.purchasingService.cancelPurchaseOrder(
+      id,
+      userId,
+      idempotencyKey,
+    );
   }
 
   @Post(':id/return')

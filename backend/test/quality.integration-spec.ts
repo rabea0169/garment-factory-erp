@@ -14,6 +14,7 @@ import { QualityService } from '../src/modules/quality/quality.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
+import { seedOpenFiscalPeriod } from './helpers/fiscal-period';
 
 type Scenario = {
   userId: string;
@@ -100,6 +101,9 @@ integrationDescribe('GF-0014 quality and waste integration', () => {
         role: UserRole.PRODUCTION_MANAGER,
       },
     });
+
+    // GF-IMP-W2 / ACC-3: الترحيلات تتطلب فترة مفتوحة — تُزرع بعد كل TRUNCATE
+    await seedOpenFiscalPeriod(prisma, user.id);
     const product = await prisma.product.create({
       data: {
         code: `PR-GF14-${randomUUID().slice(0, 8)}`,

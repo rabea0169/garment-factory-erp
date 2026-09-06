@@ -1,11 +1,13 @@
 import {
   Injectable,
   BadRequestException,
+  ConflictException,
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
 import { PurchaseOrderStatus, Prisma } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
 import { ReturnToSupplierDto } from './dto/return-to-supplier.dto';
@@ -75,12 +77,32 @@ export class PurchasingService {
     return new PaginatedResult(data, total, page, limit);
   }
 
-  async createPurchaseOrder(dto: CreatePurchaseOrderDto, creatorId: string) {
-    const supplier = await this.prisma.supplier.findFirst({
-      where: { id: dto.supplierId, isActive: true, deletedAt: null },
-      select: { id: true },
+  async createPurchaseOrder(
+    dto: CreatePurchaseOrderDto,
+    creatorId: string,
+    idempotencyKey?: string,
+  ) {
+    // PUR-3 (P1 — GF-IMP-W2): idempotency كامل النمط القياسي — نفس المفتاح
+    // + نفس المحتوى = نفس الاستجابة بلا أمر ثانٍ؛ محتوى مختلف بنفس المفتاح
+    // = 409؛ السباق (P2002) = محاولة replay. المفتاح يُنشأ داخل نفس المعاملة
+    // التي تنشئ الأمر والاستجابة لا تُخزّن إلا بعد نجاحها.
+    const scope = 'purchase-order-create';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      creatorId,
+      supplierId: dto.supplierId,
+      paymentType: dto.paymentType,
+      dueDate: dto.dueDate ?? null,
+      notes: dto.notes ?? null,
+      items: dto.items,
     });
-    if (!supplier) throw new NotFoundException('المورد غير موجود أو غير نشط');
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      scope,
+      requestHash,
+    );
+    if (replay) return replay;
 
     // PUR-1: المجموع مقرب لمنزلتين (كان يجمع كسور الفاصلة العائمة خامًا)
     // — كذلك totalCost لكل بند.
@@ -88,45 +110,68 @@ export class PurchasingService {
       dto.items.reduce((sum, item) => sum + item.quantity * item.unitCost, 0),
     );
 
-    return this.prisma.$transaction(async (tx) => {
-      const created = await tx.purchaseOrder.create({
-        data: {
-          code: generateDocumentCode(DocumentCodePrefix.PURCHASE_ORDER),
-          supplierId: dto.supplierId,
-          paymentType: dto.paymentType,
-          totalAmount,
-          dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
-          notes: dto.notes,
-          userId: creatorId,
-          status: PurchaseOrderStatus.DRAFT,
-          items: {
-            create: dto.items.map((item) => ({
-              rawMaterialId: item.rawMaterialId,
-              quantity: item.quantity,
-              unitCost: item.unitCost,
-              totalCost: round2(item.quantity * item.unitCost),
-            })),
-          },
-        },
-        include: { items: true },
-      });
-      // SEC-F02: audit trail for every purchase order write.
-      await tx.activityLog.create({
-        data: {
-          userId: creatorId,
-          action: 'PURCHASE_ORDER_CREATED',
-          module: 'PURCHASING',
-          details: {
-            purchaseOrderId: created.id,
-            code: created.code,
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+        // PUR-3: فحص المورد داخل المعاملة (كان خارجها) — مصدر الحقيقة ضد
+        // تفعيل/حذف مورد متزامن بين الفحص والإنشاء.
+        const supplier = await tx.supplier.findFirst({
+          where: { id: dto.supplierId, isActive: true, deletedAt: null },
+          select: { id: true },
+        });
+        if (!supplier)
+          throw new NotFoundException('المورد غير موجود أو غير نشط');
+        const created = await tx.purchaseOrder.create({
+          data: {
+            code: generateDocumentCode(DocumentCodePrefix.PURCHASE_ORDER),
             supplierId: dto.supplierId,
+            paymentType: dto.paymentType,
             totalAmount,
-            itemsCount: dto.items.length,
+            dueDate: dto.dueDate ? new Date(dto.dueDate) : undefined,
+            notes: dto.notes,
+            userId: creatorId,
+            status: PurchaseOrderStatus.DRAFT,
+            items: {
+              create: dto.items.map((item) => ({
+                rawMaterialId: item.rawMaterialId,
+                quantity: item.quantity,
+                unitCost: item.unitCost,
+                totalCost: round2(item.quantity * item.unitCost),
+              })),
+            },
           },
-        },
+          include: { items: true },
+        });
+        // SEC-F02: audit trail for every purchase order write.
+        await tx.activityLog.create({
+          data: {
+            userId: creatorId,
+            action: 'PURCHASE_ORDER_CREATED',
+            module: 'PURCHASING',
+            details: {
+              purchaseOrderId: created.id,
+              code: created.code,
+              supplierId: dto.supplierId,
+              totalAmount,
+              itemsCount: dto.items.length,
+            },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, created);
+        return created;
       });
-      return created;
-    });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 
   async createReceipt(
@@ -170,6 +215,14 @@ export class PurchasingService {
     if (!order) throw new NotFoundException('Purchase order not found');
     if (order.status === PurchaseOrderStatus.CANCELLED) {
       throw new BadRequestException('Cannot receive a cancelled order');
+    }
+    // PUR-5 (أ): بوابة الاعتماد — الاستلام على APPROVED فقط. الفحص
+    // هنا تغذية راجعة سريعة؛ مصدر الحقيقة إعادة القراءة تحت القفل داخل
+    // المعاملة أدناه (نفس نمط فحص CANCELLED أعلاه).
+    if (order.status !== PurchaseOrderStatus.APPROVED) {
+      throw new BadRequestException(
+        'أمر الشراء غير معتمد — اعتمده أولًا (الاستلام متاح لأوامر APPROVED فقط)',
+      );
     }
 
     const existing =
@@ -231,6 +284,13 @@ export class PurchasingService {
           }
           if (currentOrder.status === PurchaseOrderStatus.CANCELLED) {
             throw new BadRequestException('Cannot receive a cancelled order');
+          }
+          // PUR-5 (أ): بوابة الاعتماد داخل المعاملة تحت قفل الصف —
+          // مصدر الحقيقة ضد اعتماد/إلغاء متزامن بين الفحص المسبق والكتابة.
+          if (currentOrder.status !== PurchaseOrderStatus.APPROVED) {
+            throw new BadRequestException(
+              'أمر الشراء غير معتمد — اعتمده أولًا (الاستلام متاح لأوامر APPROVED فقط)',
+            );
           }
 
           const currentExisting = await tx.purchaseReceiptItem.findMany({
@@ -374,9 +434,13 @@ export class PurchasingService {
           await tx.purchaseOrder.update({
             where: { id: orderId },
             data: {
+              // PUR-5 (أ): الاستلام الجزئي يُبقي الأمر APPROVED (وليس
+              // PENDING) — بوابة الاستلام أعلاه تقبل APPROVED فقط، فلو
+              // رجعنا إلى PENDING لاستلام جزئي ثانٍ لحُجب ببابه الخاص.
+              // PENDING تظل قيمة تراثية تُقرأ ولا تُكتب في هذه المسارات.
               status: allReceived
                 ? PurchaseOrderStatus.RECEIVED
-                : PurchaseOrderStatus.PENDING,
+                : PurchaseOrderStatus.APPROVED,
             },
           });
 
@@ -415,6 +479,13 @@ export class PurchasingService {
     }
     if (order.status === PurchaseOrderStatus.CANCELLED) {
       throw new BadRequestException('Cannot receive a cancelled order');
+    }
+    // PUR-5 (أ): بوابة الاعتماد للمسار القديم — نفس رسالة createReceipt
+    // (المسار يحوّل لاحقًا إلى createIntent الذي يعيد الفحص تحت القفل).
+    if (order.status !== PurchaseOrderStatus.APPROVED) {
+      throw new BadRequestException(
+        'أمر الشراء غير معتمد — اعتمده أولًا (الاستلام متاح لأوامر APPROVED فقط)',
+      );
     }
 
     // 2. Fetch existing receipts to calculate remaining quantities
@@ -461,6 +532,207 @@ export class PurchasingService {
     const idempotencyKey = `legacy-receive-${order.id}-${remainingHash}`;
 
     return this.createReceipt(orderId, dto, userId, idempotencyKey);
+  }
+
+  /**
+   * PUR-5 (أ) (P1 — GF-IMP-W2): خطوة اعتماد لأمر الشراء.
+   *
+   * - **فصل الواجبات (SoD):** رافض الاعتماد هو منشئ الأمر نفسه → 409
+   *   برسالة عربية قبل أي أثر (نفس نمط SAL-4 في sales.confirmOrder).
+   * - **الانتقال الوحيد:** DRAFT → APPROVED فقط، عبر updateMany مشروط
+   *   بالحالة DRAFT (CAS) — صفر صفوف متأثرة → 409 عربية توضح الحالة
+   *   المقروءة (أو تغيّرها بالتزامن). لا يوجد مسار PENDING → APPROVED:
+   *   PENDING أصبحت قيمة تراثية لا تُكتب بعد بوابة الاستلام أدناه
+   *   (الاستلام الجزئي يُبقي الأمر APPROVED حتى الاكتمال → RECEIVED).
+   * - **التدقيق:** ActivityLog (PURCHASE_ORDER_APPROVED) بالفاعل داخل
+   *   نفس المعاملة.
+   * - **Idempotency:** كامل النمط القياسي (scope: purchase-order-approve).
+   *
+   * الأدوار (المتحكم): INVENTORY_MANAGER أو GENERAL_MANAGER — نفس أدوار
+   * الإلغاء والاستلام؛ المنشئ نفسه يُحجب هنا بفصل الواجبات.
+   */
+  async approvePurchaseOrder(
+    orderId: string,
+    userId: string,
+    idempotencyKey?: string,
+  ) {
+    const scope = 'purchase-order-approve';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      orderId,
+      userId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      scope,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+        const order = await tx.purchaseOrder.findUnique({
+          where: { id: orderId },
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            totalAmount: true,
+            supplierId: true,
+            // حقل المنشئ في نموذج PurchaseOrder هو userId (علاقة user)
+            userId: true,
+          },
+        });
+        if (!order) throw new NotFoundException('Purchase order not found');
+
+        // PUR-5 (أ): فصل الواجبات — منشئ الأمر لا يعتمده بنفسه (409)
+        // قبل أي كتابة أو تدقيق.
+        if (order.userId === userId) {
+          throw new ConflictException(
+            'لا يمكن لمنشئ أمر الشراء اعتماده بنفسه (فصل الواجبات)',
+          );
+        }
+
+        // CAS: الانتقال DRAFT → APPROVED فقط — صفر صفوف = الحالة ليست
+        // DRAFT (أو تغيّرت بالتزامن) → 409 توضّح الحالة المقروءة.
+        const transition = await tx.purchaseOrder.updateMany({
+          where: { id: orderId, status: PurchaseOrderStatus.DRAFT },
+          data: { status: PurchaseOrderStatus.APPROVED },
+        });
+        if (transition.count !== 1) {
+          throw new ConflictException(
+            `تعذر اعتماد أمر الشراء — حالته الحالية «${order.status}» وليست DRAFT (أو تغيّرت بالتزامن)`,
+          );
+        }
+
+        const approved = await tx.purchaseOrder.findUnique({
+          where: { id: orderId },
+        });
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: 'PURCHASE_ORDER_APPROVED',
+            module: 'PURCHASING',
+            details: {
+              purchaseOrderId: orderId,
+              code: order.code,
+              supplierId: order.supplierId,
+              totalAmount: Number(order.totalAmount ?? 0),
+              approvedBy: userId,
+              previousStatus: PurchaseOrderStatus.DRAFT,
+              newStatus: PurchaseOrderStatus.APPROVED,
+            },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, approved);
+        return approved;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * PUR-5 (ب) (P1 — GF-IMP-W2): إلغاء أمر شراء مسودة.
+   *
+   * مقصور على DRAFT (400 لغيرها): أمر عليه استلامات أو مدفوعات لا يُلغى —
+   * يُعالَج بالمرتجعات/السندات العكسية لأن آثاره المالية والمخزونية مرحّلة
+   * فعلًا. الانتقال ذري (updateMany مشروط بالحالة) + ActivityLog +
+   * idempotency كامل النمط (نفس مفتاح = نفس الاستجابة، محتوى مختلف = 409).
+   *
+   * ملاحظة (الجزء (أ) من PUR-5): مسار الاعتماد DRAFT → APPROVED نُفِّذ
+   * أعلاه (approvePurchaseOrder) بعد إضافة قيمة APPROVED إلى
+   * PurchaseOrderStatus في الهجرة الموحدة 20260906100000_wave2_unified —
+   * كان معلقًا في W2-2b بحكم المخطط.
+   */
+  async cancelPurchaseOrder(
+    orderId: string,
+    userId: string,
+    idempotencyKey?: string,
+  ) {
+    const scope = 'purchasing-order-cancel';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      orderId,
+      userId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      scope,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
+        const order = await tx.purchaseOrder.findUnique({
+          where: { id: orderId },
+          select: {
+            id: true,
+            code: true,
+            status: true,
+            totalAmount: true,
+            supplierId: true,
+          },
+        });
+        if (!order) throw new NotFoundException('Purchase order not found');
+        if (order.status !== PurchaseOrderStatus.DRAFT) {
+          throw new BadRequestException(
+            'لا يمكن إلغاء إلا أمر شراء بحالة DRAFT — الأوامر المستلمة تُعالج بالمرتجعات',
+          );
+        }
+        const transition = await tx.purchaseOrder.updateMany({
+          where: { id: orderId, status: PurchaseOrderStatus.DRAFT },
+          data: { status: PurchaseOrderStatus.CANCELLED },
+        });
+        if (transition.count !== 1) {
+          throw new ConflictException('تم تغيير أمر الشراء بالتزامن');
+        }
+        const cancelled = await tx.purchaseOrder.findUnique({
+          where: { id: orderId },
+        });
+        // PUR-5 (ب): سجل تدقيق للإلغاء داخل نفس المعاملة.
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: 'PURCHASE_ORDER_CANCELLED',
+            module: 'PURCHASING',
+            details: {
+              purchaseOrderId: orderId,
+              code: order.code,
+              supplierId: order.supplierId,
+              totalAmount: Number(order.totalAmount ?? 0),
+            },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, cancelled);
+        return cancelled;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 
   async returnToSupplier(
@@ -521,12 +793,7 @@ export class PurchasingService {
             throw new NotFoundException('Purchase order not found');
           }
 
-          const returnIdempotencyKeyId = await createIdempotencyKey(
-            tx,
-            idempotencyKey,
-            scope,
-            requestHash,
-          );
+          await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
 
           // 1. Calculate cumulative received quantity
           const receipts = await tx.purchaseReceiptItem.aggregate({
@@ -538,6 +805,27 @@ export class PurchasingService {
           // 2. Calculate cumulative returned quantity
           // We use the reference field as a matchable anchor since the schema lacks a dedicated return table
           const referenceAnchor = `PURCHASE_RETURN_ITEM:${dto.purchaseOrderItemId}`;
+
+          // PUR-4 (P1 — GF-IMP-W2): كود مرتجع مستقر يعرّف عملية المرتجع
+          // الواحدة عبر كل السجلات (reference حركة المخزون + reference القيد
+          // + metadata القيد + ActivityLog) بدل الذيل غير المستقر السابق
+          // (idempotencyKeyId أو 'manual').
+          //
+          // صيغة الـ reference الموحدة:
+          //   PURCHASE_RETURN_ITEM:<purchaseOrderItemId>:supplier-return:<uuid>
+          // البادئة PURCHASE_RETURN_ITEM:<purchaseOrderItemId> يظل مطابقًا
+          // حرفيًا لتجميع الكمية المرتجعة القائم أعلاه (startsWith) فلا ينكسر
+          // أي نص قائم.
+          //
+          // حدود التمثيل النصي (توثيق عربي مقصود): لا يوجد نموذج
+          // SupplierReturn في schema.prisma، فيُمثَّل المرتجع نصيًا في
+          // reference/metadata فقط — أي استعلام تحليلي للمرتجعات يعتمد على
+          // المطابقة النصية لا على جدول علائقي. الترقية لنموذج SupplierReturn
+          // حقيقي (كميات/مبالغ/مورد/فترة/حالة) موصى بها — PUR-4 المرحلة
+          // الثانية (تتطلب schema change خارج نطاق هذه الموجة).
+          const returnCode = `supplier-return:${randomUUID()}`;
+          const returnReference = `${referenceAnchor}:${returnCode}`;
+
           const returns = await tx.stockLedgerEntry.aggregate({
             where: {
               rawMaterialId: item.rawMaterialId,
@@ -564,7 +852,7 @@ export class PurchasingService {
               rawMaterialId: item.rawMaterialId,
               warehouseId: rawWarehouse.id,
               quantity: dto.quantity,
-              reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+              reference: returnReference,
               notes: dto.notes ?? `مرتجع للمورد من أمر الشراء ${order.code}`,
               idempotencyKey: idempotencyKey
                 ? `return-${idempotencyKey}`
@@ -579,7 +867,7 @@ export class PurchasingService {
             tx,
             {
               description: `مرتجع مشتريات ${order.code}`,
-              reference: `${referenceAnchor}:${returnIdempotencyKeyId ?? 'manual'}`,
+              reference: returnReference,
               isAuto: true,
               lines: [
                 {
@@ -596,6 +884,10 @@ export class PurchasingService {
                 source: 'PURCHASE_RETURN',
                 purchaseOrderId: orderId,
                 purchaseOrderItemId: item.id,
+                // PUR-4: الكود المستقر + المجاميع الجوهرية في metadata القيد
+                returnCode,
+                returnQuantity: dto.quantity,
+                returnAmount: returnTotal,
                 inventoryEntryCode: result.entryCode,
               },
               postingKey: idempotencyKey
@@ -604,6 +896,26 @@ export class PurchasingService {
             },
             userId,
           );
+
+          // PUR-4 (ب): سجل تدقيق داخل نفس معاملة المرتجع — كان المسار كله
+          // بلا ActivityLog (المبالغ والبنود والفاعل).
+          await tx.activityLog.create({
+            data: {
+              userId,
+              action: 'SUPPLIER_RETURN_CREATED',
+              module: 'PURCHASING',
+              details: {
+                returnCode,
+                purchaseOrderId: orderId,
+                purchaseOrderItemId: item.id,
+                rawMaterialId: item.rawMaterialId,
+                quantity: dto.quantity,
+                amount: returnTotal,
+                journalReference: returnReference,
+                inventoryEntryCode: result.entryCode,
+              },
+            },
+          });
 
           const response = {
             success: true,
