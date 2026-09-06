@@ -3,12 +3,37 @@ import { ProductsService } from './products.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
+/**
+ * مواصفة موسّعة: PROD-1 يحتاج bomLine.findUnique لفحص الوجود قبل الحذف —
+ * النمط نفسه المستخدم في inventory.service.spec (توسيع المصنع المشترك محليًا).
+ */
+type ProductsPrismaMock = ReturnType<typeof createPrismaMock> & {
+  bomLine: {
+    upsert: jest.Mock;
+    createMany: jest.Mock;
+    delete: jest.Mock;
+    findUnique: jest.Mock;
+  };
+};
+
+function createProductsPrismaMock(): ProductsPrismaMock {
+  return {
+    ...createPrismaMock(),
+    bomLine: {
+      upsert: jest.fn(),
+      createMany: jest.fn(),
+      delete: jest.fn(),
+      findUnique: jest.fn(),
+    },
+  };
+}
+
 describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
   let service: ProductsService;
-  let prisma: ReturnType<typeof createPrismaMock>;
+  let prisma: ProductsPrismaMock;
 
   beforeEach(() => {
-    prisma = createPrismaMock();
+    prisma = createProductsPrismaMock();
     prisma.$transaction.mockImplementation(
       async (callback: (tx: typeof prisma) => Promise<unknown>) =>
         callback(prisma),
@@ -142,6 +167,37 @@ describe('ProductsService — كتالوج المنتجات (GF-0003)', () => {
 
     expect(prisma.productVariant.create).toHaveBeenCalledWith({
       data: { productId: 'p-1', size: 'L', color: 'أسود' },
+    });
+  });
+
+  // ============ PROD-1: حذف بند BOM ============
+
+  it('PROD-1: حذف بند BOM غير موجود → 404 NotFoundException برسالة عربية', async () => {
+    prisma.bomLine.findUnique.mockResolvedValue(null);
+
+    await expect(service.deleteBomItem('ghost-bom')).rejects.toThrow(
+      NotFoundException,
+    );
+    await expect(service.deleteBomItem('ghost-bom')).rejects.toThrow(
+      'بند قائمة المواد غير موجود',
+    );
+    // لا محاولة حذف بعد الرفض
+    expect(prisma.bomLine.delete).not.toHaveBeenCalled();
+  });
+
+  it('PROD-1: حذف بند موجود يفحص الوجود ثم يحذف كما هو', async () => {
+    prisma.bomLine.findUnique.mockResolvedValue({ id: 'bom-1' });
+    prisma.bomLine.delete.mockResolvedValue({ id: 'bom-1' });
+
+    const result = await service.deleteBomItem('bom-1');
+
+    expect(prisma.bomLine.findUnique).toHaveBeenCalledWith({
+      where: { id: 'bom-1' },
+      select: { id: true },
+    });
+    expect(result).toEqual({ id: 'bom-1' });
+    expect(prisma.bomLine.delete).toHaveBeenCalledWith({
+      where: { id: 'bom-1' },
     });
   });
 });

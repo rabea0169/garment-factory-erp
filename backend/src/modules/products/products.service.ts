@@ -331,6 +331,16 @@ export class ProductsService {
   }
 
   async deleteBomItem(id: string) {
+    // PROD-1: فحص الوجود أولًا — الحذف المباشر لبند غير موجود كان يرمي P2025
+    // خامًا فيصل GlobalExceptionFilter كخطأ 500. الآن يُرفض مبكرًا بـ 404
+    // برسالة عربية واضحة (وبقية مسارات P2025 يلتقطها الفلتر العام لاحقًا).
+    const existing = await this.prisma.bomLine.findUnique({
+      where: { id },
+      select: { id: true },
+    });
+    if (!existing) {
+      throw new NotFoundException('بند قائمة المواد غير موجود');
+    }
     return this.prisma.bomLine.delete({ where: { id } });
   }
 }
