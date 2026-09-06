@@ -25,6 +25,8 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QualityKpiQueryDto } from './dto/quality-kpi-query.dto';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
 export interface CreateQualityCheckInput {
   workOrderId: string;
@@ -76,7 +78,10 @@ const LEGACY_STAGE: Record<ProductionStage, WorkOrderStatus> = {
 
 @Injectable()
 export class QualityService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly financial: FinancialPostingService,
+  ) {}
 
   async getQualityChecks(pagination: PaginationDto = new PaginationDto()) {
     const page = pagination.page ?? 1;
@@ -279,6 +284,46 @@ export class QualityService {
             idempotencyKeyId,
           },
         });
+
+        // QLT-1 (P0 — GF-IMP-W1): ترحيل تكلفة هدر الجودة إلى الدفتر العام
+        // داخل نفس المعاملة (نمط inventory.waste). الهدر يُكتشف على مخرجات
+        // المراحل — أي أن تكلفته ما زالت محمّلة على مخزون تحت التشغيل —
+        // فيُقيد: Dr WASTE_EXPENSE / Cr WIP بمبلغ wasteCost. postingKey ثابت
+        // (quality-inspection:<id>) يمنع الازدواج، ولا قيد إطلاقًا عندما
+        // wasteCost = 0.
+        if (wasteCost.gt(0)) {
+          await this.financial.postJournalEntryInTx(
+            tx,
+            {
+              description: `ترحيل تكلفة هدر فحص جودة ${created.id}`,
+              reference: `QUALITY:${created.id}`,
+              postingKey: `quality-inspection:${created.id}`,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+                  creditAccountId: CHART_OF_ACCOUNTS.WIP,
+                  amount: wasteCost.toNumber(),
+                  description:
+                    input.notes ??
+                    `هدر جودة مرحلة ${input.stage} — أمر ${input.workOrderId}`,
+                },
+              ],
+              metadata: {
+                source: 'quality.inspection',
+                qualityCheckId: created.id,
+                workOrderId: input.workOrderId,
+                stageRunId: input.stageRunId,
+                stage: input.stage,
+                wasteQty: input.wasteQty,
+                unitCost: unitCost.toNumber(),
+                wasteCost: wasteCost.toNumber(),
+              },
+              date: created.checkedAt,
+            },
+            actorId,
+          );
+        }
 
         const response = this.toResponse(created, input.stage);
         if (actorId) {

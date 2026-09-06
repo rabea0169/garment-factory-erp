@@ -1,4 +1,5 @@
 import {
+  AccountType,
   Prisma,
   ProductionStage,
   ProductionStageRunStatus,
@@ -11,6 +12,8 @@ import {
 import { randomUUID } from 'node:crypto';
 import { QualityService } from '../src/modules/quality/quality.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 
 type Scenario = {
   userId: string;
@@ -34,13 +37,20 @@ integrationDescribe('GF-0014 quality and waste integration', () => {
     process.env.DATABASE_URL = databaseUrl;
     prisma = new PrismaService();
     await prisma.$connect();
-    qualityService = new QualityService(prisma);
+    qualityService = new QualityService(
+      prisma,
+      // QLT-1 (P0 — GF-IMP-W1): ترحيل تكلفة الهدر إلى الدفتر العام.
+      new FinancialPostingService(prisma),
+    );
   });
 
   beforeEach(async () => {
     if (!prisma) return;
     await prisma.$executeRawUnsafe(`
       TRUNCATE TABLE
+        "journal_lines",
+        "journal_entries",
+        "accounts",
         "activity_logs",
         "quality_checks",
         "production_cost_snapshots",
@@ -54,6 +64,26 @@ integrationDescribe('GF-0014 quality and waste integration', () => {
         "users"
       CASCADE
     `);
+    // QLT-1 (P0 — GF-IMP-W1): ترحيل تكلفة الهدر (Dr WASTE_EXPENSE / Cr WIP)
+    // يحتاج الحسابين موجودين بعد الـ TRUNCATE الذي محا كل الحسابات.
+    await prisma.account.createMany({
+      data: [
+        {
+          id: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+          code: `5300-GF14-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0014 Waste Expense',
+          type: AccountType.EXPENSE,
+          balance: 0,
+        },
+        {
+          id: CHART_OF_ACCOUNTS.WIP,
+          code: `1320-GF14-${randomUUID().slice(0, 8)}`,
+          name: 'GF-0014 Work in Process',
+          type: AccountType.ASSET,
+          balance: 0,
+        },
+      ],
+    });
     scenario = await createScenario();
   });
 
@@ -154,6 +184,27 @@ integrationDescribe('GF-0014 quality and waste integration', () => {
     expect(result.wasteCost).toBe(12.5);
     expect(result.createdById).toBe(scenario.userId);
     expect(await prisma.qualityCheck.count()).toBe(1);
+    // QLT-1: تكلفة الهدر وصلت الدفتر العام — قيد Dr WASTE_EXPENSE / Cr WIP
+    // بمبلغ 12.5 مرتبط بالفحص عبر postingKey ثابت.
+    const wasteEntry = await prisma.journalEntry.findUnique({
+      where: { postingKey: `quality-inspection:${result.id}` },
+      include: { lines: true },
+    });
+    expect(wasteEntry).not.toBeNull();
+    expect(wasteEntry?.lines).toHaveLength(1);
+    expect(wasteEntry?.lines[0]).toMatchObject({
+      debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+      creditAccountId: CHART_OF_ACCOUNTS.WIP,
+    });
+    expect(wasteEntry?.lines[0].amount.toNumber()).toBe(12.5);
+    const wasteExpenseAccount = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.WASTE_EXPENSE },
+    });
+    expect(wasteExpenseAccount?.balance.toNumber()).toBe(12.5);
+    const wipAccount = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.WIP },
+    });
+    expect(wipAccount?.balance.toNumber()).toBe(-12.5);
     expect(
       await prisma.activityLog.count({
         where: { action: 'QUALITY_CHECK_CREATED', userId: scenario.userId },

@@ -1,5 +1,7 @@
 import { PrismaService } from '../../prisma/prisma.service';
 import { computeRequestHash } from '../../core/common/idempotency.util';
+import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import {
   Prisma,
   ProductionStage,
@@ -15,10 +17,16 @@ import { QualityService } from './quality.service';
 describe('QualityService — GF-0014', () => {
   let service: QualityService;
   let prisma: ReturnType<typeof createPrismaMock>;
+  let financial: { postJournalEntryInTx: jest.Mock };
 
   beforeEach(() => {
     prisma = createPrismaMock();
-    service = new QualityService(prisma as unknown as PrismaService);
+    // QLT-1 (P0 — GF-IMP-W1): mock محرك الترحيل المالي للتحقق من قيد الهدر.
+    financial = { postJournalEntryInTx: jest.fn() };
+    service = new QualityService(
+      prisma as unknown as PrismaService,
+      financial as unknown as FinancialPostingService,
+    );
   });
 
   it('يجلب الفحوصات مع stage run وactor بترتيب أحدث فحص', async () => {
@@ -136,6 +144,191 @@ describe('QualityService — GF-0014', () => {
       userId: 'user-1',
       action: 'QUALITY_CHECK_CREATED',
       module: 'QUALITY',
+    });
+    // QLT-1: الفحص ذو الهدر يُرحّل قيدًا ماليًا (Dr WASTE_EXPENSE / Cr WIP).
+    expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const postingCall = financial.postJournalEntryInTx.mock.calls[0] as [
+      unknown,
+      {
+        postingKey: string;
+        reference: string;
+        isAuto: boolean;
+        lines: {
+          debitAccountId: string;
+          creditAccountId: string;
+          amount: number;
+          description: string;
+        }[];
+      },
+      unknown,
+    ];
+    expect(postingCall[1].postingKey).toBe('quality-inspection:qc-2');
+    expect(postingCall[1].reference).toBe('QUALITY:qc-2');
+    expect(postingCall[1].isAuto).toBe(true);
+    expect(postingCall[1].lines).toEqual([
+      {
+        debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+        creditAccountId: CHART_OF_ACCOUNTS.WIP,
+        amount: 12.5,
+        description: 'عيوب وهالك في خط الخياطة',
+      },
+    ]);
+  });
+
+  // QLT-1 (P0 — GF-IMP-W1): تكلفة هدر الجودة يجب أن تصل الدفتر العام.
+  describe('QLT-1 — ترحيل تكلفة هدر الجودة', () => {
+    const baseInput = {
+      workOrderId: 'wo-1',
+      stageRunId: 'run-1',
+      stage: ProductionStage.SEWING,
+      rejectionReason: RejectionReason.SEWING_DEFECT,
+      wasteReason: QualityWasteReason.DEFECT_RELATED,
+      notes: 'هدر خياطة',
+    };
+
+    const setupCreated = (overrides: Record<string, unknown> = {}) => {
+      prisma.$transaction.mockImplementation(
+        (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+      );
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+      prisma.workOrder.findUnique.mockResolvedValue({
+        id: 'wo-1',
+        bomVersionId: 'bom-1',
+      });
+      prisma.productionStageRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        stage: ProductionStage.SEWING,
+        status: ProductionStageRunStatus.COMPLETED,
+        inputQty: 100,
+      });
+      prisma.productionCostSnapshot.findFirst.mockResolvedValue({
+        unitCost: new Prisma.Decimal(2.5),
+      });
+      prisma.qualityCheck.create.mockResolvedValue({
+        id: 'qc-waste',
+        workOrderId: 'wo-1',
+        stageRunId: 'run-1',
+        stage: WorkOrderStatus.SEWING,
+        checkedQty: 100,
+        passedQty: 90,
+        rejectedQty: 5,
+        wasteQty: 5,
+        rejectionReason: RejectionReason.SEWING_DEFECT,
+        wasteReason: QualityWasteReason.DEFECT_RELATED,
+        unitCost: new Prisma.Decimal(2.5),
+        wasteCost: new Prisma.Decimal(12.5),
+        status: QualityCheckStatus.COMPLETED,
+        createdById: 'user-1',
+        checkedAt: new Date('2026-08-30T10:00:00.000Z'),
+        closedAt: new Date('2026-08-30T10:00:00.000Z'),
+        ...overrides,
+      });
+      prisma.idempotencyKey.update.mockResolvedValue(undefined);
+      prisma.activityLog.create.mockResolvedValue(undefined);
+    };
+
+    it('هدر موجب يُرحّل قيد Dr WASTE_EXPENSE / Cr WIP بمبلغ wasteCost داخل نفس المعاملة', async () => {
+      setupCreated();
+
+      await service.addQualityCheck(
+        {
+          ...baseInput,
+          checkedQty: 100,
+          passedQty: 90,
+          rejectedQty: 5,
+          wasteQty: 5,
+        },
+        'user-1',
+        'quality-waste-key',
+      );
+
+      expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        {
+          postingKey: string;
+          reference: string;
+          isAuto: boolean;
+          lines: {
+            debitAccountId: string;
+            creditAccountId: string;
+            amount: number;
+          }[];
+          metadata: Record<string, unknown>;
+        },
+        unknown,
+      ];
+      expect(call[0]).toBe(prisma); // نفس المعاملة (tx) التي أنشأت الفحص
+      expect(call[1].postingKey).toBe('quality-inspection:qc-waste');
+      expect(call[1].reference).toBe('QUALITY:qc-waste');
+      expect(call[1].isAuto).toBe(true);
+      expect(call[1].lines).toEqual([
+        {
+          debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+          creditAccountId: CHART_OF_ACCOUNTS.WIP,
+          amount: 12.5,
+          description: 'هدر خياطة',
+        },
+      ]);
+      expect(call[1].metadata).toEqual(
+        expect.objectContaining({
+          source: 'quality.inspection',
+          qualityCheckId: 'qc-waste',
+          wasteQty: 5,
+          wasteCost: 12.5,
+        }),
+      );
+      expect(call[2]).toBe('user-1');
+    });
+
+    it('هدر صفري (wasteCost = 0) لا يُرحّل أي قيد', async () => {
+      setupCreated({
+        checkedQty: 10,
+        passedQty: 10,
+        rejectedQty: 0,
+        wasteQty: 0,
+        wasteReason: null,
+        wasteCost: new Prisma.Decimal('0.00'),
+      });
+
+      const result = await service.addQualityCheck(
+        {
+          ...baseInput,
+          checkedQty: 10,
+          passedQty: 10,
+          rejectedQty: 0,
+          wasteQty: 0,
+          wasteReason: undefined,
+          notes: 'لا هدر',
+        },
+        'user-1',
+        'quality-zero-waste-key',
+      );
+
+      expect(result).toMatchObject({ wasteQty: 0, wasteCost: 0 });
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+
+    it('فشل ترحيل قيد الهدر يُرجع المعاملة كاملة (لا فحص بلا قيد)', async () => {
+      setupCreated();
+      financial.postJournalEntryInTx.mockRejectedValueOnce(
+        new Error('posting failed'),
+      );
+
+      await expect(
+        service.addQualityCheck(
+          {
+            ...baseInput,
+            checkedQty: 100,
+            passedQty: 90,
+            rejectedQty: 5,
+            wasteQty: 5,
+          },
+          'user-1',
+          'quality-waste-fail-key',
+        ),
+      ).rejects.toThrow('posting failed');
     });
   });
 
