@@ -3,6 +3,7 @@ import 'package:flutter/foundation.dart';
 import 'package:uuid/uuid.dart';
 
 import '../storage/auth_storage.dart';
+import 'auth_refresh_interceptor.dart';
 
 class ApiClient {
   ApiClient._();
@@ -11,8 +12,6 @@ class ApiClient {
 
   late final Dio _dio;
   late final AuthStorage _authStorage;
-  VoidCallback? _onUnauthorized;
-  bool _handlingUnauthorized = false;
 
   // D2: مولّد UUID v4 لرأس Idempotency-Key على كل POST/PUT/PATCH.
   final Uuid _uuid = const Uuid();
@@ -27,8 +26,14 @@ class ApiClient {
   bool get isInitialized => _dioInitialized;
   bool _dioInitialized = false;
 
-  /// يهيئ العميل مرة واحدة. يمكن تغيير العنوان عند البناء عبر:
-  /// `--dart-define=API_BASE_URL=http://host:3005`.
+  /// يهيئ العميل مرة واحدة.
+  ///
+  /// MOB-5: الافتراضي هو عنوان الإنتاج عبر HTTPS (لا HTTP مكشوف على الإطلاق).
+  /// للتطوير المحلي فقط، تجاوز العنوان عند البناء/التشغيل بـ:
+  /// `flutter run --dart-define=API_BASE_URL=http://10.0.2.2:3005`
+  /// (10.0.2.2 = مضيف جهازك من داخل محاكي Android) أو
+  /// `--dart-define=API_BASE_URL=http://localhost:3005` لباقي المنصات.
+  /// لا يوجد أي علم cleartext في AndroidManifest — النقل المشفر إلزامي.
   void init({
     AuthStorage? authStorage,
     VoidCallback? onUnauthorized,
@@ -44,9 +49,7 @@ class ApiClient {
     const configuredBaseUrl = String.fromEnvironment('API_BASE_URL');
     final baseUrl = configuredBaseUrl.isNotEmpty
         ? configuredBaseUrl
-        : defaultTargetPlatform == TargetPlatform.android
-            ? 'http://10.0.2.2:3005'
-            : 'http://localhost:3005';
+        : 'https://garment-factory-erp-production.up.railway.app';
 
     _dio = Dio(
       BaseOptions(
@@ -58,6 +61,18 @@ class ApiClient {
           'Content-Type': 'application/json',
           'Accept': 'application/json',
         },
+      ),
+    );
+
+    // MOB-1: أولًا معالج 401 — يجدد الجلسة عبر /auth/refresh (mutex يمنع
+    // تحديثات متزامنة) ويعيد الطلب الأصلي مرة واحدة، وعند فشل التجديد
+    // بـ 401 يمسح الجلسة ويطلق redirect (سلوك D4 السابق انتقل إليه).
+    _dio.interceptors.add(
+      AuthRefreshInterceptor(
+        dio: _dio,
+        authStorage: _authStorage,
+        onSessionExpired: _onUnauthorized,
+        clearSession: _clearSession,
       ),
     );
 
@@ -86,21 +101,14 @@ class ApiClient {
         },
         onError: (error, handler) async {
           final isLoginRequest = error.requestOptions.path == '/auth/login';
-          // D4: عند 401 (وليس من /auth/login) نمسح الجلسة ونطلق redirect.
-          if (error.response?.statusCode == 401 &&
-              !isLoginRequest &&
-              !_handlingUnauthorized) {
-            _handlingUnauthorized = true;
-            try {
-              await clearSession();
-              _onUnauthorized?.call();
-            } finally {
-              _handlingUnauthorized = false;
-            }
-          }
+          // MOB-2 (وأي استدعاء best-effort): خيار تعطيل إعادة المحاولة عبر
+          // extra['noRetry'] = true — يُستخدم لطلب الخروج بأفضل جهد كي لا
+          // ينتظر المستخدم 3 محاولات backoff قبل مسح جلسته المحلية.
+          final skipRetry = error.requestOptions.extra['noRetry'] == true;
 
           // D5: Retry على 5xx + connection/timeout errors — exponential backoff.
-          // لا نعيد retry على 4xx (خطأ عميل) ولا على 401 (تمت معالجته أعلاه).
+          // لا نعيد retry على 4xx (خطأ عميل) — و401 يعالجه AuthRefreshInterceptor
+          // أعلاه (تجديد جلسة أو مسح)، فلا حاجة لمعالجة هنا.
           final status = error.response?.statusCode;
           final isRetryable =
               error.type == DioExceptionType.connectionTimeout ||
@@ -109,7 +117,7 @@ class ApiClient {
                   error.type == DioExceptionType.connectionError ||
                   error.type == DioExceptionType.unknown ||
                   (status != null && status >= 500 && status < 600);
-          if (isRetryable && !isLoginRequest) {
+          if (isRetryable && !isLoginRequest && !skipRetry) {
             // قراءة عدد المحاولات السابق من extra — نبدأ من 0 لو غير مضبوط.
             final attempt =
                 (error.requestOptions.extra['retryAttempt'] as int?) ?? 0;
@@ -135,6 +143,16 @@ class ApiClient {
     _dioInitialized = true;
   }
 
+  VoidCallback? _onUnauthorized;
+
+  /// D4/MOB-1: مسح الجلسة — يشمل refresh_token (انظر AuthStorage.deleteSession).
+  Future<void> _clearSession() async {
+    await _authStorage.deleteSession();
+    if (_dioInitialized) {
+      _dio.options.headers.remove('Authorization');
+    }
+  }
+
   Dio get dio => _dio;
 
   Future<bool> checkReadiness() async {
@@ -152,12 +170,7 @@ class ApiClient {
     }
   }
 
-  Future<void> clearSession() async {
-    await _authStorage.deleteSession();
-    if (_dioInitialized) {
-      _dio.options.headers.remove('Authorization');
-    }
-  }
+  Future<void> clearSession() => _clearSession();
 
   /// Extract the canonical `data` array from a paginated API response.
   /// A raw list remains accepted temporarily for backward compatibility with

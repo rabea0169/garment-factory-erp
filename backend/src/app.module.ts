@@ -21,6 +21,7 @@ import { AppService } from './app.service';
 import { FinancialModule } from './core/financial/financial.module';
 import { HealthController } from './common/health.controller';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
+import { UsersModule } from './modules/users/users.module';
 
 @Module({
   imports: [
@@ -57,6 +58,8 @@ import { DashboardModule } from './modules/dashboard/dashboard.module';
     ShippingModule,
     PurchasingModule,
     DashboardModule,
+    // CC-9 (GF-IMP-W2): إدارة المستخدمين عبر API — SUPER_ADMIN فقط
+    UsersModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200
