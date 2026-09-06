@@ -17,6 +17,7 @@ import { ProductionWorkflowService } from '../src/modules/production/production-
 import { FinancialPostingService } from '../src/core/financial/financial-posting.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
+import { seedOpenFiscalPeriod } from './helpers/fiscal-period';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -95,6 +96,9 @@ integrationDescribe('GF-0013 production workflow integration', () => {
         role: UserRole.PRODUCTION_MANAGER,
       },
     });
+
+    // GF-IMP-W2 / ACC-3: الترحيلات تتطلب فترة مفتوحة — تُزرع بعد كل TRUNCATE
+    await seedOpenFiscalPeriod(prisma, user.id);
 
     const rawWarehouse = await prisma.warehouse.create({
       data: {
@@ -726,6 +730,9 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
         role: UserRole.PRODUCTION_MANAGER,
       },
     });
+
+    // GF-IMP-W2 / ACC-3: الترحيلات تتطلب فترة مفتوحة — تُزرع بعد كل TRUNCATE
+    await seedOpenFiscalPeriod(prisma, user.id);
     const rawWarehouse = await db.warehouse.create({
       data: {
         code: `C5-RAW-${randomUUID().slice(0, 8)}`,

@@ -26,7 +26,13 @@ export class AdjustStockDto {
     example: -3.5,
     description: 'الفرق الموقّع (±) — سالب يعني نقص جرد، موجب يعني زيادة',
   })
-  @IsNumber({}, { message: 'الفرق يجب أن يكون رقمًا' })
+  // INV-4: الدقة العشرية مقيدة بـ 4 منازل — مطابقة Decimal(12,4) لأعمدة الكميات
+  // في الـ ledger (quantityDelta/balanceAfter)؛ أكثر من ذلك يرفض بـ 400 قبل أي معالجة.
+  // لا IsPositive عمدًا — التسوية سالبة مسموحة (NotEquals(0) يمنع الفراغ الصفري فقط).
+  @IsNumber(
+    { maxDecimalPlaces: 4 },
+    { message: 'فرق التسوية يقبل حتى 4 منازل عشرية كحد أقصى' },
+  )
   @NotEquals(0, { message: 'فرق التسوية لا يمكن أن يكون صفرًا' })
   quantityDelta: number;
 

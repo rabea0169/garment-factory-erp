@@ -101,6 +101,22 @@ export class ProductsService {
         return replay as Awaited<ReturnType<typeof tx.product.create>> & {
           replayed: true;
         };
+
+      // PROD-3: فحص صريح لمعرّف الموسم داخل المعاملة — الـ P2003 يُحوَّل
+      // مركزيًا إلى 400 (من الموجة الأولى) لكن الرسالة المركزية عامة؛ هذا
+      // الفحص يرفض مبكرًا بـ 404 عربي ودود قبل أي محاولة إنشاء.
+      if (data.seasonId) {
+        const season = await tx.season.findUnique({
+          where: { id: data.seasonId },
+          select: { id: true },
+        });
+        if (!season) {
+          throw new NotFoundException(
+            `الموسم المحدد غير موجود: ${data.seasonId}`,
+          );
+        }
+      }
+
       const created = await tx.product.create({ data });
       await storeIdempotencyResponse(tx, idempotencyKey, created);
       return created;
@@ -164,6 +180,20 @@ export class ProductsService {
         return replay as Awaited<ReturnType<typeof tx.product.findUnique>> & {
           replayed: true;
         };
+
+      // PROD-3: نفس فحص الموسم في المسار الكامل — داخل المعاملة قبل أي
+      // إنشاء (المنتج أو نسخه أو BOM) برسالة عربية ودودة.
+      if (productData.seasonId) {
+        const season = await tx.season.findUnique({
+          where: { id: productData.seasonId },
+          select: { id: true },
+        });
+        if (!season) {
+          throw new NotFoundException(
+            `الموسم المحدد غير موجود: ${productData.seasonId}`,
+          );
+        }
+      }
 
       const product = await tx.product.create({
         data: {
@@ -245,7 +275,10 @@ export class ProductsService {
       });
       if (!product) throw new NotFoundException('المنتج غير موجود أو غير نشط');
       const created = await tx.productVariant.create({
-        data: { productId, size, color },
+        // PROD-2: نفس تطبيع createFullProduct (السطور 181-183 هناك) — trim
+        // للمقاس واللون كي لا يدخل ' L ' كقيمة مختلفة عن 'L' (كان يخلق
+        // تكرارات وهمية للمقاسات نفسها في نفس المنتج).
+        data: { productId, size: size.trim(), color: color.trim() },
       });
       await storeIdempotencyResponse(tx, idempotencyKey, created);
       return created;

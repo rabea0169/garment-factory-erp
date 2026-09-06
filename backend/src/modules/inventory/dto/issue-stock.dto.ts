@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -21,6 +22,11 @@ export class IssueStockDto {
   warehouseId: string;
 
   @ApiProperty({ example: 20, description: 'الكمية المصروفة (موجبة)' })
+  // INV-4: 4 منازل عشرية كحد أقصى — مطابقة Decimal(12,4) لعمود quantityDelta.
+  @IsNumber(
+    { maxDecimalPlaces: 4 },
+    { message: 'الكمية تقبل حتى 4 منازل عشرية كحد أقصى' },
+  )
   @IsPositive({ message: 'الكمية يجب أن تكون رقمًا موجبًا' })
   quantity: number;
 

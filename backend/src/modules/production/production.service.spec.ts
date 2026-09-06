@@ -1,27 +1,42 @@
+import { ConflictException } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import { WorkOrderStatus } from '@prisma/client';
 import { ProductionService } from './production.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
-import {
-  createEventEmitterMock,
-  createPrismaMock,
-} from '../../../test/helpers/prisma-mock';
-import { EVENTS } from '../../events/event-types';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+
+/**
+ * مواصفة موسّعة محليًا (نمط inventory.service.spec): PRD-2 يحتاج
+ * workOrder.updateMany (تحديث CAS المشروط بالحالة) فوق مصنع الـ mock
+ * المشترك.
+ */
+type ProductionPrismaMock = ReturnType<typeof createPrismaMock> & {
+  workOrder: ReturnType<typeof createPrismaMock>['workOrder'] & {
+    updateMany: jest.Mock;
+  };
+};
+
+function createProductionPrismaMock(): ProductionPrismaMock {
+  const base = createPrismaMock();
+  return {
+    ...base,
+    workOrder: { ...base.workOrder, updateMany: jest.fn() },
+  };
+}
 
 describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
   let service: ProductionService;
-  let prisma: ReturnType<typeof createPrismaMock>;
-  let eventEmitter: { emitAsync: jest.Mock };
+  let prisma: ProductionPrismaMock;
   let inventoryService: {
     issue: jest.Mock;
     receiveFinishedGood: jest.Mock;
   };
+  /** CC-8: جاسوس على بث أي حدث من هذا المسار — لا مستمعين فلا بث مطلقًا. */
+  let emitSpy: jest.SpyInstance;
 
   beforeEach(() => {
-    prisma = createPrismaMock();
-    eventEmitter = createEventEmitterMock() as unknown as {
-      emitAsync: jest.Mock;
-    };
+    prisma = createProductionPrismaMock();
     inventoryService = {
       issue: jest.fn(),
       receiveFinishedGood: jest.fn(),
@@ -31,11 +46,20 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // PRD-2: الافتراضي CAS ينجح (صف واحد مُحدَّث).
+    prisma.workOrder.updateMany.mockResolvedValue({ count: 1 });
+    prisma.activityLog.create.mockResolvedValue({});
+    emitSpy = jest
+      .spyOn(EventEmitter2.prototype, 'emitAsync')
+      .mockResolvedValue([]);
     service = new ProductionService(
       prisma as unknown as PrismaService,
-      eventEmitter as never,
       inventoryService as unknown as InventoryService,
     );
+  });
+
+  afterEach(() => {
+    emitSpy.mockRestore();
   });
 
   it('يجلب أوامر التشغيل مع المنتج وتحديثات المراحل', async () => {
@@ -89,45 +113,95 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     });
   });
 
-  it('إنشاء أمر تشغيل يطلق حدث WORK_ORDER_CREATED بالأمر المنشأ', async () => {
-    const created = {
+  // CC-8: حدث WORK_ORDER_CREATED حُذف (بلا أي مستمع في المستودع كله) —
+  // الاختبار يتحقق من عدم البث بدلًا من البث.
+  it('CC-8: إنشاء أمر تشغيل لا يبث أي حدث (لا مستمعين — الحدث الميت حُذف)', async () => {
+    prisma.workOrder.create.mockResolvedValue({
       id: 'wo-1',
       code: 'WO-20260101-ABCD1234',
       status: 'PLANNED',
-    };
-    prisma.workOrder.create.mockResolvedValue(created);
+    });
 
     await service.createWorkOrder(
       { productVariantId: 'v-1', bomVersionId: 'b-1', quantity: 10 },
       'u-1',
     );
 
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
-      EVENTS.WORK_ORDER_CREATED,
-      created,
-    );
+    expect(emitSpy).not.toHaveBeenCalled();
   });
 
-  it('تحديث حالة مسموحة (CANCELLED): يحدّث ويطلق حدث الإلغاء', async () => {
+  it('PRD-2: تحديث حالة مسموحة (CANCELLED): CAS مشروط بالحالة المقروءة + تدقيق الفاعل', async () => {
     prisma.workOrder.findUnique.mockResolvedValue({
       id: 'wo-1',
+      code: 'WO-1',
       status: WorkOrderStatus.PLANNED,
-    });
-    prisma.workOrder.update.mockResolvedValue({
-      id: 'wo-1',
-      status: WorkOrderStatus.CANCELLED,
+      quantity: 10,
     });
 
-    await service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED);
+    const result = await service.updateOrderStatus(
+      'wo-1',
+      WorkOrderStatus.CANCELLED,
+      'user-42',
+    );
 
-    expect(prisma.workOrder.update).toHaveBeenCalledWith({
-      where: { id: 'wo-1' },
+    // القراءة والكتابة داخل معاملة واحدة
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+    expect(prisma.workOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: 'wo-1', status: WorkOrderStatus.PLANNED },
       data: { status: WorkOrderStatus.CANCELLED },
     });
-    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
-      EVENTS.WORK_ORDER_CANCELLED,
-      expect.any(Object),
+    expect(result.status).toBe(WorkOrderStatus.CANCELLED);
+    // كتابة التدقيق بالفاعل الفعلي مع الحالة قبل/بعد
+    expect(prisma.activityLog.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'user-42',
+        action: 'WORK_ORDER_STATUS_UPDATED',
+        module: 'production',
+        details: {
+          workOrderId: 'wo-1',
+          fromStatus: WorkOrderStatus.PLANNED,
+          toStatus: WorkOrderStatus.CANCELLED,
+        },
+      },
+    });
+    // CC-8: حدث الإلغاء الميت حُذف — لا بث
+    expect(emitSpy).not.toHaveBeenCalled();
+  });
+
+  it('PRD-2: تعارض CAS — تغيّرت الحالة بالتوازي → 409 لا كتابة ولا تدقيق', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: 'WO-1',
+      status: WorkOrderStatus.PLANNED,
+      quantity: 10,
+    });
+    // طلب متوازٍ غيّر الحالة أولًا — CAS يحدّث صفر صفوف
+    prisma.workOrder.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED, 'user-42'),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED, 'user-42'),
+    ).rejects.toThrow('تغيرت حالة أمر التشغيل أثناء التحديث');
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+  });
+
+  it('PRD-2: بلا فاعل (استدعاء داخلي قديم) يُحدَّث بلا سجل تدقيق', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: 'WO-1',
+      status: WorkOrderStatus.PLANNED,
+      quantity: 10,
+    });
+
+    const result = await service.updateOrderStatus(
+      'wo-1',
+      WorkOrderStatus.CANCELLED,
     );
+
+    expect(result.status).toBe(WorkOrderStatus.CANCELLED);
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
   });
 
   it('يمنع الانتقال المباشر إلى COMPLETED', async () => {
@@ -141,6 +215,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     ).rejects.toThrow(
       'Direct completion is disabled. Use ProductionWorkflowService stages (PACKING) to complete production.',
     );
+    expect(prisma.workOrder.updateMany).not.toHaveBeenCalled();
   });
 
   it('يمنع الانتقال المباشر إلى حالات الـ workflow (مثل SEWING)', async () => {
@@ -154,6 +229,7 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     ).rejects.toThrow(
       'Direct transition to SEWING is disabled. Use ProductionWorkflowService.transitionStage instead.',
     );
+    expect(prisma.workOrder.updateMany).not.toHaveBeenCalled();
   });
 
   it('يمنع تعديل أمر تشغيل مكتمل (Immutability)', async () => {
@@ -167,5 +243,6 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     ).rejects.toThrow(
       'Completed work orders are immutable. Use approved reversal workflows if needed.',
     );
+    expect(prisma.workOrder.updateMany).not.toHaveBeenCalled();
   });
 });
