@@ -4,11 +4,13 @@ import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/widgets/app_feedback.dart';
 import '../../domain/entities/production_commands.dart';
 import '../../domain/entities/work_order.dart';
 import '../../production_module.dart';
 import '../cubit/production_cubit.dart';
 import '../cubit/production_state.dart';
+import '../widgets/outbox_pending_badge.dart';
 
 class ProductionScreen extends StatelessWidget {
   const ProductionScreen({super.key});
@@ -31,6 +33,9 @@ class _ProductionView extends StatelessWidget {
       appBar: AppBar(
         title: const Text('الإنتاج وأوامر التشغيل'),
         actions: [
+          // MOB-3: شارة عدد عمليات الطابور المعلّقة (مثل تسجيل إنتاج
+          // محفوظ محليًا) — تظهر فقط عند وجود معلّق وتتحدث تلقائيًا.
+          const OutboxPendingBadge(),
           IconButton(
             tooltip: 'تحديث',
             icon: const Icon(Icons.refresh),
@@ -60,16 +65,26 @@ class _ProductionView extends StatelessWidget {
             );
           }
           if (state is ProductionLoaded) {
-            return Stack(
+            // MOB-3: بيانات من الكاش (لا اتصال) — شارة وضوح أعلى القائمة
+            // مع استمرار العرض الطبيعي للأوامر.
+            return Column(
               children: [
-                _WorkOrderList(orders: state.workOrders),
-                if (state.isRefreshing)
-                  const Positioned(
-                    top: 0,
-                    left: 0,
-                    right: 0,
-                    child: LinearProgressIndicator(),
+                if (state.fromCache && state.cachedAt != null)
+                  AppCachedDataBanner(cachedAt: state.cachedAt!),
+                Expanded(
+                  child: Stack(
+                    children: [
+                      _WorkOrderList(orders: state.workOrders),
+                      if (state.isRefreshing)
+                        const Positioned(
+                          top: 0,
+                          left: 0,
+                          right: 0,
+                          child: LinearProgressIndicator(),
+                        ),
+                    ],
                   ),
+                ),
               ],
             );
           }

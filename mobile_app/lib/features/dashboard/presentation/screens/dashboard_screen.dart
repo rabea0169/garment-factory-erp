@@ -77,7 +77,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 );
               }
               if (state is DashboardLoaded) {
-                return _DashboardContent(stats: state.stats);
+                // MOB-3: بيانات من الكاش (لا اتصال) — شارة وضوح أعلى
+                // المحتوى مع استمرار عرض المؤشرات كاملة.
+                return Column(
+                  children: [
+                    if (state.fromCache && state.cachedAt != null)
+                      AppCachedDataBanner(cachedAt: state.cachedAt!),
+                    Expanded(child: _DashboardContent(stats: state.stats)),
+                  ],
+                );
               }
               return const SizedBox.shrink();
             },

@@ -64,3 +64,10 @@ class ConnectivityService {
     await _onlineController.close();
   }
 }
+
+/// الخدمة المشتركة على مستوى التطبيق (تبدأ المراقبة عند أول استخدام).
+/// MOB-3: يستهلكها OfflineBanner وشريط الطابور معًا — مثيل واحد
+/// لكل التطبيق بدل نسخة لكل مستهلك.
+ConnectivityService? _sharedInstance;
+ConnectivityService get sharedConnectivityService =>
+    _sharedInstance ??= ConnectivityService()..start();

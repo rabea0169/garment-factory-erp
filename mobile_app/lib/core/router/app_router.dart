@@ -8,6 +8,8 @@ import '../../features/production/presentation/screens/production_screen.dart';
 import '../../features/products/presentation/screens/products_screen.dart';
 import '../../features/quality/presentation/screens/quality_screen.dart';
 import '../../features/hr/presentation/screens/hr_screen.dart';
+import '../../features/hr/payrolls/presentation/screens/payrolls_screen.dart';
+import '../../features/hr/worker_activity/presentation/screens/worker_activity_screen.dart';
 import '../../features/sales/presentation/screens/sales_screen.dart';
 import '../../features/suppliers/presentation/screens/suppliers_screen.dart';
 import '../../features/shipping/presentation/screens/shipping_screen.dart';
@@ -26,6 +28,9 @@ class AppRouter {
   static const String production = '/production';
   static const String quality = '/quality';
   static const String hr = '/hr';
+  // MOB-8: شاشة حالة الرواتب + نشاط العامل (سلف/إنتاج).
+  static const String hrPayrolls = '/hr/payrolls';
+  static const String hrWorkerActivity = '/hr/workers';
   static const String sales = '/sales';
   static const String suppliers = '/suppliers';
   static const String shipping = '/shipping';
@@ -109,6 +114,22 @@ class AppRouter {
         path: hr,
         name: 'hr',
         builder: (context, state) => const HrScreen(),
+      ),
+      // MOB-8: كشوف الرواتب (GET /hr/payrolls) مع مرشح حالة.
+      GoRoute(
+        path: hrPayrolls,
+        name: 'hrPayrolls',
+        builder: (context, state) => const PayrollsScreen(),
+      ),
+      // MOB-8: نشاط عامل — آخر السلف وآخر الإنتاج (GET /hr/advances |
+      // /hr/production مع workerId).
+      GoRoute(
+        path: '$hrWorkerActivity/:workerId',
+        name: 'hrWorkerActivity',
+        builder: (context, state) => WorkerActivityScreen(
+          workerId: state.pathParameters['workerId'] ?? '',
+          workerName: state.uri.queryParameters['name'],
+        ),
       ),
       GoRoute(
         path: sales,
