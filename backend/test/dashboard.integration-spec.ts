@@ -98,7 +98,11 @@ integrationDescribe('GF-REMAINING-004 dashboard integration', () => {
       to: '2099-01-15T23:59:59.999Z',
     });
 
-    expect(result.sales).toEqual([{ period: '2099-01', amount: 1234.5 }]);
+    // DSH-5: amount صافي المرتجعات (لا مرتجعات هنا) وnetOfTax قبل الضريبة
+    // (الأمر بلا vatAmount → default 0) — القيمتان متطابقتان في هذه الحالة
+    expect(result.sales).toEqual([
+      { period: '2099-01', amount: 1234.5, netOfTax: 1234.5 },
+    ]);
     expect(result.production).toEqual([{ period: '2099-01-15', pieces: 42 }]);
     expect(result.topWorkers).toEqual([
       { workerId: worker.id, name: worker.name, pieces: 42 },

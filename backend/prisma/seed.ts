@@ -47,6 +47,11 @@ const seedAdminPassword = requireEnv(
 
 async function main() {
   console.log('Seeding database...');
+  // INF-7 (GF-IMP-W3): البذرة قابلة للتكرار بالكامل (idempotent) — كل
+  // الإنشاءات upsert/guarded بمفاتيحها الفريدة، فإعادة تشغيلها على قاعدة
+  // مزروعة تنجح بلا P2002 ولا تلمس أي قيمة حية عدّلها التشغيل. هذا متطلب
+  // مسار التعافي في docs/runbooks/BACKUP_RESTORE.md (migrate deploy ثم
+  // re-seed على قاعدة نظيفة).
 
   // 0. Create Warehouses (GF-0007) — كل حركة مخزون تلزم بتحديد مخزن
   const whRaw = await prisma.warehouse.upsert({
@@ -86,8 +91,16 @@ async function main() {
 
   // 2. Create Raw Materials — الرصيد الافتتاحي مبرر بحركة ledger داخل
   //    $transaction واحدة (GF-0007): currentStock == SUM(quantityDelta) من اليوم الأول
-  const rm1 = await prisma.rawMaterial.create({
-    data: {
+  // INF-7 (GF-IMP-W3): upsert بمفتاح code الفريدة (نمط المخازن/المدير
+  //    القائم في هذا الملف) بدل الإنشاء المباشر — الإنشاء المباشر كان يفشل
+  //    بـ P2002 عند إعادة تشغيل البذرة، وrunbook النسخ الاحتياطي
+  //    (BACKUP_RESTORE) يتطلب re-seed قابلًا للتكرار على قاعدة نظيفة
+  //    بعد migrate deploy. التحديث فارغ عمدًا: إعادة البذرة لا تلمس
+  //    الرصيد/التكلفة الحية للخامة — نفس مبدأ المخازن أعلاه.
+  const rm1 = await prisma.rawMaterial.upsert({
+    where: { code: 'RM-001' },
+    update: {},
+    create: {
       code: 'RM-001',
       name: 'قماش قطني أبيض 100%',
       unit: RawMaterialUnit.METER,
@@ -97,8 +110,10 @@ async function main() {
     },
   });
 
-  const rm2 = await prisma.rawMaterial.create({
-    data: {
+  const rm2 = await prisma.rawMaterial.upsert({
+    where: { code: 'RM-002' },
+    update: {},
+    create: {
       code: 'RM-002',
       name: 'خيط بوليستر أسود',
       unit: RawMaterialUnit.ROLL,
@@ -107,43 +122,74 @@ async function main() {
       costPerUnit: 15.0,
     },
   });
+  // INF-7: حركة الافتتاح guarded بمفتاح entryCode الفريد — تُنشأ مرة واحدة
+  // فقط (نمط SEED-OPENING-FG أدناه)؛ غيابها على قاعدة قائمة يُعد إصلاح
+  // بذرة لا مضاعفة (entryCode فريد يمنع التكرار أصلًا).
   await prisma.$transaction([
-    prisma.stockLedgerEntry.create({
-      data: {
-        entryCode: 'SLE-SEED-OPENING-001',
-        type: StockMovementType.RECEIVE,
-        warehouseId: whRaw.id,
-        rawMaterialId: rm1.id,
-        quantityDelta: 150,
-        balanceAfter: 150,
-        unitCost: 45.5,
-        totalValue: 6825,
-        reference: 'رصيد افتتاحي (seed)',
-      },
-    }),
-    prisma.stockLedgerEntry.create({
-      data: {
-        entryCode: 'SLE-SEED-OPENING-002',
-        type: StockMovementType.RECEIVE,
-        warehouseId: whRaw.id,
-        rawMaterialId: rm2.id,
-        quantityDelta: 12,
-        balanceAfter: 12,
-        unitCost: 15.0,
-        totalValue: 180,
-        reference: 'رصيد افتتاحي (seed)',
-      },
-    }),
+    ...((await prisma.stockLedgerEntry.findFirst({
+      where: { entryCode: 'SLE-SEED-OPENING-001' },
+      select: { id: true },
+    }))
+      ? []
+      : [
+          prisma.stockLedgerEntry.create({
+            data: {
+              entryCode: 'SLE-SEED-OPENING-001',
+              type: StockMovementType.RECEIVE,
+              warehouseId: whRaw.id,
+              rawMaterialId: rm1.id,
+              quantityDelta: 150,
+              balanceAfter: 150,
+              unitCost: 45.5,
+              totalValue: 6825,
+              reference: 'رصيد افتتاحي (seed)',
+            },
+          }),
+        ]),
+    ...((await prisma.stockLedgerEntry.findFirst({
+      where: { entryCode: 'SLE-SEED-OPENING-002' },
+      select: { id: true },
+    }))
+      ? []
+      : [
+          prisma.stockLedgerEntry.create({
+            data: {
+              entryCode: 'SLE-SEED-OPENING-002',
+              type: StockMovementType.RECEIVE,
+              warehouseId: whRaw.id,
+              rawMaterialId: rm2.id,
+              quantityDelta: 12,
+              balanceAfter: 12,
+              unitCost: 15.0,
+              totalValue: 180,
+              reference: 'رصيد افتتاحي (seed)',
+            },
+          }),
+        ]),
   ]);
-  console.log('Raw Materials seeded (ledger-backed)');
+  console.log('Raw Materials seeded (ledger-backed, idempotent)');
 
   // 3. Create Season & Product
-  const season = await prisma.season.create({
-    data: { name: 'صيف 2026' },
-  });
+  // INF-7: كل الإنشاءات هنا idempotent — الموسم وإصدار BOM لا يملكان
+  // مفتاحًا فريدًا طبيعيًا في المخطط (name/versionName ليسا @unique) فيُحرسان
+  // بـ findFirst ثم create؛ المنتج upsert بمفتاح code، والمتغيرات upsert
+  // بالمركب الفريد (productId, size, color)، وبنود BOM upsert بالمركب
+  // الفريد (bomVersionId, rawMaterialId). التحديثات فارغة عمدًا كي لا تلمس
+  // إعادة البذرة الأسعار/الكميات التي عدّلها التشغيل.
+  const season =
+    (await prisma.season.findFirst({
+      where: { name: 'صيف 2026' },
+      select: { id: true },
+    })) ??
+    (await prisma.season.create({
+      data: { name: 'صيف 2026' },
+      select: { id: true },
+    }));
 
-  const product = await prisma.product.create({
-    data: {
+  const product = await prisma.product.upsert({
+    where: { code: 'PRD-T01' },
+    update: {},
+    create: {
       code: 'PRD-T01',
       name: 'تيشيرت صيفي بولو',
       category: 'تيشيرت',
@@ -154,46 +200,88 @@ async function main() {
   });
 
   // Product Variants
-  const variantM = await prisma.productVariant.create({
-    data: { productId: product.id, size: 'M', color: 'أبيض' },
+  const variantM = await prisma.productVariant.upsert({
+    where: {
+      productId_size_color: {
+        productId: product.id,
+        size: 'M',
+        color: 'أبيض',
+      },
+    },
+    update: {},
+    create: { productId: product.id, size: 'M', color: 'أبيض' },
   });
-  const variantL = await prisma.productVariant.create({
-    data: { productId: product.id, size: 'L', color: 'أبيض' },
+  const variantL = await prisma.productVariant.upsert({
+    where: {
+      productId_size_color: {
+        productId: product.id,
+        size: 'L',
+        color: 'أبيض',
+      },
+    },
+    update: {},
+    create: { productId: product.id, size: 'L', color: 'أبيض' },
   });
 
   // BOM (Bill of Materials) Versioning (GF-0008)
-  const bomVersion = await prisma.bomVersion.create({
-    data: {
-      productId: product.id,
-      versionName: 'الإصدار الأساسي 1.0',
-    },
-  });
+  const bomVersion =
+    (await prisma.bomVersion.findFirst({
+      where: { productId: product.id, versionName: 'الإصدار الأساسي 1.0' },
+      select: { id: true },
+    })) ??
+    (await prisma.bomVersion.create({
+      data: {
+        productId: product.id,
+        versionName: 'الإصدار الأساسي 1.0',
+      },
+      select: { id: true },
+    }));
 
-  await prisma.bomLine.create({
-    data: {
+  await prisma.bomLine.upsert({
+    where: {
+      bomVersionId_rawMaterialId: {
+        bomVersionId: bomVersion.id,
+        rawMaterialId: rm1.id,
+      },
+    },
+    update: {},
+    create: {
       bomVersionId: bomVersion.id,
       rawMaterialId: rm1.id,
       quantity: 1.2,
       unit: 'متر',
     },
   });
-  await prisma.bomLine.create({
-    data: {
+  await prisma.bomLine.upsert({
+    where: {
+      bomVersionId_rawMaterialId: {
+        bomVersionId: bomVersion.id,
+        rawMaterialId: rm2.id,
+      },
+    },
+    update: {},
+    create: {
       bomVersionId: bomVersion.id,
       rawMaterialId: rm2.id,
       quantity: 0.1,
       unit: 'بكرة',
     },
   });
-  console.log('Products & BOM Versions seeded');
+  console.log('Products & BOM Versions seeded (idempotent)');
 
   // 4. Create Finished Goods Inventory (Legacy)
   // GF-0007: مخزون التام لم يُدمج بعد في ledger (يُدمج بالكامل عند دمج العمليات)
-  await prisma.finishedGood.create({
-    data: { productVariantId: variantM.id, quantity: 50 },
+  // INF-7: upsert بمفتاح productVariantId الفريد — إعادة البذرة لا تفشل
+  // ولا تلمس الكميات الحية.
+  await prisma.finishedGood.upsert({
+    where: { productVariantId: variantM.id },
+    update: {},
+    create: { productVariantId: variantM.id, quantity: 50 },
   });
-  await prisma.finishedGood.create({
-    data: { productVariantId: variantL.id, quantity: 30 },
+  await prisma.finishedGood.upsert({
+    where: { productVariantId: variantL.id },
+    update: {},
+    create: { productVariantId: variantL.id, quantity: 30 },
   });
 
   // GF-AUDIT-001A: seed the authoritative per-warehouse balance and its opening ledger.
@@ -244,8 +332,12 @@ async function main() {
   console.log('Finished Goods seeded in authoritative stock ledger');
 
   // 4.5. Create Sample Work Order (GF-0008)
-  await prisma.workOrder.create({
-    data: {
+  // INF-7: upsert بمفتاح code — لا نلمس حالة/كمية أمر قائم (قد يكون
+  // بدأ الإنتاج فعلًا)؛ نضمن فقط وجود أمر العينة على قاعدة جديدة.
+  await prisma.workOrder.upsert({
+    where: { code: 'WO-SEED-001' },
+    update: {},
+    create: {
       code: 'WO-SEED-001',
       productVariantId: variantM.id,
       bomVersionId: bomVersion.id,
@@ -254,26 +346,32 @@ async function main() {
       createdById: admin.id,
     },
   });
-  console.log('Work Order seeded');
+  console.log('Work Order seeded (idempotent)');
 
   // 5. Workers
-  await prisma.worker.create({
-    data: {
+  // INF-7: upsert بمفتاح code الفريد — إعادة البذرة لا تفشل ولا تمس
+  // سعر القطعة/حالة العامل الحية.
+  await prisma.worker.upsert({
+    where: { code: 'WK-001' },
+    update: {},
+    create: {
       code: 'WK-001',
       name: 'أحمد محمود',
       specialty: WorkerSpecialty.SEWING,
       pieceRate: 5.5,
     },
   });
-  await prisma.worker.create({
-    data: {
+  await prisma.worker.upsert({
+    where: { code: 'WK-002' },
+    update: {},
+    create: {
       code: 'WK-002',
       name: 'سيد علي',
       specialty: WorkerSpecialty.CUTTING,
       pieceRate: 3.0,
     },
   });
-  console.log('Workers seeded');
+  console.log('Workers seeded (idempotent)');
 
   // 6. Chart of Accounts (A1/A2/A3 — audit v2 foundation).
   // معرفات ثابتة (UUIDs من src/core/financial/chart-of-accounts.ts) يستوردها
@@ -463,6 +561,30 @@ async function main() {
   console.log('Fiscal period seeded (open, current year)');
 
   console.log(`Currencies seeded (${currencies.length} currencies)`);
+
+  // INF-7 (GF-IMP-W3): خزينة نقدية افتراضية نشطة — متطلب runbook النسخ
+  // الاحتياطي (re-seed قابل للتكرار) وبيئة جديدة لا يمكنها دفع رواتب ولا
+  // سلف ولا سندات صرف بدونها (كان الدليل يلتف على المشكلة بـ SQL يدوي).
+  // النموذج لا يملك عمود code فالمفتاح الطبيعي هو (name, type) عبر
+  // findFirst ثم create — idempotent كبقية البذرة؛ الرصيد الابتدائي 0 لا
+  // يُفرَّغ على قاعدة قائمة (التحديث محروس بالوجود لا upsert فارغ لأن لا
+  // قيد فريد في القاعدة)، والعملة EGP مثبتة من البذرة أعلاه.
+  const treasury =
+    (await prisma.treasury.findFirst({
+      where: { name: 'الخزينة النقدية الرئيسية', type: 'CASH' },
+      select: { id: true },
+    })) ??
+    (await prisma.treasury.create({
+      data: {
+        name: 'الخزينة النقدية الرئيسية',
+        type: 'CASH',
+        balance: 0,
+        isActive: true,
+        currencyId: CURRENCIES.EGP,
+      },
+      select: { id: true },
+    }));
+  console.log('Default CASH treasury ensured:', treasury.id);
 }
 
 main()

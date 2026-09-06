@@ -25,7 +25,10 @@ import type { Request } from 'express';
  *     metadata decorator `@CheckOrigin()` لكل متحكم يريد فرضها،
  *     بدلًا من فرضها عالميًا وكاسر الـ unit tests.
  *
- * المُفعّل تلقائيًا: لا شيء. لتفعيلها على متحكم، أضف `@UseGuards(OriginCheckGuard)`.
+ * INF-6 (GF-IMP-W3): الحارس موصول عالميًا الآن عبر APP_GUARD في app.module.ts
+ * بعد JwtAuthGuard وRolesGuard (الترتيب: throttler ← auth ← roles ← origin) —
+ * كان قبل ذلك كودًا مكتملًا ومختبرًا وميت التفعيل. المسارات @Public (مثل
+ * /auth/login) معفاة أصلًا، وطلبات القراءة (GET/HEAD/OPTIONS) تمر بلا فحص.
  *
  * الـ config:
  *   - CORS_ORIGINS (env): قائمة origins مفصولة بفواصل. لازم في الإنتاج.
@@ -87,14 +90,11 @@ export class OriginCheckGuard implements CanActivate {
     const source = origin ?? this.extractOriginFromReferer(referer);
 
     if (!source) {
-      // SEC-F07: لا Origin ولا Referer — قد يكون طلبًا غير متصفّحي (مشروع).
-      // في الإنتاج نُسلّم هذا كمكمل دفاعي ونرفضه (لأن كل المتصفحات ترسل origin
-      // لطلبات state-changing عبر CORS). في dev نسمح به لتسهيل الـ curl.
-      if (this.isProd) {
-        throw new ForbiddenException(
-          'طلب غير مصرح به: لا يُرسل Origin أو Referer — استعمل متصفحًا أو أضف Origin header',
-        );
-      }
+      // SEC-F07 + INF-6: لا Origin ولا Referer — طلب غير متصفّحي: عميل مشروع
+      // خارج المتصفح (تطبيق الجوال Dio لا يرسل Origin، وcurl والتكاملات
+      // كذلك). فحص الأصل دفاعٌ ضد المتصفحات العابرة فحسب، لذا نسمح للطلب —
+      // الحماية تبقى كاملة للطلبات التي تحمل أصلًا (فوق). الرفض هنا كان
+      // سيكسر تطبيق الجوال في الإنتاج بعد الوصل العالمي للحارس.
       return true;
     }
 
