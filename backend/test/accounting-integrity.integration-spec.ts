@@ -1,5 +1,6 @@
 import {
   AccountType,
+  FiscalPeriodStatus,
   PayrollStatus,
   Prisma,
   UserRole,
@@ -77,7 +78,8 @@ integrationDescribe(
         "worker_advances",
         "attendance",
         "workers",
-        "users"
+        "users",
+        "fiscal_periods"
       CASCADE
     `);
       const actor = await prisma.user.create({
@@ -99,6 +101,21 @@ integrationDescribe(
         },
       });
       approverId = approver.id;
+      // ACC-3 (GF-IMP-W2 — تعديل ضروري خارج النطاق الحرفي): كل ترحيل آلي
+      // بلا fiscalPeriodId (سلفة/اعتماد/دفع الرواتب هنا) يُحل الآن إلى فترة
+      // مفتوحة شاملة لتاريخ القيد — بلا زرع فترة مفتوحة ستفشل بوابة الموجة
+      // الأولى بـ 400 (لا يمكن الترحيل خارج فترة مالية مفتوحة). الفترة تغطي
+      // 2026 كاملة: تواريخ السيناريو (أغسطس) + تاريخ اليوم لقيود بلا تاريخ
+      // صريح (سلفة recordAdvance والاعتماد يُرحّلان بتاريخ الآن).
+      await prisma.fiscalPeriod.create({
+        data: {
+          name: `w1a-open-${randomUUID().slice(0, 8)}`,
+          startDate: new Date('2026-01-01T00:00:00.000Z'),
+          endDate: new Date('2026-12-31T00:00:00.000Z'),
+          status: FiscalPeriodStatus.OPEN,
+          createdById: actorId,
+        },
+      });
       await prisma.account.createMany({
         data: [
           {

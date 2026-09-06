@@ -8,9 +8,36 @@ import { computeRequestHash } from '../../core/common/idempotency.util';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { HrService } from './hr.service';
 
+/**
+ * HR-2 (GF-IMP-W2): مواصفات الرواتب تحتاج workerAdvance.findMany (صفوف
+ * السلف لحساب المتبقي غير المسى) وworkerAdvance.update (توزيع FIFO عند
+ * الدفع) — امتداد محلي للـ mock الموحد بنمط inventory.service.spec
+ * (لا نعدّل الـ helper المشترك الذي يملكه كل الوكلاء).
+ */
+type HrPrismaMock = ReturnType<typeof createPrismaMock> & {
+  workerAdvance: {
+    create: jest.Mock;
+    aggregate: jest.Mock;
+    findMany: jest.Mock;
+    update: jest.Mock;
+  };
+};
+
+function createHrPrismaMock(): HrPrismaMock {
+  return {
+    ...createPrismaMock(),
+    workerAdvance: {
+      create: jest.fn(),
+      aggregate: jest.fn(),
+      findMany: jest.fn(),
+      update: jest.fn(),
+    },
+  };
+}
+
 describe('HrService — GF-0015 payroll', () => {
   let service: HrService;
-  let prisma: ReturnType<typeof createPrismaMock>;
+  let prisma: HrPrismaMock;
   let financial: { postJournalEntryInTx: jest.Mock };
   const periodStart = new Date('2026-08-01T00:00:00.000Z');
   const periodEnd = new Date('2026-08-31T00:00:00.000Z');
@@ -35,7 +62,7 @@ describe('HrService — GF-0015 payroll', () => {
   });
 
   beforeEach(() => {
-    prisma = createPrismaMock();
+    prisma = createHrPrismaMock();
     financial = { postJournalEntryInTx: jest.fn() };
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
@@ -46,9 +73,14 @@ describe('HrService — GF-0015 payroll', () => {
     prisma.dailyProduction.aggregate.mockResolvedValue({
       _sum: { totalAmount: new Prisma.Decimal('660.00') },
     });
-    prisma.workerAdvance.aggregate.mockResolvedValue({
-      _sum: { amount: new Prisma.Decimal('250.00') },
-    });
+    // HR-2: صفوف السلف (لا مجموع أعمى) — المتبقي غير المسى هو أساس الخصم.
+    prisma.workerAdvance.findMany.mockResolvedValue([
+      {
+        id: 'adv-1',
+        amount: new Prisma.Decimal('250.00'),
+        settledAmount: new Prisma.Decimal('0.00'),
+      },
+    ]);
     prisma.payroll.create.mockResolvedValue(payrollRow());
     prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
     service = new HrService(
@@ -83,9 +115,19 @@ describe('HrService — GF-0015 payroll', () => {
   });
 
   it('لا يسمح بأن تتجاوز خصومات السلف gross', async () => {
-    prisma.workerAdvance.aggregate.mockResolvedValue({
-      _sum: { amount: new Prisma.Decimal('900.00') },
-    });
+    // HR-2: سلفتان بمتبقي 250 + 900 = 1150 > gross 660 → الخصم محدود بالgross.
+    prisma.workerAdvance.findMany.mockResolvedValue([
+      {
+        id: 'adv-1',
+        amount: new Prisma.Decimal('250.00'),
+        settledAmount: new Prisma.Decimal('0.00'),
+      },
+      {
+        id: 'adv-2',
+        amount: new Prisma.Decimal('900.00'),
+        settledAmount: new Prisma.Decimal('0.00'),
+      },
+    ]);
     prisma.payroll.create.mockResolvedValue(
       payrollRow({
         advanceDeduct: new Prisma.Decimal('660.00'),
@@ -130,6 +172,310 @@ describe('HrService — GF-0015 payroll', () => {
       ),
     ).rejects.toThrow(ConflictException);
     expect(prisma.payroll.create).not.toHaveBeenCalled();
+  });
+
+  // HR-2 (P1 — GF-IMP-W2): السلف لا تُخصم مرتين — الخصم يُحسب من المتبقي
+  // غير المسى فقط (amount - settledAmount) والتوزيع الفعلي يجري FIFO عند
+  // الدفع داخل معاملة الدفع نفسها.
+  describe('HR-2 — ذاكرة تسوية السلف (settledAmount)', () => {
+    it('سلفة 200 دُفعت خصمها كاملًا (settledAmount == amount) → كشف لاحق بنفس الفترة لا يعيد خصمها', async () => {
+      prisma.workerAdvance.findMany.mockResolvedValue([
+        {
+          id: 'adv-1',
+          amount: new Prisma.Decimal('200.00'),
+          settledAmount: new Prisma.Decimal('200.00'), // مسوية بالكامل
+        },
+      ]);
+      prisma.payroll.create.mockResolvedValue(
+        payrollRow({
+          grossAmount: new Prisma.Decimal('660.00'),
+          advanceDeduct: new Prisma.Decimal('0.00'),
+          netAmount: new Prisma.Decimal('660.00'),
+        }),
+      );
+
+      const result = await service.createPayroll(
+        { workerId: 'worker-1', periodStart, periodEnd },
+        'actor-1',
+      );
+
+      expect(result).toMatchObject({ advanceDeduct: 0, netAmount: 660 });
+      expect(prisma.payroll.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          advanceDeduct: new Prisma.Decimal('0.00'),
+          netAmount: new Prisma.Decimal('660.00'),
+        }) as Record<string, unknown>,
+      });
+    });
+
+    it('سلفة 500 خُصم منها 200 سابقًا → الكشف التالي يخصم 300 فقط (المتبقي غير المسى)', async () => {
+      prisma.workerAdvance.findMany.mockResolvedValue([
+        {
+          id: 'adv-1',
+          amount: new Prisma.Decimal('500.00'),
+          settledAmount: new Prisma.Decimal('200.00'),
+        },
+      ]);
+      prisma.payroll.create.mockResolvedValue(
+        payrollRow({
+          advanceDeduct: new Prisma.Decimal('300.00'),
+          netAmount: new Prisma.Decimal('360.00'),
+        }),
+      );
+
+      const result = await service.createPayroll(
+        { workerId: 'worker-1', periodStart, periodEnd },
+        'actor-1',
+      );
+
+      expect(result).toMatchObject({ advanceDeduct: 300, netAmount: 360 });
+      expect(prisma.payroll.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          advanceDeduct: new Prisma.Decimal('300.00'),
+          netAmount: new Prisma.Decimal('360.00'),
+        }) as Record<string, unknown>,
+      });
+    });
+
+    it('يجلب صفوف السلف بالترتيب الزمني (تجهيز FIFO) و بنطاق الفترة الحصري', async () => {
+      await service.createPayroll(
+        { workerId: 'worker-1', periodStart, periodEnd },
+        'actor-1',
+      );
+
+      expect(prisma.workerAdvance.findMany).toHaveBeenCalledWith({
+        where: {
+          workerId: 'worker-1',
+          date: { gte: periodStart, lt: new Date('2026-09-01T00:00:00.000Z') },
+        },
+        select: { id: true, amount: true, settledAmount: true },
+        orderBy: [{ date: 'asc' }, { id: 'asc' }],
+      });
+    });
+
+    it('التوزيع FIFO داخل معاملة الدفع يضبط settledAmount (سلفة 200 كاملة + 100 من التالية)', async () => {
+      const paymentDate = new Date('2026-08-31T12:00:00.000Z');
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.APPROVED,
+            approvedById: 'manager-1',
+            grossAmount: new Prisma.Decimal('660.00'),
+            advanceDeduct: new Prisma.Decimal('300.00'),
+            netAmount: new Prisma.Decimal('360.00'),
+          }),
+        )
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.PAID,
+            isPaid: true,
+            paidAt: paymentDate,
+            approvedById: 'manager-1',
+            grossAmount: new Prisma.Decimal('660.00'),
+            advanceDeduct: new Prisma.Decimal('300.00'),
+            netAmount: new Prisma.Decimal('360.00'),
+          }),
+        );
+      prisma.treasury.findUnique.mockResolvedValue({
+        id: 'treasury-1',
+        isActive: true,
+      });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+      // سلف الفترة بالترتيب FIFO: الأولى 200 كاملة ثم 100 من الثانية (400).
+      prisma.workerAdvance.findMany.mockResolvedValue([
+        {
+          id: 'adv-1',
+          amount: new Prisma.Decimal('200.00'),
+          settledAmount: new Prisma.Decimal('0.00'),
+        },
+        {
+          id: 'adv-2',
+          amount: new Prisma.Decimal('400.00'),
+          settledAmount: new Prisma.Decimal('0.00'),
+        },
+      ]);
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1', paymentDate },
+        'manager-1',
+      );
+
+      const updateCalls = prisma.workerAdvance.update.mock.calls as unknown as [
+        [
+          {
+            where: { id: string };
+            data: { settledAmount: { increment: Prisma.Decimal } };
+          },
+        ],
+      ];
+      expect(
+        updateCalls.map(
+          ([call]) =>
+            `${call.where.id}:${call.data.settledAmount.increment.toString()}`,
+        ),
+      ).toEqual(['adv-1:200', 'adv-2:100']);
+    });
+
+    it('سلفة مسوية بالكامل تُتخطى في التوزيع FIFO ولا تُخصم مرة أخرى', async () => {
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.APPROVED,
+            approvedById: 'manager-1',
+            advanceDeduct: new Prisma.Decimal('300.00'),
+            netAmount: new Prisma.Decimal('360.00'),
+          }),
+        )
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.PAID,
+            isPaid: true,
+            approvedById: 'manager-1',
+            advanceDeduct: new Prisma.Decimal('300.00'),
+            netAmount: new Prisma.Decimal('360.00'),
+          }),
+        );
+      prisma.treasury.findUnique.mockResolvedValue({
+        id: 'treasury-1',
+        isActive: true,
+      });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+      prisma.workerAdvance.findMany.mockResolvedValue([
+        {
+          id: 'adv-1',
+          amount: new Prisma.Decimal('200.00'),
+          settledAmount: new Prisma.Decimal('200.00'), // مسوية بالكامل — تُتخطى
+        },
+        {
+          id: 'adv-2',
+          amount: new Prisma.Decimal('300.00'),
+          settledAmount: new Prisma.Decimal('0.00'),
+        },
+      ]);
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      const updateCalls = prisma.workerAdvance.update.mock.calls as unknown as [
+        [
+          {
+            where: { id: string };
+            data: { settledAmount: { increment: Prisma.Decimal } };
+          },
+        ],
+      ];
+      expect(updateCalls).toHaveLength(1);
+      expect(updateCalls[0][0].where.id).toBe('adv-2');
+      expect(updateCalls[0][0].data.settledAmount.increment.toString()).toBe(
+        '300',
+      );
+    });
+
+    it('كشف بلا خصومات سلف لا يستدعي توزيع FIFO إطلاقًا', async () => {
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.APPROVED,
+            approvedById: 'manager-1',
+            advanceDeduct: new Prisma.Decimal('0.00'),
+            netAmount: new Prisma.Decimal('660.00'),
+          }),
+        )
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.PAID,
+            isPaid: true,
+            approvedById: 'manager-1',
+            advanceDeduct: new Prisma.Decimal('0.00'),
+            netAmount: new Prisma.Decimal('660.00'),
+          }),
+        );
+      prisma.treasury.findUnique.mockResolvedValue({
+        id: 'treasury-1',
+        isActive: true,
+      });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      expect(prisma.workerAdvance.findMany).not.toHaveBeenCalled();
+      expect(prisma.workerAdvance.update).not.toHaveBeenCalled();
+    });
+  });
+
+  // HR-3 (P1 — GF-IMP-W2): منع تداخل فترات الرواتب — أي تقاطع نطاقات
+  // لنفس العامل يُرفض (الفحص القديم كان مطابقة تامة فمرر المتداخل جزئيًا).
+  describe('HR-3 — منع تداخل فترات الرواتب', () => {
+    it('فترة متداخلة جزئيًا مع كشف قائم → 409 ولا يُنشأ كشف', async () => {
+      prisma.payroll.findFirst.mockResolvedValue({ id: 'existing-payroll' });
+      // فترة جديدة 15 أغسطس - 15 سبتمبر تتقاطع مع القائمة (1-31 أغسطس).
+      const overlappingStart = new Date('2026-08-15T00:00:00.000Z');
+      const overlappingEnd = new Date('2026-09-15T00:00:00.000Z');
+
+      await expect(
+        service.createPayroll(
+          {
+            workerId: 'worker-1',
+            periodStart: overlappingStart,
+            periodEnd: overlappingEnd,
+          },
+          'actor-1',
+        ),
+      ).rejects.toThrow(
+        'تتداخل فترة كشف الراتب مع كشف قائم لنفس العامل — لا يُسمح بتداخل فترات الرواتب',
+      );
+      expect(prisma.payroll.create).not.toHaveBeenCalled();
+      expect(prisma.workerAdvance.findMany).not.toHaveBeenCalled();
+    });
+
+    it('فترة سابقة منتهية (لا تقاطع) → تنجح', async () => {
+      prisma.payroll.findFirst.mockResolvedValue(null);
+      const julyStart = new Date('2026-07-01T00:00:00.000Z');
+      const julyEnd = new Date('2026-07-31T00:00:00.000Z');
+
+      const result = await service.createPayroll(
+        { workerId: 'worker-1', periodStart: julyStart, periodEnd: julyEnd },
+        'actor-1',
+      );
+
+      expect(result).toMatchObject({ status: PayrollStatus.DRAFT });
+      expect(prisma.payroll.create).toHaveBeenCalledTimes(1);
+      // فحص التقاطع النطاقي: يبدأ قبل/عند نهاية المدخل وينتهي بعد/عند بدايته.
+      expect(prisma.payroll.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            workerId: 'worker-1',
+            periodStart: { lte: julyEnd },
+            periodEnd: { gte: julyStart },
+          },
+          select: { id: true },
+        }),
+      );
+    });
+
+    it('فترة متطابقة لعامل آخر تنجح — الفحص مقيد بنفس العامل', async () => {
+      prisma.payroll.findFirst.mockResolvedValue(null);
+
+      const result = await service.createPayroll(
+        { workerId: 'worker-1', periodStart, periodEnd },
+        'actor-1',
+      );
+
+      expect(result).toMatchObject({ status: PayrollStatus.DRAFT });
+      // نفس نطاق الفترة لعامل آخر لا يحجب — لأن where.workerId يحصر الفحص.
+      const overlapCalls = prisma.payroll.findFirst.mock.calls as unknown as [
+        [{ where: { workerId: string; periodStart: Date; periodEnd: Date } }],
+      ];
+      expect(overlapCalls[0][0].where.workerId).toBe('worker-1');
+    });
   });
 
   it('يعيد replay للاستجابة دون أثر ثانٍ عند تكرار Idempotency-Key', async () => {
