@@ -16,6 +16,24 @@ import {
   tryReplayIdempotencyKey,
 } from '../../core/common/idempotency.util';
 
+/**
+ * ACC-1 (P0 — GF-IMP-W1): مصفوفة حساب الطرف المقابل في السندات — صريحة
+ * لكل نوع طرف بدل التخمين الثنائي (مورد؟ AP : AR) الذي كان يوجّه سندات
+ * العمال وسندات بلا طرف إلى ذمم التحصيل خطأً:
+ *   SUPPLIER → ACCOUNTS_PAYABLE (ذمم الموردين)
+ *   CUSTOMER → ACCOUNTS_RECEIVABLE (ذمم العملاء)
+ *   WORKER   → WORKER_ADVANCES (أصل سلف العمال)
+ * لا تغيّر اتجاه المدين/الدائن لنوع السند — فقط توجيه الحساب المقابل.
+ */
+const VOUCHER_COUNTERPARTY_ACCOUNTS: Record<
+  'CUSTOMER' | 'SUPPLIER' | 'WORKER',
+  string
+> = {
+  SUPPLIER: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+  CUSTOMER: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+  WORKER: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+};
+
 @Injectable()
 export class AccountingService {
   constructor(
@@ -261,10 +279,12 @@ export class AccountingService {
     }
 
     const cashAccount = CHART_OF_ACCOUNTS.CASH;
-    const counterpartyAccount =
-      data.counterpartyType === 'SUPPLIER'
-        ? CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE
-        : CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE;
+    // ACC-1: الطرف المقابل من المصفوفة الصريحة أعلاه، والسند بلا طرف
+    // مقابل (undefined/فارغ) يُقيّ على GENERAL_EXPENSE — حساب المصروفات
+    // النثرية (5000) كما يوثّق تعليقه في شجرة الحسابات.
+    const counterpartyAccount = data.counterpartyType
+      ? VOUCHER_COUNTERPARTY_ACCOUNTS[data.counterpartyType]
+      : CHART_OF_ACCOUNTS.GENERAL_EXPENSE;
     const lines =
       data.type === VoucherType.RECEIPT
         ? [
