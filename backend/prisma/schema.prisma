@@ -1128,6 +1128,12 @@ model Shipment {
   @@index([deliveredById])
   @@index([salesOrderId])
   @@index([shippingCompanyId])
+  // GF-IMP-W1 / SHP-1: يوجد أيضًا فهرس فريد جزئي شحنة نشطة واحدة كحد أقصى
+  // لكل أمر بيع (shipments_active_per_order_unique ON "salesOrderId" WHERE
+  // "status" IN ('PREPARING','IN_TRANSIT')) يعيش في الهجرة
+  // 20260906000000_wave1_shp1_unique_active_shipment ولا يُصرَّح هنا — فهارس
+  // SQL الجزئية غير قابلة للتعبير في مخطط Prisma. أي تعديل على سلوكه يبدأ
+  // من الهجرة لا من هذا المخطط.
   @@map("shipments")
 }
 

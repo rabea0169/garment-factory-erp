@@ -1,5 +1,9 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
-import { SalesOrderStatus, ShipmentStatus } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
+import { Prisma, SalesOrderStatus, ShipmentStatus } from '@prisma/client';
 import { ShippingService } from './shipping.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -16,6 +20,10 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
+    // SHP-1: افتراضات المسار السعيد داخل المعاملة — لا شحنة نشطة قائمة
+    // لنفس أمر البيع، وقلب الحالة إلى SHIPPED يمسّ صفًا واحدًا.
+    prisma.shipment.count.mockResolvedValue(0);
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
     financial = {
       postJournalEntryInTx: jest.fn().mockResolvedValue({
         entryId: 'je-1',
@@ -247,6 +255,115 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
       service.createShipment({ salesOrderId: 'so-1' }, 'actor-1'),
     ).rejects.toThrow(BadRequestException);
     expect(prisma.shipment.create).not.toHaveBeenCalled();
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  // SHP-1 (P0): أمر البيع يصبح SHIPPED عند الشحن + منع الشحن المزدوج.
+  describe('SHP-1 — قلب حالة أمر البيع ومنع الشحن المزدوج', () => {
+    beforeEach(() => {
+      prisma.salesOrder.findUnique.mockResolvedValue({
+        id: 'so-1',
+        status: SalesOrderStatus.CONFIRMED,
+        code: 'SO-1',
+      });
+      prisma.shipment.create.mockImplementation(({ data }) =>
+        Promise.resolve({ id: 'sh-2', ...data, code: 'SHP-1' }),
+      );
+    });
+
+    it('يقلب حالة أمر البيع إلى SHIPPED داخل نفس معاملة إنشاء الشحنة', async () => {
+      await service.createShipment(
+        { salesOrderId: 'so-1', shippingCost: 0 },
+        'actor-1',
+      );
+
+      expect(prisma.salesOrder.updateMany).toHaveBeenCalledTimes(1);
+      expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({
+        where: {
+          id: 'so-1',
+          status: SalesOrderStatus.CONFIRMED,
+        },
+        data: { status: SalesOrderStatus.SHIPPED },
+      });
+      // القفل يحدث قبل الإنشاء: SELECT ... FOR UPDATE على sales_orders
+      const lockSqls = (
+        prisma.$queryRaw.mock.calls as unknown as [Prisma.Sql][]
+      ).map((call) => call[0]);
+      const salesOrderLock = lockSqls.find(
+        (sql) =>
+          sql.sql.includes('FROM sales_orders') &&
+          sql.sql.includes('FOR UPDATE'),
+      );
+      if (!salesOrderLock) {
+        throw new Error('Expected a sales_orders FOR UPDATE lock query');
+      }
+      expect(salesOrderLock.values).toEqual(['so-1']);
+      const lockInvocationOrder =
+        prisma.$queryRaw.mock.invocationCallOrder[
+          lockSqls.indexOf(salesOrderLock)
+        ];
+      const createInvocationOrder =
+        prisma.shipment.create.mock.invocationCallOrder[0];
+      expect(lockInvocationOrder).toBeLessThan(createInvocationOrder);
+    });
+
+    it('يرفض إنشاء شحنة ثانية نشطة لنفس أمر البيع (409)', async () => {
+      prisma.shipment.count.mockResolvedValue(1);
+
+      await expect(
+        service.createShipment(
+          { salesOrderId: 'so-1', shippingCost: 0 },
+          'actor-1',
+        ),
+      ).rejects.toThrow(ConflictException);
+      expect(prisma.shipment.count).toHaveBeenCalledWith({
+        where: {
+          salesOrderId: 'so-1',
+          status: {
+            in: [ShipmentStatus.PREPARING, ShipmentStatus.IN_TRANSIT],
+          },
+        },
+      });
+      expect(prisma.shipment.create).not.toHaveBeenCalled();
+      expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('يرفض إنشاء شحنة إذا لم يعد الأمر مؤكدًا عند إعادة قراءته داخل المعاملة (409)', async () => {
+      // الفحص الأولي (خارج المعاملة) يرى CONFIRMED، ثم تتغير الحالة قبل
+      // القفل — إعادة القراءة داخل المعاملة هي مصدر الحقيقة.
+      prisma.salesOrder.findUnique
+        .mockResolvedValueOnce({
+          id: 'so-1',
+          status: SalesOrderStatus.CONFIRMED,
+          code: 'SO-1',
+        })
+        .mockResolvedValue({
+          id: 'so-1',
+          status: SalesOrderStatus.CANCELLED,
+          code: 'SO-1',
+        });
+
+      await expect(
+        service.createShipment(
+          { salesOrderId: 'so-1', shippingCost: 0 },
+          'actor-1',
+        ),
+      ).rejects.toThrow('أمر البيع لم يعد مؤكدًا');
+      expect(prisma.shipment.create).not.toHaveBeenCalled();
+      expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('يرفض الالتزام إذا قلّب updateMany صفر صفوف (تغيّر متزامن بعد القفل)', async () => {
+      prisma.salesOrder.updateMany.mockResolvedValue({ count: 0 });
+
+      await expect(
+        service.createShipment(
+          { salesOrderId: 'so-1', shippingCost: 0 },
+          'actor-1',
+        ),
+      ).rejects.toThrow('أمر البيع لم يعد مؤكدًا');
+      expect(prisma.shipment.create).toHaveBeenCalledTimes(1);
+    });
   });
 
   it('يسمح بانتقال PREPARING إلى SHIPPED دون تغيير المخزون (ADR-0017)', async () => {

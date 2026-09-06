@@ -91,6 +91,9 @@ export class ShippingService {
         'Cannot create shipment for an unconfirmed order',
       );
     }
+    // SHP-1 (P0): الفحص أعلاه خارج المعاملة للتغذية الراجعة السريعة فقط —
+    // مصدر الحقيقة هو إعادة القراءة تحت قفل الصف داخل المعاملة أدناه، حيث
+    // يُقلب أمر البيع إلى SHIPPED ويُمنع الشحن المزدوج.
 
     // COMM-F11 / ACC-F03: GL posting for shipping cost. Three modes:
     //   (a) treasuryId + shippingCost > 0 → Dr Shipping Expense / Cr Cash
@@ -130,6 +133,43 @@ export class ShippingService {
           'shipping.shipment.create',
           requestHash,
         );
+
+        // SHP-1 (أ): قفل صف أمر البيع وإعادة قراءته داخل المعاملة — نفس
+        // نمط purchase_orders/sales_orders في بقية المسارات. الفحص الذي
+        // سبق المعاملة تغذية راجعة سريعة فقط؛ هذا القفل هو مصدر الحقيقة ضد
+        // تأكيد/إلغاء/شحن متزامن لنفس الأمر.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM sales_orders WHERE id = ${data.salesOrderId} FOR UPDATE`,
+        );
+        const lockedOrder = await tx.salesOrder.findUnique({
+          where: { id: data.salesOrderId },
+          select: { id: true, status: true, code: true },
+        });
+        if (!lockedOrder) throw new NotFoundException('Sales order not found');
+        if (lockedOrder.status !== SalesOrderStatus.CONFIRMED) {
+          throw new ConflictException(
+            'أمر البيع لم يعد مؤكدًا — لا يمكن إنشاء شحنة له',
+          );
+        }
+
+        // SHP-1 (ب): منع شحنة نشطة ثانية لنفس الأمر — "النشطة" هنا
+        // PREPARING أو IN_TRANSIT (نفس تعريف الفهرس الجزئي الفريد
+        // shipments_active_per_order_unique في هجرة 20260906000000؛
+        // الفهرس يظل خط الدفاع الأخير ضد سباق لم يلتقطه هذا الفحص).
+        const activeShipments = await tx.shipment.count({
+          where: {
+            salesOrderId: data.salesOrderId,
+            status: {
+              in: [ShipmentStatus.PREPARING, ShipmentStatus.IN_TRANSIT],
+            },
+          },
+        });
+        if (activeShipments > 0) {
+          throw new ConflictException(
+            'هناك شحنة نشطة لهذا الأمر بالفعل — أكمل شحنته الحالية أولًا',
+          );
+        }
+
         const created = await tx.shipment.create({
           data: {
             code: generateDocumentCode(DocumentCodePrefix.SHIPMENT),
@@ -160,7 +200,7 @@ export class ShippingService {
                     debitAccountId: CHART_OF_ACCOUNTS.SHIPPING_EXPENSE,
                     creditAccountId: CHART_OF_ACCOUNTS.CASH,
                     amount: shippingCost,
-                    description: `شحن ${order.code ?? created.salesOrderId}`,
+                    description: `شحن ${lockedOrder.code ?? created.salesOrderId}`,
                   },
                 ],
                 treasuryUpdates: [
@@ -189,7 +229,7 @@ export class ShippingService {
                     debitAccountId: CHART_OF_ACCOUNTS.SHIPPING_EXPENSE,
                     creditAccountId: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
                     amount: shippingCost,
-                    description: `استحقاق شحن ${order.code ?? created.salesOrderId}`,
+                    description: `استحقاق شحن ${lockedOrder.code ?? created.salesOrderId}`,
                   },
                 ],
                 metadata: {
@@ -226,6 +266,24 @@ export class ShippingService {
             },
           },
         });
+
+        // SHP-1 (أ): بعد نجاح إنشاء الشحنة (والقيود المالية والسجل) نُقلب
+        // حالة أمر البيع إلى SHIPPED داخل نفس المعاملة. updateMany مشروط
+        // بالحالة CONFIRMED هو حارس أخير: إن صفر صفوف تأثرت فالأمر تغيّر
+        // بالتزامن → نُلغي المعاملة كلها (الشحنة + القيد + السجل).
+        const flipped = await tx.salesOrder.updateMany({
+          where: {
+            id: data.salesOrderId,
+            status: SalesOrderStatus.CONFIRMED,
+          },
+          data: { status: SalesOrderStatus.SHIPPED },
+        });
+        if (flipped.count !== 1) {
+          throw new ConflictException(
+            'أمر البيع لم يعد مؤكدًا — تعذر تحويله إلى SHIPPED',
+          );
+        }
+
         const response = {
           ...created,
           shippingCost: Number(created.shippingCost),

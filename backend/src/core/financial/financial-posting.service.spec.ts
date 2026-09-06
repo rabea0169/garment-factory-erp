@@ -212,4 +212,75 @@ describe('FinancialPostingService', () => {
     ).rejects.toThrow('الرصيد السالب للمورد ممنوع');
     expect(prisma.journalEntry.create).not.toHaveBeenCalled();
   });
+
+  // SAL-1 (P0): فحص حد الائتمان/تحديث رصيد العميل يجب أن يمر بقفل صف
+  // SELECT ... FOR UPDATE — نفس نمط الخزائن والموردين — وإلا اجتاز طلبان
+  // متزامنان لنفس العميل فحص الحد على رصيد قديم.
+  it('locks customer rows with FOR UPDATE before the balance update (SAL-1)', async () => {
+    const prisma = createPrismaMock();
+    const service = new FinancialPostingService(
+      prisma as unknown as PrismaService,
+    );
+    prisma.account.findMany.mockResolvedValue([
+      { id: 'ar-account', isActive: true, isGroup: false },
+      { id: 'sales-account', isActive: true, isGroup: false },
+    ]);
+    prisma.journalEntry.create.mockResolvedValue({
+      id: 'je-credit-sale',
+      code: 'JE-CREDIT-SALE',
+      createdAt: new Date('2026-09-06T00:00:00.000Z'),
+    });
+    prisma.customer.findMany.mockResolvedValue([
+      { id: 'customer-1' },
+      { id: 'customer-2' },
+    ]);
+
+    await service.postJournalEntryInTx(
+      prisma as never,
+      {
+        description: 'Credit sale posting',
+        lines: [
+          {
+            debitAccountId: 'ar-account',
+            creditAccountId: 'sales-account',
+            amount: 150,
+          },
+        ],
+        customerUpdates: [
+          { customerId: 'customer-1', delta: 150 },
+          { customerId: 'customer-2', delta: 50 },
+        ],
+      },
+      'user-1',
+    );
+
+    // يقع القفل قبل قراءة العملاء ويحمل كل المعرفات المطلوب قفلها.
+    const rawCalls = (
+      prisma.$queryRaw.mock.calls as unknown as [Prisma.Sql][]
+    ).map((call) => call[0]);
+    const customerLockSql = rawCalls.find(
+      (sql) =>
+        sql.sql.includes('FROM customers') && sql.sql.includes('FOR UPDATE'),
+    );
+    if (!customerLockSql) {
+      throw new Error('Expected a customers FOR UPDATE lock query');
+    }
+    expect(customerLockSql.values).toEqual(['customer-1', 'customer-2']);
+    const lockInvocationOrder =
+      prisma.$queryRaw.mock.invocationCallOrder[
+        rawCalls.indexOf(customerLockSql)
+      ];
+    const findManyInvocationOrder =
+      prisma.customer.findMany.mock.invocationCallOrder[0];
+    expect(lockInvocationOrder).toBeLessThan(findManyInvocationOrder);
+    // فحص الوجود يبقى كما هو بعد القفل.
+    expect(prisma.customer.findMany).toHaveBeenCalledWith({
+      where: { id: { in: ['customer-1', 'customer-2'] } },
+      select: { id: true },
+    });
+    expect(prisma.customer.update).toHaveBeenCalledWith({
+      where: { id: 'customer-1' },
+      data: { balance: { increment: 150 } },
+    });
+  });
 });
