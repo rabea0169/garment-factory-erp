@@ -27,6 +27,13 @@ import { PaginationDto } from '../../common/dto/pagination.dto';
  * - الهوية من الجلسة (@CurrentUser) — عمود createdById في الـ ledger.
  * - مفتاح Idempotency-Key اختياري في الترويسة: نفس المفتاح + نفس المحتوى =
  *   نفس الاستجابة بلا أثر مزدوج (مفيد لـ retry من الهاتف).
+ * - INV-2 (قراءات مقسومة بالدور من الجلسة):
+ *   • القراءات المادية (قوائم المواد/الأرصدة/المخازن/الملخص) متاحة لكل
+ *     الأدوار الموثقة — بلا حقول التكلفة للمورد للأدوار غير المالية
+ *     (الخدمة تسقطها بناءً على دور الجلسة المُمرر).
+ *   • القراءة المالية (الدفتر بالتكاليف) مقيّدة بـ @Roles للأدوار المالية
+ *     (INVENTORY_MANAGER / ACCOUNTANT / GENERAL_MANAGER — وSUPER_ADMIN
+ *     يتجاوز في RolesGuard) — دور تشغيلي (PRODUCTION/CASHIER/...) → 403.
  */
 @ApiTags('Inventory (المخزون)')
 @Controller('inventory')
@@ -35,8 +42,12 @@ export class InventoryController {
 
   @Get('raw-materials')
   @ApiOperation({ summary: 'الحصول على جميع المواد الخام' })
-  async getRawMaterials(@Query() pagination: PaginationDto) {
-    return this.inventoryService.getAllRawMaterials(pagination);
+  async getRawMaterials(
+    @Query() pagination: PaginationDto,
+    @CurrentUser('role') viewerRole?: UserRole,
+  ) {
+    // INV-2: دور الجلسة يقرر ما إذا كانت التكلفة وبيانات المورد تعاد
+    return this.inventoryService.getAllRawMaterials(pagination, viewerRole);
   }
 
   @Get('raw-materials/low-stock')
@@ -89,11 +100,21 @@ export class InventoryController {
   }
 
   @Get('ledger')
+  // INV-2: الدفتر قراءة مالية (unitCost/totalValue بكل صف) — للأدوار
+  // المالية فقط (SUPER_ADMIN يتجاوز في RolesGuard)؛ الأدوار التشغيلية 403.
+  @Roles(
+    UserRole.INVENTORY_MANAGER,
+    UserRole.ACCOUNTANT,
+    UserRole.GENERAL_MANAGER,
+  )
   @ApiOperation({
-    summary: 'سجل حركات المخزون بمرشحات خامة/مخزن/نوع/فترة',
+    summary: 'سجل حركات المخزون بمرشحات خامة/مخزن/نوع/فترة (مالي)',
   })
-  async getLedger(@Query() query: LedgerQueryDto) {
-    return this.inventoryService.getLedgerEntries(query);
+  async getLedger(
+    @Query() query: LedgerQueryDto,
+    @CurrentUser('role') viewerRole?: UserRole,
+  ) {
+    return this.inventoryService.getLedgerEntries(query, viewerRole);
   }
 
   @Post('movements/receive')
@@ -152,8 +173,12 @@ export class InventoryController {
 
   @Get('finished-goods')
   @ApiOperation({ summary: 'الحصول على المنتجات التامة الصنع' })
-  async getFinishedGoods(@Query() pagination: PaginationDto) {
-    return this.inventoryService.getAllFinishedGoods(pagination);
+  async getFinishedGoods(
+    @Query() pagination: PaginationDto,
+    @CurrentUser('role') viewerRole?: UserRole,
+  ) {
+    // INV-2: الرصيد الكمي للجميع — unitCost للأدوار المالية فقط
+    return this.inventoryService.getAllFinishedGoods(pagination, viewerRole);
   }
 
   @Get('summary')

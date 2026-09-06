@@ -201,6 +201,9 @@ export function createPrismaMock() {
     },
     journalEntry: {
       findUnique: jest.fn(),
+      // GF-IMP-W2 / SHP-3(أ): إلغاء شحنة PREPARING يبحث عن قيد التكلفة
+      // بأحد مفتاحين ثابتين قبل عكسه
+      findFirst: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
       updateMany: jest.fn(),

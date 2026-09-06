@@ -4,11 +4,21 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('FinancialPostingService', () => {
+  // ACC-3 (GF-IMP-W2): فترة مفتوحة افتراضية شاملة لكل تواريخ الاختبارات —
+  // الترحيل بلا fiscalPeriodId يمر الآن عبر حلّ الفترة المفتوحة.
+  const openPeriod = {
+    id: 'period-open-2026',
+    status: 'OPEN',
+    startDate: new Date('2026-01-01T00:00:00.000Z'),
+    endDate: new Date('2026-12-31T00:00:00.000Z'),
+  };
+
   it('replays the same keyed posting without creating a second journal entry', async () => {
     const prisma = createPrismaMock();
     const service = new FinancialPostingService(
       prisma as unknown as PrismaService,
     );
+    prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
     const input = {
       description: 'Sale posting',
       reference: 'SO-1',
@@ -78,6 +88,7 @@ describe('FinancialPostingService', () => {
     prisma.$transaction.mockImplementation(
       (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
     );
+    prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
     prisma.journalEntry.findUnique.mockResolvedValue({
       id: 'je-original',
       code: 'JE-ORIGINAL',
@@ -142,6 +153,13 @@ describe('FinancialPostingService', () => {
         data: {
           reference: string;
           reversalOfId: string;
+          metadata?: {
+            source?: string;
+            reversalOfId?: string;
+            treasuryUpdates?: { delta: number }[];
+            customerUpdates?: { delta: number }[];
+            supplierUpdates?: { delta: number }[];
+          };
           lines: {
             create: Array<{
               debitAccountId: string;
@@ -162,6 +180,7 @@ describe('FinancialPostingService', () => {
         amount: 100,
       }),
     );
+    // ACC-2: عكس أرصدة الخزينة والعملاء والموردين كلها داخل معاملة العكس.
     expect(prisma.treasury.update).toHaveBeenCalledWith({
       where: { id: 'treasury-1' },
       data: { balance: { increment: -100 } },
@@ -178,6 +197,15 @@ describe('FinancialPostingService', () => {
       where: { id: 'je-reversal' },
       data: { reversalOfId: 'je-original' },
     });
+    // ACC-2: القيد العكسي يوثّق تأثيراته الفعلية (المقلوبة) في لقطة metadata
+    // خاصة به — لا يرث لقطة الأصل باتجاهها الأصلي.
+    expect(createCalls[0][0].data.metadata).toMatchObject({
+      source: 'accounting.reversal',
+      reversalOfId: 'je-original',
+      treasuryUpdates: [{ treasuryId: 'treasury-1', delta: -100 }],
+      customerUpdates: [{ customerId: 'customer-1', delta: -100 }],
+      supplierUpdates: [{ supplierId: 'supplier-1', delta: 40 }],
+    });
   });
 
   it('rejects supplier balance updates that would become negative', async () => {
@@ -185,6 +213,7 @@ describe('FinancialPostingService', () => {
     const service = new FinancialPostingService(
       prisma as unknown as PrismaService,
     );
+    prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
     prisma.account.findMany.mockResolvedValue([
       { id: 'expense-account', isActive: true, isGroup: false },
       { id: 'cash-account', isActive: true, isGroup: false },
@@ -221,6 +250,7 @@ describe('FinancialPostingService', () => {
     const service = new FinancialPostingService(
       prisma as unknown as PrismaService,
     );
+    prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
     prisma.account.findMany.mockResolvedValue([
       { id: 'ar-account', isActive: true, isGroup: false },
       { id: 'sales-account', isActive: true, isGroup: false },
@@ -281,6 +311,413 @@ describe('FinancialPostingService', () => {
     expect(prisma.customer.update).toHaveBeenCalledWith({
       where: { id: 'customer-1' },
       data: { balance: { increment: 150 } },
+    });
+  });
+
+  // ACC-3 (P1 — GF-IMP-W2): إقفال الفترات يسري الآن على كل الترحيل الآلي —
+  // القيد بلا fiscalPeriodId يُحل إلى الفترة المفتوحة الشاملة لتاريخه.
+  describe('ACC-3 — إقفال الفترات المالية على الترحيل الآلي', () => {
+    it('يربط القيد بالفترة المفتوحة الشاملة لتاريخ القيد عند غياب fiscalPeriodId', async () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      const postingDate = new Date('2026-08-26T15:30:00.000Z');
+      prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'cash-account', isActive: true, isGroup: false },
+        { id: 'sales-account', isActive: true, isGroup: false },
+      ]);
+      prisma.journalEntry.create.mockResolvedValue({
+        id: 'je-acc3',
+        code: 'JE-ACC3',
+        createdAt: new Date('2026-08-26T00:00:00.000Z'),
+      });
+
+      await service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'Auto posting without period',
+          date: postingDate,
+          lines: [
+            {
+              debitAccountId: 'cash-account',
+              creditAccountId: 'sales-account',
+              amount: 100,
+            },
+          ],
+        },
+        'user-1',
+      );
+
+      const startOfPostingDay = new Date(postingDate);
+      startOfPostingDay.setUTCHours(0, 0, 0, 0);
+      expect(prisma.fiscalPeriod.findFirst).toHaveBeenCalledWith({
+        where: {
+          status: 'OPEN',
+          startDate: { lte: postingDate },
+          endDate: { gte: startOfPostingDay },
+        },
+        orderBy: { startDate: 'desc' },
+        select: { id: true },
+      });
+      const createCalls = prisma.journalEntry.create.mock.calls as unknown as [
+        [{ data: { fiscalPeriodId: string | null } }],
+      ];
+      expect(createCalls[0][0].data.fiscalPeriodId).toBe('period-open-2026');
+    });
+
+    it('يرفض الترحيل بـ 400 عندما لا توجد فترة مفتوحة شاملة التاريخ', async () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.fiscalPeriod.findFirst.mockResolvedValue(null);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'cash-account', isActive: true, isGroup: false },
+        { id: 'sales-account', isActive: true, isGroup: false },
+      ]);
+
+      await expect(
+        service.postJournalEntryInTx(
+          prisma as never,
+          {
+            description: 'Auto posting outside all periods',
+            date: new Date('2027-01-01T10:00:00.000Z'),
+            lines: [
+              {
+                debitAccountId: 'cash-account',
+                creditAccountId: 'sales-account',
+                amount: 100,
+              },
+            ],
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow('لا يمكن الترحيل خارج فترة مالية مفتوحة');
+      expect(prisma.journalEntry.create).not.toHaveBeenCalled();
+    });
+
+    it('الفترة المُمرَّرة يدويًا والمغلقة تُرفض بالرسالة القائمة', async () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.fiscalPeriod.findUnique.mockResolvedValue({
+        id: 'period-closed',
+        status: 'CLOSED',
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2026-12-31T00:00:00.000Z'),
+      });
+
+      await expect(
+        service.postJournalEntryInTx(
+          prisma as never,
+          {
+            description: 'Manual posting into closed period',
+            fiscalPeriodId: 'period-closed',
+            date: new Date('2026-08-26T00:00:00.000Z'),
+            lines: [
+              {
+                debitAccountId: 'cash-account',
+                creditAccountId: 'sales-account',
+                amount: 100,
+              },
+            ],
+          },
+          'user-1',
+        ),
+      ).rejects.toThrow('لا يمكن الترحيل في فترة مالية مغلقة');
+      expect(prisma.fiscalPeriod.findFirst).not.toHaveBeenCalled();
+      expect(prisma.journalEntry.create).not.toHaveBeenCalled();
+    });
+  });
+
+  // ACC-2 (P1 — GF-IMP-W2): postJournalEntryInTx يوثّق تأثيراته الجانبية
+  // الفعلية في metadata — فيستطيع reverseJournalEntry عكس الأرصدة موثوقًا.
+  describe('ACC-2 — لقطة التأثيرات الجانبية في metadata', () => {
+    const arrangeHappyPosting = () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'cash-account', isActive: true, isGroup: false },
+        { id: 'sales-account', isActive: true, isGroup: false },
+      ]);
+      prisma.treasury.findMany.mockResolvedValue([
+        { id: 'treasury-1', isActive: true, balance: 1000 },
+      ]);
+      prisma.customer.findMany.mockResolvedValue([{ id: 'customer-1' }]);
+      prisma.supplier.findMany.mockResolvedValue([{ id: 'supplier-1' }]);
+      prisma.journalEntry.create.mockResolvedValue({
+        id: 'je-acc2',
+        code: 'JE-ACC2',
+        createdAt: new Date('2026-09-06T00:00:00.000Z'),
+      });
+      return { prisma, service };
+    };
+
+    it('يكتب لقطة treasuryUpdates/customerUpdates/supplierUpdates/accountDeltas الفعلية عند غياب metadata', async () => {
+      const { prisma, service } = arrangeHappyPosting();
+
+      await service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'Posting with side effects, no metadata',
+          lines: [
+            {
+              debitAccountId: 'cash-account',
+              creditAccountId: 'sales-account',
+              amount: 100,
+            },
+          ],
+          treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 100 }],
+          customerUpdates: [{ customerId: 'customer-1', delta: 100 }],
+          supplierUpdates: [{ supplierId: 'supplier-1', delta: -40 }],
+        },
+        'user-1',
+      );
+
+      const createCalls = prisma.journalEntry.create.mock.calls as unknown as [
+        [
+          {
+            data: {
+              metadata: {
+                treasuryUpdates: unknown;
+                customerUpdates: unknown;
+                supplierUpdates: unknown;
+                accountDeltas: Record<string, number>;
+              };
+            };
+          },
+        ],
+      ];
+      const metadata = createCalls[0][0].data.metadata;
+      expect(metadata).toMatchObject({
+        treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 100 }],
+        customerUpdates: [{ customerId: 'customer-1', delta: 100 }],
+        supplierUpdates: [{ supplierId: 'supplier-1', delta: -40 }],
+      });
+      expect(metadata.accountDeltas).toEqual({
+        'cash-account': 100,
+        'sales-account': -100,
+      });
+    });
+
+    it('يحفظ مفاتيح المستدعي الخاصة بجانب اللقطة ولا يستبدل قيمًا وثّقها بنفسه', async () => {
+      const { prisma, service } = arrangeHappyPosting();
+
+      await service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'Voucher-like posting with custom metadata',
+          lines: [
+            {
+              debitAccountId: 'cash-account',
+              creditAccountId: 'sales-account',
+              amount: 100,
+            },
+          ],
+          treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 100 }],
+          metadata: {
+            source: 'accounting.voucher',
+            counterpartyType: 'SUPPLIER',
+            // المستدعي وثّق treasuryUpdates بنفسه — لا نستبدلها.
+            treasuryUpdates: [{ treasuryId: 'treasury-1', delta: 555 }],
+          },
+        },
+        'user-1',
+      );
+
+      const createCalls = prisma.journalEntry.create.mock.calls as unknown as [
+        [
+          {
+            data: {
+              metadata: {
+                source: string;
+                counterpartyType: string;
+                treasuryUpdates: unknown;
+                customerUpdates: unknown;
+                accountDeltas: Record<string, number>;
+              };
+            };
+          },
+        ],
+      ];
+      const metadata = createCalls[0][0].data.metadata;
+      expect(metadata.source).toBe('accounting.voucher');
+      expect(metadata.counterpartyType).toBe('SUPPLIER');
+      // قيمة المستدقى تبقى كما وثّقها هو.
+      expect(metadata.treasuryUpdates).toEqual([
+        { treasuryId: 'treasury-1', delta: 555 },
+      ]);
+      // باقي اللقطة تُكمل عند الغياب.
+      expect(metadata.customerUpdates).toEqual([]);
+      expect(metadata.accountDeltas).toEqual({
+        'cash-account': 100,
+        'sales-account': -100,
+      });
+    });
+  });
+
+  // ACC-2 (P1 — GF-IMP-W2): قيد بلا أثر جانبي موثق يُحظر عكسه — عكس GL
+  // وحده كان يترك أرصدة الخزائن/العملاء/الموردين تتقادم.
+  describe('ACC-2 — حظر عكس قيد بلا أثر جانبي موثق', () => {
+    it('يرمي 409 ولا يعلّم القيد معكوسًا ولا ينشئ قيدًا عكسيًا', async () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.$transaction.mockImplementation(
+        (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+      );
+      // قيد تراثي: metadata تخزّن نوع الطرف فقط (نمط ما قبل ACC-2).
+      prisma.journalEntry.findUnique.mockResolvedValue({
+        id: 'je-legacy',
+        code: 'JE-LEGACY',
+        createdAt: new Date('2026-08-26T00:00:00.000Z'),
+        isReversed: false,
+        metadata: { source: 'accounting.voucher', counterpartyType: 'WORKER' },
+        lines: [
+          {
+            debitAccountId: 'advances-account',
+            creditAccountId: 'cash-account',
+            amount: 100,
+            description: 'سلفة قديمة',
+          },
+        ],
+      });
+
+      await expect(
+        service.reverseJournalEntry('je-legacy', 'user-2', 'عكس قديم'),
+      ).rejects.toThrow('لا يمكن عكس قيد JE-LEGACY بلا أثر جانبي موثق');
+
+      expect(prisma.journalEntry.updateMany).not.toHaveBeenCalled();
+      expect(prisma.journalEntry.create).not.toHaveBeenCalled();
+      expect(prisma.journalEntry.update).not.toHaveBeenCalled();
+    });
+
+    it('يرفض أيضًا قيدًا بلا metadata إطلاقًا', async () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.$transaction.mockImplementation(
+        (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+      );
+      prisma.journalEntry.findUnique.mockResolvedValue({
+        id: 'je-bare',
+        code: 'JE-BARE',
+        createdAt: new Date('2026-08-26T00:00:00.000Z'),
+        isReversed: false,
+        metadata: null,
+        lines: [
+          {
+            debitAccountId: 'advances-account',
+            creditAccountId: 'cash-account',
+            amount: 100,
+            description: null,
+          },
+        ],
+      });
+
+      await expect(
+        service.reverseJournalEntry('je-bare', 'user-2'),
+      ).rejects.toThrow('بلا أثر جانبي موثق');
+      expect(prisma.journalEntry.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // PRD-5 (W2-3 — إنتاج): مسار الإنتاج يمرر Prisma.Decimal من مصدره —
+  // يجب أن يصل المبلغ إلى journal_lines وتحديثات أرصدة الحسابات Decimal
+  // كما هو (بلا toNumber/تحلل عائم)، مع بقاء لقطة metadata أرقامًا.
+  describe('PRD-5 — مبالغ Decimal في سلسلة الترحيل', () => {
+    it('يكتب بند القيد وزيادة الرصيد Decimal كما وردت دون تحلل عائم', async () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'fg-account', isActive: true, isGroup: false },
+        { id: 'wip-account', isActive: true, isGroup: false },
+      ]);
+      prisma.journalEntry.create.mockResolvedValue({
+        id: 'je-prd5',
+        code: 'JE-PRD5',
+        createdAt: new Date('2026-09-06T00:00:00.000Z'),
+      });
+
+      const result = await service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'ترحيل إنتاج تام من أمر تشغيل #WO-1',
+          postingKey: 'production-completion:wo-1',
+          isAuto: true,
+          lines: [
+            {
+              debitAccountId: 'fg-account',
+              creditAccountId: 'wip-account',
+              amount: new Prisma.Decimal('150.55'),
+            },
+          ],
+        },
+        'user-1',
+      );
+
+      // البند يُكتب بالقيمة الأصلية (Decimal) — نفس الكائن دقةً
+      const createCalls = prisma.journalEntry.create.mock.calls as unknown as [
+        [
+          {
+            data: {
+              lines: {
+                create: Array<{
+                  amount: number | Prisma.Decimal;
+                }>;
+              };
+            };
+          },
+        ],
+      ];
+      const writtenAmount = createCalls[0][0].data.lines.create[0]
+        .amount as Prisma.Decimal;
+      expect(Prisma.Decimal.isDecimal(writtenAmount)).toBe(true);
+      expect(writtenAmount.eq(150.55)).toBe(true);
+      expect(writtenAmount.toString()).toBe('150.55');
+
+      // زيادات أرصدة الحسابات Decimal — لا تحلل عائم في السلسلة
+      const accountUpdates = (
+        prisma.account.update.mock.calls as unknown as [
+          [
+            {
+              where: { id: string };
+              data: { balance: { increment: unknown } };
+            },
+          ],
+        ]
+      ).map((call) => call[0]);
+      expect(accountUpdates).toHaveLength(2);
+      for (const update of accountUpdates) {
+        expect(Prisma.Decimal.isDecimal(update.data.balance.increment)).toBe(
+          true,
+        );
+      }
+      const fgUpdate = accountUpdates.find((u) => u.where.id === 'fg-account');
+      const wipUpdate = accountUpdates.find(
+        (u) => u.where.id === 'wip-account',
+      );
+      expect(
+        (fgUpdate?.data.balance.increment as Prisma.Decimal).eq(150.55),
+      ).toBe(true);
+      expect(
+        (wipUpdate?.data.balance.increment as Prisma.Decimal).eq(-150.55),
+      ).toBe(true);
+
+      // المجاميع في الاستجابة مطابقة للقيمة الدقيقة
+      expect(result.totalDebit).toBe(150.55);
+      expect(result.totalCredit).toBe(150.55);
     });
   });
 });

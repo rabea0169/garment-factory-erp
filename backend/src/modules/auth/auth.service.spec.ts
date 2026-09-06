@@ -1,33 +1,39 @@
 /* eslint-disable @typescript-eslint/no-unsafe-assignment */
-import { BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  HttpException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import { Prisma } from '@prisma/client';
 
 /** SEC-F04: sha256 helper متطابق مع الذراعي في auth.service.ts */
 function hashToken(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+/** مستخدم أساسي مشترك بين كل المجموعات */
+const baseUser = {
+  id: 'u-1',
+  name: 'المدير العام',
+  email: 'admin@factory.com',
+  phone: '01000000000',
+  role: 'SUPER_ADMIN' as const,
+  isActive: true,
+  jwtVersion: 0,
+  createdAt: new Date(),
+  updatedAt: new Date(),
+};
+
 describe('AuthService — سلوك تسجيل الدخول (GF-0003 + SEC-F04)', () => {
   let service: AuthService;
   let prisma: ReturnType<typeof createPrismaMock>;
   let jwtService: { sign: jest.Mock };
-
-  const baseUser = {
-    id: 'u-1',
-    name: 'المدير العام',
-    email: 'admin@factory.com',
-    phone: '01000000000',
-    role: 'SUPER_ADMIN' as const,
-    isActive: true,
-    jwtVersion: 0,
-    createdAt: new Date(),
-    updatedAt: new Date(),
-  };
 
   beforeEach(() => {
     prisma = createPrismaMock();
@@ -208,7 +214,9 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
     // AUTH-2: الشرط الذري (revoked_at IS NULL) لا يطابق صفًا ملغى مسبقًا
     prisma.$executeRaw.mockResolvedValue(0);
     await expect(service.refresh(raw)).rejects.toThrow(UnauthorizedException);
-    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    // AUTH-3: استدعاءان لـ $executeRaw — الأول دوران AUTH-2 الفاشل، والثاني
+    // إبطال عائلة السلسلة (يعمل ضمن معاملة المتابعة القصيرة)
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
   });
 
   it('AUTH-2: يرفض سباق استخدام متزامن لنفس التوكن (executeRaw يعيد 0) بـ 401', async () => {
@@ -407,5 +415,400 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
     );
     expect(result.revoked).toBe(false);
     expect(result.reason).toBe('not_found');
+  });
+});
+
+describe('AuthService — AUTH-3: إبطال عائلة الجلسة عند إعادة استخدام رمز ملغى', () => {
+  let service: AuthService;
+  let prisma: ReturnType<typeof createPrismaMock>;
+  let jwtService: { sign: jest.Mock };
+
+  /** يضبط findUnique ليرجع رمزًا يبدو صالحًا عند القراءة، لكن التحديث الشرطي
+   * سيرجع 0 صفوف (ملغى فعليًا — مصدر الحقيقة هو WHERE revoked_at IS NULL) */
+  function mockReusedToken() {
+    (
+      prisma.refreshToken as { findUnique: jest.Mock }
+    ).findUnique.mockResolvedValue({
+      id: 'rt-reused',
+      userId: 'u-1',
+      tokenHash: 'whatever',
+      expiresAt: new Date(Date.now() + 86400_000),
+      revokedAt: null,
+      user: {
+        id: 'u-1',
+        name: 'مدير',
+        email: 'admin@factory.com',
+        role: 'SUPER_ADMIN',
+        isActive: true,
+        jwtVersion: 0,
+        password: 'x',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+  }
+
+  beforeEach(() => {
+    prisma = createPrismaMock();
+    jwtService = { sign: jest.fn().mockReturnValue('access-token') };
+    (prisma.refreshToken as { create: jest.Mock }).create.mockResolvedValue({
+      id: 'rt-new-1',
+      userId: 'u-1',
+      tokenHash: 'hash',
+      expiresAt: new Date(Date.now() + 30 * 86400_000),
+    });
+    // معاملة تفاعلية: callback يُشغَّل بتمرير prisma نفسها كعميل tx
+    (prisma as { $transaction: jest.Mock }).$transaction.mockImplementation(
+      (arg: unknown) => {
+        if (typeof arg === 'function') {
+          return (arg as (tx: unknown) => Promise<unknown>)(prisma);
+        }
+        return Promise.resolve(arg ?? []);
+      },
+    );
+    prisma.$executeRaw.mockResolvedValue(1);
+    prisma.user.update.mockResolvedValue({ jwtVersion: 1 });
+    prisma.activityLog.create.mockResolvedValue(undefined);
+    service = new AuthService(
+      prisma as unknown as PrismaService,
+      jwtService as unknown as JwtService,
+    );
+  });
+
+  it('إعادة استخدام رمز ملغى → إبطال العائلة + رفع jwtVersion + سجل تدقيق + 401', async () => {
+    mockReusedToken();
+    // التحديث الشرطي: صفر صفوف = الرمز ملغى مسبقًا (إشارة سرقة)
+    prisma.$executeRaw.mockResolvedValue(0);
+    const meta = { ip: '9.9.9.9', userAgent: 'UA-Test' };
+
+    await expect(service.refresh('a'.repeat(96), meta)).rejects.toThrow(
+      UnauthorizedException,
+    );
+
+    // استدعاءان لـ $executeRaw: دوران AUTH-2 (فشل) ثم إبطال العائلة
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(2);
+    const [familySql, familyHeadId] = prisma.$executeRaw.mock.calls[1];
+    expect(String(familySql)).toContain('WITH RECURSIVE');
+    expect(String(familySql)).toContain('replaced_by_id');
+    // رأس السلسلة هو الرمز الملغى المُعاد استخدامه نفسه
+    expect(String(familyHeadId)).toBe('rt-reused');
+
+    // رفع jwtVersion يبطل كل access tokens الصادرة للمستخدم
+    expect(prisma.user.update).toHaveBeenCalledWith({
+      where: { id: 'u-1' },
+      data: { jwtVersion: { increment: 1 } },
+    });
+
+    // سجل التدقيق الأمني — ip في ipAddress و userAgent في details
+    // (نموذج ActivityLog لا يملك عمود userAgent — موثق في الخدمة)
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'u-1',
+          action: 'REFRESH_TOKEN_REUSE_DETECTED',
+          module: 'AUTH',
+          ipAddress: '9.9.9.9',
+          details: expect.objectContaining({
+            refreshTokenId: 'rt-reused',
+            userAgent: 'UA-Test',
+          }),
+        }),
+      }),
+    );
+  });
+
+  it('فشل إبطال العائلة (عطل قاعدة) لا يحجب 401 الأمني — best-effort', async () => {
+    mockReusedToken();
+    prisma.$executeRaw.mockResolvedValue(0);
+    prisma.activityLog.create.mockRejectedValue(new Error('db down'));
+    await expect(service.refresh('a'.repeat(96))).rejects.toThrow(
+      UnauthorizedException,
+    );
+  });
+
+  it('دوران سليم لا يطلق إبطال العائلة ولا السجل ولا رفع jwtVersion', async () => {
+    mockReusedToken();
+    prisma.$executeRaw.mockResolvedValue(1);
+    await service.refresh('a'.repeat(96));
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+  });
+});
+
+describe('AuthService — AUTH-4: قفل محاولات الدخول الفاشلة + سجل التدقيق', () => {
+  let service: AuthService;
+  let prisma: ReturnType<typeof createPrismaMock>;
+  let jwtService: { sign: jest.Mock };
+  let validUser: typeof baseUser & { password: string };
+  let nowMs: number;
+  let dateNowSpy: jest.SpyInstance;
+
+  const EMAIL = 'admin@factory.com';
+  const baseTime = 1_750_000_000_000;
+
+  beforeEach(async () => {
+    prisma = createPrismaMock();
+    jwtService = { sign: jest.fn().mockReturnValue('signed-jwt-token') };
+    validUser = { ...baseUser, password: await bcrypt.hash('Pass@123', 4) };
+    prisma.user.findUnique.mockResolvedValue(validUser);
+    (prisma.refreshToken as { create: jest.Mock }).create.mockResolvedValue({
+      id: 'rt-1',
+      userId: 'u-1',
+      tokenHash: 'hash',
+      expiresAt: new Date(Date.now() + 30 * 86400_000),
+    });
+    prisma.activityLog.create.mockResolvedValue(undefined);
+    service = new AuthService(
+      prisma as unknown as PrismaService,
+      jwtService as unknown as JwtService,
+    );
+    nowMs = baseTime;
+    dateNowSpy = jest.spyOn(Date, 'now').mockImplementation(() => nowMs);
+  });
+
+  afterEach(() => {
+    dateNowSpy.mockRestore();
+  });
+
+  it('بعد 5 محاولات فاشلة خلال 15 دقيقة → القفل يعيد 429 حتى بكلمة المرور الصحيحة', async () => {
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        service.login({ email: EMAIL, password: 'Wrong@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+      nowMs += 60_000; // محاولات متباعدة دقيقة — كلها داخل نافذة الـ 15 دقيقة
+    }
+    const error = await service
+      .login({ email: EMAIL, password: 'Pass@123' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getStatus()).toBe(429);
+    expect((error as HttpException).message).toContain(
+      'محاولات الدخول الفاشلة',
+    );
+    // فحص القفل يسبق أي وصول للقاعدة — المحاولة السادسة لم تبحث عن المستخدم
+    expect(prisma.user.findUnique).toHaveBeenCalledTimes(5);
+  });
+
+  it('النجاح يصفّر العداد — 4 إخفاقات ثم نجاح ثم 4 إخفاقات لا تقفل', async () => {
+    for (let i = 0; i < 4; i++) {
+      await expect(
+        service.login({ email: EMAIL, password: 'Wrong@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+    }
+    await service.login({ email: EMAIL, password: 'Pass@123' });
+    for (let i = 0; i < 4; i++) {
+      await expect(
+        service.login({ email: EMAIL, password: 'Wrong@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+    }
+    const result = await service.login({ email: EMAIL, password: 'Pass@123' });
+    expect(result.access_token).toBe('signed-jwt-token');
+  });
+
+  it('انتهاء مدة القفل (15 دقيقة) يفتح الدخول من جديد', async () => {
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        service.login({ email: EMAIL, password: 'Wrong@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+    }
+    nowMs += 16 * 60_000; // القفل المؤقت 15 دقيقة انقضى
+    const result = await service.login({ email: EMAIL, password: 'Pass@123' });
+    expect(result.access_token).toBe('signed-jwt-token');
+  });
+
+  it('انقضاء نافذة الـ 15 دقيقة يبدأ عدًّا جديدًا (المحاولات القديمة لا تتراكم)', async () => {
+    for (let i = 0; i < 4; i++) {
+      await expect(
+        service.login({ email: EMAIL, password: 'Wrong@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+    }
+    nowMs += 16 * 60_000; // النافذة انقضت قبل المحاولة الخامسة
+    await expect(
+      service.login({ email: EMAIL, password: 'Wrong@123' }),
+    ).rejects.toThrow(UnauthorizedException);
+    // المحاولة التالية بكلمة صحيحة غير مقفلة — العداد 1 في نافذة جديدة
+    const result = await service.login({ email: EMAIL, password: 'Pass@123' });
+    expect(result.access_token).toBe('signed-jwt-token');
+  });
+
+  it('القفل مفاتيحه البريد — إخفاقات بريدٍ لا تقفل بريدًا آخر', async () => {
+    prisma.user.findUnique.mockImplementation(
+      ({ where }: { where: { email: string } }) =>
+        where.email === EMAIL
+          ? Promise.resolve(validUser)
+          : Promise.resolve(null),
+    );
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        service.login({ email: EMAIL, password: 'Wrong@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+    }
+    // بريد آخر لم يتأثر بقفل البريد الأول — 401 (وليس 429)
+    await expect(
+      service.login({ email: 'ghost@factory.com', password: 'Wrong@123' }),
+    ).rejects.toThrow(UnauthorizedException);
+    const error = await service
+      .login({ email: 'ghost@factory.com', password: 'Wrong@123' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(UnauthorizedException);
+    expect((error as UnauthorizedException).getStatus()).toBe(401);
+  });
+
+  it('يكتب LOGIN_FAILED عند كلمة مرور خاطئة (بريد + IP — بلا كلمة مرور أبدًا)', async () => {
+    await expect(
+      service.login(
+        { email: EMAIL, password: 'Wrong@123' },
+        { ip: '8.8.8.8', userAgent: 'UA-Login' },
+      ),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(prisma.activityLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'u-1',
+          action: 'LOGIN_FAILED',
+          module: 'AUTH',
+          ipAddress: '8.8.8.8',
+          details: expect.objectContaining({
+            email: EMAIL,
+            reason: 'bad_password',
+          }),
+        }),
+      }),
+    );
+    // أمان: لا كلمة مرور في أي مكان داخل حِمل السجل
+    const recordedPayload = JSON.stringify(
+      prisma.activityLog.create.mock.calls,
+    );
+    expect(recordedPayload).not.toContain('Wrong@123');
+  });
+
+  it('يكتب LOGIN_FAILED لمستخدم موقوف (reason=inactive)', async () => {
+    prisma.user.findUnique.mockResolvedValue({ ...validUser, isActive: false });
+    await expect(
+      service.login({ email: EMAIL, password: 'Pass@123' }, { ip: '8.8.8.8' }),
+    ).rejects.toThrow(UnauthorizedException);
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'LOGIN_FAILED',
+          details: expect.objectContaining({ reason: 'inactive' }),
+        }),
+      }),
+    );
+  });
+
+  it('يكتب LOGIN_SUCCEEDED عند الدخول الناجح', async () => {
+    await service.login(
+      { email: EMAIL, password: 'Pass@123' },
+      { ip: '7.7.7.7' },
+    );
+    expect(prisma.activityLog.create).toHaveBeenCalledTimes(1);
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'u-1',
+          action: 'LOGIN_SUCCEEDED',
+          module: 'AUTH',
+          ipAddress: '7.7.7.7',
+          details: expect.objectContaining({ email: EMAIL }),
+        }),
+      }),
+    );
+    // أمان: لا كلمة مرور في أي مكان داخل حِمل السجل
+    const recordedPayload = JSON.stringify(
+      prisma.activityLog.create.mock.calls,
+    );
+    expect(recordedPayload).not.toContain('Pass@123');
+  });
+
+  it('بريد غير موجود: 401 بلا سجل تدقيق (userId إلزامي FK) لكن المحاولات تُعدّ للقفل', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    for (let i = 0; i < 5; i++) {
+      await expect(
+        service.login({ email: 'ghost@factory.com', password: 'Pass@123' }),
+      ).rejects.toThrow(UnauthorizedException);
+    }
+    // لا صف ActivityLog — لا مستخدم تشير إليه FK userId (قيد النموذج، موثق)
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    const error = await service
+      .login({ email: 'ghost@factory.com', password: 'Pass@123' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(HttpException);
+    expect((error as HttpException).getStatus()).toBe(429);
+  });
+});
+
+describe('AuthService — AUTH-5: إعادة المحاولة عند P2002 فقط وبحد أقصى 3', () => {
+  let service: AuthService;
+  let prisma: ReturnType<typeof createPrismaMock>;
+  let jwtService: { sign: jest.Mock };
+
+  const LOGIN = { email: 'admin@factory.com', password: 'Pass@123' };
+
+  beforeEach(async () => {
+    prisma = createPrismaMock();
+    jwtService = { sign: jest.fn().mockReturnValue('signed-jwt-token') };
+    prisma.user.findUnique.mockResolvedValue({
+      ...baseUser,
+      password: await bcrypt.hash('Pass@123', 4),
+    });
+    prisma.activityLog.create.mockResolvedValue(undefined);
+    service = new AuthService(
+      prisma as unknown as PrismaService,
+      jwtService as unknown as JwtService,
+    );
+  });
+
+  it('خطأ غير P2002 يُعاد رميه فورًا بلا إعادة محاولة', async () => {
+    const boom = new Error('connection reset');
+    (prisma.refreshToken as { create: jest.Mock }).create.mockRejectedValue(
+      boom,
+    );
+    await expect(service.login(LOGIN)).rejects.toThrow('connection reset');
+    expect(
+      (prisma.refreshToken as { create: jest.Mock }).create,
+    ).toHaveBeenCalledTimes(1);
+  });
+
+  it('P2002 يُعاد توليد التوكن والمحاولة حتى النجاح', async () => {
+    const collision = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed on the fields: (`token_hash`)',
+      { code: 'P2002', clientVersion: 'test' },
+    );
+    (prisma.refreshToken as { create: jest.Mock }).create
+      .mockRejectedValueOnce(collision)
+      .mockResolvedValueOnce({
+        id: 'rt-2',
+        userId: 'u-1',
+        tokenHash: 'h2',
+        expiresAt: new Date(),
+      });
+    const result = await service.login(LOGIN);
+    expect(result.refresh_token.length).toBeGreaterThanOrEqual(32);
+    expect(
+      (prisma.refreshToken as { create: jest.Mock }).create,
+    ).toHaveBeenCalledTimes(2);
+    // المحاولة الثانية بتوكن خام جديد (hash مختلف — أُعيد توليده)
+    const createCalls = (prisma.refreshToken as { create: jest.Mock }).create
+      .mock.calls as unknown as Array<Array<{ data: { tokenHash: string } }>>;
+    expect(createCalls[1][0].data.tokenHash).not.toBe(
+      createCalls[0][0].data.tokenHash,
+    );
+  });
+
+  it('P2002 المستمر يتوقف بعد 3 محاولات ويُرمى الخطأ كما هو', async () => {
+    const collision = new Prisma.PrismaClientKnownRequestError(
+      'Unique constraint failed on the fields: (`token_hash`)',
+      { code: 'P2002', clientVersion: 'test' },
+    );
+    (prisma.refreshToken as { create: jest.Mock }).create.mockRejectedValue(
+      collision,
+    );
+    await expect(service.login(LOGIN)).rejects.toBe(collision);
+    expect(
+      (prisma.refreshToken as { create: jest.Mock }).create,
+    ).toHaveBeenCalledTimes(3);
   });
 });

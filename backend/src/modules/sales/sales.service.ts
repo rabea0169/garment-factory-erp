@@ -31,12 +31,17 @@ import {
   storeIdempotencyResponse,
   tryReplayIdempotencyKey,
 } from '../../core/common/idempotency.util';
+import { round2 } from '../../core/common/money.util';
 
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CREATE = 'sales-order-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM = 'sales-order-confirm';
 const IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE = 'customer-payment-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL = 'sales-order-cancel';
 const IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE = 'sales-return-create';
+// SAL-4 (ب): نطاق مستقل لمفتاح سند القبض الآلي للبيع الفوري — مفتاح مشتق
+// ثابت (sales-confirm-cash:<orderId>) يمنع إنشاء السند مرتين مهما كانت
+// مفاتيح التأكيد الخارجية.
+const IDEMPOTENCY_SCOPE_SALES_CONFIRM_CASH = 'sales-confirm-cash';
 
 type CustomerPaymentInput = {
   customerId: string;
@@ -421,6 +426,17 @@ export class SalesService {
           );
         }
 
+        // SAL-3 (أ): قراءة بنود COGS من metadata قيد تأكيد البيع
+        // (postingKey = sales-confirm:<orderId>) — التكلفة «كما بيعت بها»
+        // لا التكلفة الحالية (التي تتغير مع كل استلام/إصدار لاحق).
+        const confirmEntry = await tx.journalEntry.findUnique({
+          where: { postingKey: `sales-confirm:${orderId}` },
+          select: { metadata: true },
+        });
+        const cogsByVariant = parseCogsLinesMetadata(
+          confirmEntry?.metadata ?? null,
+        );
+
         const previousReturns = await tx.salesReturnItem.findMany({
           where: { salesOrderItem: { salesOrderId: orderId } },
           select: { salesOrderItemId: true, quantity: true },
@@ -477,7 +493,12 @@ export class SalesService {
             },
             select: { unitCost: true },
           });
-          const unitCost = Number(stock?.unitCost ?? 0);
+          // SAL-3 (أ): أولوية تكلفة metadata (كما بيعت)، ثم التكلفة الحالية
+          // عند غيابها (أوامر قديمة قبل التخزين) — الصفر ملاذ أخير فقط عند
+          // غياب أي مصدر للتكلفة (كان الافتراضي الأصلي).
+          const metadataCost = cogsByVariant.get(orderItem.productVariantId);
+          const currentCost = stock ? Number(stock.unitCost) : undefined;
+          const unitCost = metadataCost ?? currentCost ?? 0;
           await this.inventoryService.receiveFinishedGood(
             {
               productVariantId: orderItem.productVariantId,
@@ -503,8 +524,20 @@ export class SalesService {
           });
         }
 
+        // SAL-3 (ب): ضريبة المرتجع على الصافي بنسبة الخصم الفعلية للأمر —
+        // الأصل (computeVat في createSalesOrder) حسب VAT على
+        // (subtotal − discount)، فالمرتجع يطبّق نفس النسبة على قيمة البضاعة
+        // المرتجعة بدل حسابها على القيمة الإجمالية قبل الخصم.
+        // قيمة البضاعة المرتجعة نفسها تبقى بسعر بيع البند الأصلي (سياسة قائمة).
+        const orderSubtotal = Number(order.subtotal ?? 0);
+        const orderDiscount = Number(order.discount ?? 0);
+        const netRatio =
+          orderSubtotal > 0
+            ? Math.max(0, orderSubtotal - orderDiscount) / orderSubtotal
+            : 1;
+        const returnTaxableBase = round2(merchandiseAmount * netRatio);
         const vatAmount = round2(
-          merchandiseAmount * Number(order.vatRate ?? 0),
+          returnTaxableBase * Number(order.vatRate ?? 0),
         );
         const refundAmount = round2(merchandiseAmount + vatAmount);
         const cashRefund = Math.min(Number(order.paidAmount), refundAmount);
@@ -598,6 +631,25 @@ export class SalesService {
           },
           input.actorId,
         );
+        // SAL-2: سجل تدقيق لإنشاء المرتجع — داخل نفس معاملة المرتجع
+        // (المجاميع الجوهرية + الفاعل) حتى لا يُفقد الأثر عند التدقيق لاحقًا.
+        await tx.activityLog.create({
+          data: {
+            userId: input.actorId,
+            action: 'RETURN_CREATED',
+            module: 'SALES',
+            details: {
+              salesReturnId: created.id,
+              code: created.code,
+              salesOrderId: order.id,
+              refundAmount,
+              vatAmount,
+              merchandiseAmount: round2(merchandiseAmount),
+              cogsAmount: round2(cogsAmount),
+              itemsCount: returnItems.length,
+            },
+          },
+        });
         await storeIdempotencyResponse(tx, idempotencyKey, created);
         return created;
       });
@@ -639,7 +691,13 @@ export class SalesService {
         );
         const order = await tx.salesOrder.findUnique({
           where: { id: orderId },
-          select: { id: true, status: true },
+          select: {
+            id: true,
+            status: true,
+            code: true,
+            totalAmount: true,
+            paidAmount: true,
+          },
         });
         if (!order) throw new NotFoundException('أمر البيع غير موجود');
         if (order.status !== SalesOrderStatus.DRAFT) {
@@ -657,6 +715,21 @@ export class SalesService {
         const cancelled = await tx.salesOrder.findUniqueOrThrow({
           where: { id: orderId },
           include: { items: true },
+        });
+        // SAL-2: سجل تدقيق للإلغاء — داخل نفس معاملة الإلغاء (DRAFT فقط
+        // فلا آثار مالية/مخزون تُعكس؛ السجل يوثق المجاميع والفاعل).
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: 'SALES_ORDER_CANCELLED',
+            module: 'SALES',
+            details: {
+              salesOrderId: orderId,
+              code: order.code,
+              totalAmount: Number(order.totalAmount ?? 0),
+              paidAmount: Number(order.paidAmount ?? 0),
+            },
+          },
         });
         await storeIdempotencyResponse(tx, idempotencyKey, cancelled);
         return cancelled;
@@ -863,6 +936,13 @@ export class SalesService {
             'لا يمكن تأكيد إلا أمر بيع بحالة DRAFT',
           );
         }
+        // SAL-4 (أ): فصل واجبات — منشئ أمر البيع لا يعتمده بنفسه (نفس نمط
+        // COMM-F02 في رواتب approvePayroll). userId على أمر البيع هو منشئه.
+        if (order.userId && order.userId === userId) {
+          throw new ConflictException(
+            'لا يمكن لمنشئ أمر البيع اعتماده بنفسه (فصل الواجبات)',
+          );
+        }
         const fgWarehouse = await tx.warehouse.findFirst({
           where: {
             code: 'WH-FG',
@@ -923,7 +1003,24 @@ export class SalesService {
           throw new ConflictException('تم تغيير أمر البيع بالتزامن');
 
         let totalCogs = 0;
+        // SAL-3 (أ): التقاط تكلفة الوحدة لكل بند من نفس أرصدة مخزن المنتج
+        // التام التي سيصرف منها bulkIssueFinishedGoods داخل نفس المعاملة —
+        // تُخزّن في metadata قيد التأكيد ليقرأها مرتجع البيع لاحقًا.
+        const cogsByVariant = new Map<string, number>();
         if (order.items.length > 0) {
+          const cogsStocks =
+            (await tx.finishedGoodStock.findMany({
+              where: {
+                warehouseId: fgWarehouse.id,
+                productVariantId: {
+                  in: order.items.map((item) => item.productVariantId),
+                },
+              },
+              select: { productVariantId: true, unitCost: true },
+            })) ?? [];
+          for (const stock of cogsStocks) {
+            cogsByVariant.set(stock.productVariantId, Number(stock.unitCost));
+          }
           // PERF-F02: bulk-issue finished goods in 3 queries instead of 3N.
           // The old code did `for (const item of order.items) await issueFinishedGood(...)`,
           // which on a 10-item order ran 31 sequential round-trips inside the tx.
@@ -989,6 +1086,15 @@ export class SalesService {
             metadata: {
               source: 'sales.confirm',
               salesOrderId: order.id,
+              // SAL-3 (أ): بنود COGS بالتكلفة الفعلية المستخدمة عند البيع —
+              // يقرؤها createSalesReturn لاحقًا ليعكس التكلفة «كما بيعت»
+              // لا التكلفة الحالية (تُكتب هنا لأن postJournalEntryInTx
+              // يقبل metadata ويخزنها على قيد اليومية).
+              cogsLines: order.items.map((item) => ({
+                variantId: item.productVariantId,
+                quantity: item.quantity,
+                costPerUnit: cogsByVariant.get(item.productVariantId) ?? 0,
+              })),
               ...(order.paymentType === PaymentType.CASH
                 ? {}
                 : {
@@ -1013,9 +1119,62 @@ export class SalesService {
           userId,
         );
 
+        // SAL-4 (ب): سند قبض (CustomerPayment) آلي للبيع الفوري داخل معاملة
+        // التأكيد. الأثر المالي نفسه مرحّل أعلاه في قيد التأكيد (Dr CASH)،
+        // فهذا السند توثيقي يربط الدفع بالأمر — بمفتاح idempotency مشتق ثابت
+        // (sales-confirm-cash:<orderId>) يمنع إنشاء السند مرتين حتى لو أُعيد
+        // التأكيد بمفاتيح خارجية مختلفة (قلب الحالة إلى CONFIRMED هو الحارس
+        // الأول، والمفتاح المشتق حارس ثانٍ داخل المعاملة).
+        if (order.paymentType === PaymentType.CASH) {
+          const cashPaymentKey = `sales-confirm-cash:${order.id}`;
+          const cashRequestHash = computeRequestHash({
+            operation: IDEMPOTENCY_SCOPE_SALES_CONFIRM_CASH,
+            orderId: order.id,
+            amount: Number(order.totalAmount),
+          });
+          await createIdempotencyKey(
+            tx,
+            cashPaymentKey,
+            IDEMPOTENCY_SCOPE_SALES_CONFIRM_CASH,
+            cashRequestHash,
+          );
+          const cashPayment = await tx.customerPayment.create({
+            data: {
+              customerId: order.customerId,
+              salesOrderId: order.id,
+              amount: Number(order.totalAmount),
+              notes: `سند قبض آلي للبيع الفوري — أمر ${order.code}`,
+            },
+          });
+          await storeIdempotencyResponse(tx, cashPaymentKey, {
+            customerPaymentId: cashPayment?.id,
+            salesOrderId: order.id,
+            amount: Number(order.totalAmount),
+          });
+        }
+
         const confirmedOrder = await tx.salesOrder.findUniqueOrThrow({
           where: { id: orderId },
           include: { items: true },
+        });
+        // SAL-2: سجل تدقيق للتأكيد — داخل نفس معاملة التأكيد بعد نجاح كل
+        // الآثار (صرف المخزون + القيد + سند القبض عند CASH).
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: 'SALES_ORDER_CONFIRMED',
+            module: 'SALES',
+            details: {
+              salesOrderId: order.id,
+              code: order.code,
+              customerId: order.customerId,
+              paymentType: order.paymentType,
+              totalAmount: Number(order.totalAmount ?? 0),
+              vatAmount: Number(order.vatAmount ?? 0),
+              cogsTotal: round2(totalCogs),
+              cashPayment: order.paymentType === PaymentType.CASH,
+            },
+          },
         });
         await storeIdempotencyResponse(tx, idempotencyKey, confirmedOrder);
         return confirmedOrder;
@@ -1035,6 +1194,36 @@ export class SalesService {
   }
 }
 
-function round2(value: number): number {
-  return Math.round((value + Number.EPSILON) * 100) / 100;
+/**
+ * SAL-3 (أ): استخراج بنود COGS من metadata قيد تأكيد البيع
+ * (postingKey = sales-confirm:<orderId>). البنود كُتبت في confirmOrder
+ * بالتكلفة الفعلية المستخدمة عند البيع لكل variant — الدالة تتحقق من الشكل
+ * (variantId نص + costPerUnit رقم منتهٍ غير سالب) قبل القبول.
+ */
+function parseCogsLinesMetadata(
+  metadata: Prisma.JsonValue | null,
+): Map<string, number> {
+  const costs = new Map<string, number>();
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return costs;
+  }
+  const lines = (metadata as { cogsLines?: unknown }).cogsLines;
+  if (!Array.isArray(lines)) {
+    return costs;
+  }
+  for (const line of lines) {
+    if (typeof line !== 'object' || line === null) {
+      continue;
+    }
+    const candidate = line as { variantId?: unknown; costPerUnit?: unknown };
+    if (
+      typeof candidate.variantId === 'string' &&
+      typeof candidate.costPerUnit === 'number' &&
+      Number.isFinite(candidate.costPerUnit) &&
+      candidate.costPerUnit >= 0
+    ) {
+      costs.set(candidate.variantId, candidate.costPerUnit);
+    }
+  }
+  return costs;
 }

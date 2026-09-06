@@ -777,6 +777,13 @@ model WorkerAdvance {
   amount   Decimal  @db.Decimal(10, 2)
   date     DateTime @default(now())
   notes    String?
+  // HR-2 (P1 — GF-IMP-W2): الذاكرة الجماعية لتسوية السلف. المتبقي غير
+  // المسوى = amount - settledAmount، وهو وحده الذي يدخل حساب خصم السلف
+  // في createPayroll (لا الخصم من المبلغ الأصلي كل مرة). يوزَّع الخصم
+  // فعليًا على السلف FIFO داخل معاملة payPayroll (settledAmount += المخصص
+  // بحد amount) — سلفة بلغت settledAmount == amount مسوية بالكامل ولا
+  // تُخصم مرة أخرى. الهجرة: 20260906100000_wave2_unified.
+  settledAmount Decimal @default(0) @db.Decimal(10, 2) @map("settled_amount")
 
   worker Worker @relation(fields: [workerId], references: [id])
 
@@ -952,6 +959,7 @@ model CustomerPayment {
 enum PurchaseOrderStatus {
   DRAFT
   PENDING
+  APPROVED
   RECEIVED
   CANCELLED
 }
@@ -1087,6 +1095,7 @@ model SupplierPayment {
 
 enum ShipmentStatus {
   PREPARING
+  CANCELLED
   SHIPPED
   IN_TRANSIT
   DELIVERED
@@ -1123,7 +1132,7 @@ model Shipment {
   salesOrder      SalesOrder       @relation(fields: [salesOrderId], references: [id])
   deliveredBy     User?            @relation("ShipmentDeliverer", fields: [deliveredById], references: [id], onDelete: SetNull)
   shippingCompany ShippingCompany? @relation(fields: [shippingCompanyId], references: [id])
-  idempotencyKey  IdempotencyKey?  @relation(fields: [idempotencyKeyId], references: [id])
+  idempotencyKey  IdempotencyKey?  @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull) // GF-IMP-W2 / INF-8: توحيد نمط التنظيف على SetNull
 
   @@index([deliveredById])
   @@index([salesOrderId])

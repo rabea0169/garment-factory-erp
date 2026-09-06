@@ -137,10 +137,36 @@ export class ProductionWorkflowService {
 
     try {
       const result = await this.prisma.$transaction(async (tx) => {
+        // PRD-3: قفل صف أمر العمل طوال المعاملة (SELECT ... FOR UPDATE
+        // على الجدول الفعلي "work_orders" من الهجرات). بدون القفل يمكن
+        // لطلبي انتقال متزامنين لنفس الأمر أن يجتازا فحص تسلسل المراحل على
+        // نفس currentStage ثم يكتب كلاهما stage-run/انتقالًا — الخاسر
+        // يكسر قيد (workOrderId, stage) أو (workOrderId, sequence) الفريد
+        // بخطأ P2002 خام يظهر 500. القفل يُسلسل الانتقالات على نفس الأمر
+        // ويُقرأ الأمر بعده فيرى آخر حالة مُلتزمة (لا نسخة ما قبل القفل).
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM work_orders WHERE id = ${input.workOrderId} FOR UPDATE`,
+        );
         const workOrder = await tx.workOrder.findUnique({
           where: { id: input.workOrderId },
         });
         if (!workOrder) throw new NotFoundException('Work order not found');
+
+        // PRD-3: فحص إعادة التشغيل تحت القفل بعد قراءة آخر حالة ملزمة —
+        // الطلب المتزامن الثاني ينتظر القفل ثم يجد انتقال الأول ملتزمًا
+        // بمفتاحه فيعيده (replayed) بدل أن يكمل إلى فحص تسلسل المراحل ويرفض
+        // برسالة انتقال غير صالحة (كان يحدث قبل القفل حين يقرأ كلاهما
+        // currentStage نفسه قبل التزام أيٍّ منهما). ملاحظة: نستخدم
+        // findTransitionReplay (وليس tryReplayIdempotencyKey) لأن هذا المسار
+        // يخزن الاستجابة في سجل الانتقال المرتبط بالمفتاح لا في عمود
+        // response — فحص tryReplay يعدّه محاولة غير مكتملة.
+        const replayInTx = await this.findTransitionReplay(
+          input.idempotencyKey,
+          hash,
+          tx,
+        );
+        if (replayInTx) return replayInTx;
+
         if (
           workOrder.status === WorkOrderStatus.COMPLETED ||
           workOrder.status === WorkOrderStatus.CANCELLED
@@ -250,6 +276,15 @@ export class ProductionWorkflowService {
           hash,
         );
         if (replay) return replay;
+      }
+      // PRD-3(ب): خرق P2002 خارج فرع idempotency — قيد فريد على ثنائية
+      // (workOrderId, stage) أو (workOrderId, sequence) من انتقال متزامن بلا
+      // مفتاح (أو بمفتاح بلا استجابة ملزمة بعد). كان يتصاعد كخطأ 500 خامًا؛
+      // الآن 409 واضح برسالة انتقال متزامن.
+      if (isUniqueConstraintViolation(error)) {
+        throw new ConflictException(
+          'انتقال مرحلة متزامن على نفس أمر التشغيل — المرحلة/التسلسل مُسجل بالفعل؛ حدّث حالة الأمر وأعد المحاولة',
+        );
       }
       throw error;
     }
@@ -462,10 +497,22 @@ export class ProductionWorkflowService {
           });
         }
 
-        if (
-          input.stage !== ProductionStage.PACKING ||
-          input.acceptedQty === 0
-        ) {
+        /**
+         * PRD-4 (قرار موثّق — الإنتاجية الصفرية): كان التغليف بـ acceptedQty=0
+         * يخرج مبكرًا قبل منطق الإكمال فيبقى الأمر IN_PROGRESS للأبد بعد
+         * اكتمال التغليف بلا أي مخرج. القرار: تغليف بكمية مقبولة صفر = إكمال
+         * المرحلة والأمر بكمية بضاعة تام صفرية (كل المخرجات مرفوض/هدر):
+         * - لقطة التكلفة تُثبّت بـ acceptedQty=0 و unitCost=0 (لا تكلفة وحدية
+         *   لبضاعة معدومة) مع الإبقاء على materialCost/totalCost كتكلفة خامات
+         *   مُستهلكة للسجل.
+         * - حركة مخزون المنتج التام تُسجّل بكمية صفر (التوثيق نفسه — ON CONFLICT
+         *   الآمن عند صفر كما في الاستعلام الخام أدناه).
+         * - الأمر يتحول إلى COMPLETED (completedQty += 0) — لا يبقى IN_PROGRESS.
+         * - قيد GL يُتخطّى: لا بضاعة تام لترحيل تكلفة الخامات إليها (لا يجوز
+         *   مدين FINISHED_GOOD_STOCK بقيمة مقابل كمية صفر — يشوّه متوسط
+         *   التكلفة ويفصل GL عن المخزون) فتبقى التكلفة في WIP للمراجعة/الإهلاك.
+         */
+        if (input.stage !== ProductionStage.PACKING) {
           return result;
         }
 
@@ -509,7 +556,12 @@ export class ProductionWorkflowService {
           (sum, row) => sum.add(row.wasteCost),
           new Prisma.Decimal(0),
         );
-        const unitCost = materialCost.div(input.acceptedQty).toDecimalPlaces(4);
+        // PRD-4: إنتاجية صفرية → لا قسمة على صفر — تكلفة الوحدة 0 (بضاعة
+        // معدومة) بدل Infinity من Decimal.div(0).
+        const unitCost =
+          input.acceptedQty > 0
+            ? materialCost.div(input.acceptedQty).toDecimalPlaces(4)
+            : new Prisma.Decimal(0);
         await tx.productionCostSnapshot.upsert({
           where: {
             workOrderId_status: {
@@ -588,8 +640,12 @@ export class ProductionWorkflowService {
         // التشغيل) فيمنع الترحيل المزدوج عبر الـ unique constraint على
         // JournalEntry.postingKey. الكمية المُرحَّلة = إجمالي totalCost لكل
         // سجلات ProductionMaterialConsumption على هذا الـ WorkOrder.
-        const glAmount = materialCost.toNumber();
-        if (glAmount > 0) {
+        // PRD-5: المبلغ يُمرّر Prisma.Decimal كما هو (بلا toNumber) — إزالة
+        // التحلل العائم من سلسلة الترحيل؛ القيمة تُكتب في journal_lines
+        // وتحديثات أرصدة الحسابات بدقة عشرية كاملة.
+        // PRD-4: عند إنتاجية صفرية (acceptedQty=0) لا قيد — لا بضاعة تام
+        // لترحيل تكلفة الخامات إليها فتبقى التكلفة في WIP (القرار أعلاه).
+        if (materialCost.gt(0) && input.acceptedQty > 0) {
           await this.financialPosting.postJournalEntryInTx(
             tx,
             {
@@ -602,7 +658,7 @@ export class ProductionWorkflowService {
                 {
                   debitAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
                   creditAccountId: CHART_OF_ACCOUNTS.WIP,
-                  amount: glAmount,
+                  amount: materialCost,
                   description:
                     'ترحيل تكلفة خامات إلى مخزون المنتج التام — أمر تشغيل ' +
                     stageRun.workOrder.code,
@@ -889,16 +945,20 @@ export class ProductionWorkflowService {
   private async findTransitionReplay(
     key: string | undefined,
     hash: string,
+    tx?: Prisma.TransactionClient,
   ): Promise<StageTransitionResult | null> {
     if (!key) return null;
-    const idempotency = await this.prisma.idempotencyKey.findUnique({
+    // PRD-3: يقبل معاملة خارجية لاستخدامه تحت قفل أمر العمل داخل
+    // $transaction — يقرأ آخر حالة ملتزمة بدل لقطة ما قبل القفل.
+    const db = tx ?? this.prisma;
+    const idempotency = await db.idempotencyKey.findUnique({
       where: { key },
     });
     if (!idempotency) return null;
     if (idempotency.requestHash !== hash) {
       throw new ConflictException('Idempotency key payload mismatch');
     }
-    const transition = await this.prisma.workOrderStageTransition.findUnique({
+    const transition = await db.workOrderStageTransition.findUnique({
       where: { idempotencyKeyId: idempotency.id },
       include: {
         toRun: true,

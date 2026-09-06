@@ -35,7 +35,8 @@ function createTxMock<T>(prisma: T): T {
 /**
  * مواصفة موسّعة محليًا (نمط inventory.service.spec): consumeMaterial يقرأ
  * stockLedgerEntry.findUnique وproductionMaterialConsumption (findUnique
- * لإعادة التشغيل) — نضيفها فوق المصنع المشترك دون تعديله.
+ * لإعادة التشغيل)، وfinalizeCost يقرأ productionStageRun.findMany —
+ * نضيفها فوق المصنع المشترك دون تعديله.
  */
 type WorkflowPrismaMock = ReturnType<typeof createPrismaMock> & {
   stockLedgerEntry: {
@@ -50,11 +51,19 @@ type WorkflowPrismaMock = ReturnType<typeof createPrismaMock> & {
     aggregate: jest.Mock;
     findUnique: jest.Mock;
   };
+  productionStageRun: {
+    findFirst: jest.Mock;
+    findUnique: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    findMany: jest.Mock;
+  };
 };
 
 function createWorkflowPrismaMock(): WorkflowPrismaMock {
+  const base = createPrismaMock();
   return {
-    ...createPrismaMock(),
+    ...base,
     stockLedgerEntry: {
       create: jest.fn(),
       findMany: jest.fn(),
@@ -66,6 +75,10 @@ function createWorkflowPrismaMock(): WorkflowPrismaMock {
       create: jest.fn(),
       aggregate: jest.fn(),
       findUnique: jest.fn(),
+    },
+    productionStageRun: {
+      ...base.productionStageRun,
+      findMany: jest.fn(),
     },
   };
 }
@@ -284,7 +297,7 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
         lines: {
           debitAccountId: string;
           creditAccountId: string;
-          amount: number;
+          amount: number | Prisma.Decimal;
           description: string;
         }[];
         metadata: { source: string; workOrderId: string; acceptedQty: number };
@@ -298,7 +311,13 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
       CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
     );
     expect(inputArg.lines[0].creditAccountId).toBe(CHART_OF_ACCOUNTS.WIP);
-    expect(inputArg.lines[0].amount).toBeCloseTo(150.5, 2);
+    // PRD-5: المبلغ يصل Prisma.Decimal كما هو (بلا toNumber) — القيمة
+    // الدقيقة 150.5 دون تحلل عائم في سلسلة الترحيل.
+    expect(Prisma.Decimal.isDecimal(inputArg.lines[0].amount)).toBe(true);
+    expect((inputArg.lines[0].amount as Prisma.Decimal).eq(150.5)).toBe(true);
+    expect((inputArg.lines[0].amount as Prisma.Decimal).toString()).toBe(
+      '150.5',
+    );
     expect(inputArg.metadata).toEqual({
       source: 'production.completion',
       workOrderId: 'wo-1',
@@ -309,14 +328,13 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
     expect(txArg).toBeTruthy();
   });
 
-  it('ACC-F01: لا يرحّل قيد GL عند acceptedQty=0 (لا إنتاج لترحيل)', async () => {
+  it('PRD-4: تغليف بـ acceptedQty=0 يكمل الأمر بكمية صفرية — لا يبقى IN_PROGRESS', async () => {
     const { prisma, service, postJournalEntryInTx } = makeService();
     prisma.workOrder.findUnique.mockResolvedValue({
       id: 'wo-1',
       status: WorkOrderStatus.IN_PROGRESS,
     });
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
-    prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
     prisma.productionStageRun.findUnique.mockResolvedValue({
       id: 'srun-1',
       stage: ProductionStage.PACKING,
@@ -330,8 +348,30 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
     });
     prisma.productionStageRun.update.mockResolvedValue({});
     prisma.activityLog.create.mockResolvedValue({});
+    // فحص الجودة موثّق واستهلاك الخامات موجود — بوابات الإكمال القائمة
+    prisma.qualityCheck.count.mockResolvedValue(2);
+    prisma.warehouse.findFirst.mockResolvedValue({
+      id: 'wh-fg',
+      code: 'WH-FG',
+      type: 'FINISHED_GOODS',
+      isActive: true,
+    });
+    prisma.productionMaterialConsumption.findMany.mockResolvedValue([
+      {
+        id: 'cons-1',
+        totalCost: new Prisma.Decimal(100),
+        wasteCost: new Prisma.Decimal(0),
+      },
+    ]);
+    prisma.productionCostSnapshot.upsert.mockResolvedValue({});
+    prisma.$executeRaw = jest.fn().mockResolvedValue(1);
+    prisma.finishedGoodStock.findUniqueOrThrow.mockResolvedValue({
+      quantity: 0,
+      unitCost: new Prisma.Decimal(0),
+    });
+    prisma.stockLedgerEntry.create.mockResolvedValue({});
+    prisma.workOrder.update.mockResolvedValue({});
 
-    // acceptedQty = 0 → خروج مبكر قبل فحص QC والقيد
     const result = await service.recordStageOutput({
       workOrderId: 'wo-1',
       stage: ProductionStage.PACKING,
@@ -341,10 +381,58 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
       wasteQty: 0,
     });
 
+    // المرحلة اكتملت والنتيجة موثقة
     expect(result.replayed).toBe(false);
+    expect(result.status).toBe(ProductionStageRunStatus.COMPLETED);
+    // الأمر يكتمل COMPLETED بكمية صفرية — لا يعلق IN_PROGRESS
+    expect(prisma.workOrder.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'wo-1' },
+        data: expect.objectContaining({
+          status: WorkOrderStatus.COMPLETED,
+          completedQty: { increment: 0 },
+          rejectedQty: { increment: 5 },
+        }),
+      }),
+    );
+    // لقطة التكلفة: acceptedQty=0 و unitCost=0 (لا قسمة على صفر) مع بقاء
+    // تكلفة الخامات في اللقطة للسجل
+    expect(prisma.productionCostSnapshot.upsert).toHaveBeenCalledTimes(1);
+    type SnapshotUpsertArgs = {
+      where: { workOrderId_status: { workOrderId: string; status: string } };
+      create: {
+        acceptedQty: number;
+        unitCost: Prisma.Decimal;
+        materialCost: Prisma.Decimal;
+      };
+    };
+    const snapshotArgs = (
+      prisma.productionCostSnapshot.upsert.mock
+        .calls as unknown as SnapshotUpsertArgs[][]
+    )[0][0];
+    expect(snapshotArgs.where.workOrderId_status).toEqual({
+      workOrderId: 'wo-1',
+      status: ProductionCostStatus.FINALIZED,
+    });
+    expect(snapshotArgs.create.acceptedQty).toBe(0);
+    expect(Prisma.Decimal.isDecimal(snapshotArgs.create.unitCost)).toBe(true);
+    expect(snapshotArgs.create.unitCost.eq(0)).toBe(true);
+    expect(snapshotArgs.create.materialCost.eq(100)).toBe(true);
+    // حركة مخزون المنتج التام بكمية صفر (توثيق الإنتاجية الصفرية)
+    expect(prisma.stockLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          quantityDelta: 0,
+          totalValue: expect.any(Prisma.Decimal),
+        }),
+      }),
+    );
+    // بوابات الإكمال القائمة تُطبق — فحص الجودة يُعد
+    expect(prisma.qualityCheck.count).toHaveBeenCalledWith({
+      where: { workOrderId: 'wo-1' },
+    });
+    // لا قيد GL: لا بضاعة تام لترحيل تكلفة الخامات إليها (تبقى في WIP)
     expect(postJournalEntryInTx).not.toHaveBeenCalled();
-    expect(prisma.qualityCheck.count).not.toHaveBeenCalled();
-    expect(prisma.workOrder.update).not.toHaveBeenCalled();
   });
 
   it('ACC-F01: postingKey مستقر يعتمد فقط على workOrderId (idempotency)', async () => {
@@ -719,3 +807,311 @@ describe('ProductionWorkflowService — PRD-1 / INV-1 (consumeMaterial)', () => 
  * الـ service يستدعيه بنفس الشكل.
  */
 void ProductionCostStatus;
+
+/**
+ * PRD-3 / PRD-9 — انتقال المراحل (transitionStage):
+ * - PRD-9: مسارات سعيدة للتسلسل السليم (أول مرحلة ثم مرحلة تالية بعد اكتمال
+ *   الحالية) ورفض قفز المراحل.
+ * - PRD-3: قفل صف أمر العمل FOR UPDATE قبل القراءة، وخرق P2002 (قيد فريد
+ *   على workOrderId+stage من انتقال متزامن بلا مفتاح) → 409 لا 500.
+ */
+describe('ProductionWorkflowService — PRD-3 / PRD-9 (transitionStage)', () => {
+  it('PRD-9: ينجح بأول مرحلة (START → CUTTING) بتسلسل سليم', async () => {
+    const { prisma, service } = makeService();
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: WORK_ORDER_CODE,
+      status: WorkOrderStatus.PLANNED,
+      currentStage: null,
+      quantity: 10,
+      startDate: null,
+    });
+    prisma.productionStageRun.create.mockResolvedValue({ id: 'srun-cut-1' });
+    prisma.workOrder.update.mockResolvedValue({ id: 'wo-1', stageVersion: 1 });
+    prisma.workOrderStageTransition.create.mockResolvedValue({ id: 'trans-1' });
+
+    const result = await service.transitionStage(
+      { workOrderId: 'wo-1', toStage: ProductionStage.CUTTING },
+      'actor-1',
+    );
+
+    expect(result.replayed).toBe(false);
+    expect(result.transitionId).toBe('trans-1');
+    expect(result.fromStage).toBeNull();
+    expect(result.toStage).toBe(ProductionStage.CUTTING);
+    expect(result.stageRunId).toBe('srun-cut-1');
+    expect(result.stageVersion).toBe(1);
+
+    // stage-run جديد للمرحلة الهدف بالتسلسل الصحيح
+    expect(prisma.productionStageRun.create).toHaveBeenCalledWith({
+      data: {
+        workOrderId: 'wo-1',
+        stage: ProductionStage.CUTTING,
+        sequence: 1,
+        status: ProductionStageRunStatus.IN_PROGRESS,
+        plannedQty: 10,
+        inputQty: 10,
+      },
+    });
+    // أمر العمل يتحول إلى IN_PROGRESS على المرحلة الجديدة
+    expect(prisma.workOrder.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: 'wo-1' },
+        data: expect.objectContaining({
+          currentStage: ProductionStage.CUTTING,
+          status: WorkOrderStatus.IN_PROGRESS,
+          stageVersion: { increment: 1 },
+        }),
+      }),
+    );
+    // سجل الانتقال بالفاعل كاملًا
+    expect(prisma.workOrderStageTransition.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        workOrderId: 'wo-1',
+        fromStage: null,
+        toStage: ProductionStage.CUTTING,
+        fromStatus: WorkOrderStatus.PLANNED,
+        toStatus: WorkOrderStatus.IN_PROGRESS,
+        actorId: 'actor-1',
+      }),
+    });
+  });
+
+  it('PRD-9: ينجح بمرحلة تالية (CUTTING → SEWING) بعد اكتمال المرحلة الحالية', async () => {
+    const { prisma, service } = makeService();
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: WORK_ORDER_CODE,
+      status: WorkOrderStatus.IN_PROGRESS,
+      currentStage: ProductionStage.CUTTING,
+      quantity: 10,
+      startDate: new Date('2026-09-06T00:00:00.000Z'),
+    });
+    // المرحلة الحالية مكتملة — شرط التقدم
+    prisma.productionStageRun.findUnique.mockResolvedValue({
+      id: 'srun-cut-1',
+      status: ProductionStageRunStatus.COMPLETED,
+    });
+    prisma.productionStageRun.create.mockResolvedValue({ id: 'srun-sew-1' });
+    prisma.workOrder.update.mockResolvedValue({ id: 'wo-1', stageVersion: 2 });
+    prisma.workOrderStageTransition.create.mockResolvedValue({ id: 'trans-2' });
+
+    const result = await service.transitionStage(
+      { workOrderId: 'wo-1', toStage: ProductionStage.SEWING },
+      'actor-1',
+    );
+
+    expect(result.fromStage).toBe(ProductionStage.CUTTING);
+    expect(result.toStage).toBe(ProductionStage.SEWING);
+    expect(result.stageRunId).toBe('srun-sew-1');
+    // الانتقال يربط المرحلة المصدر والهدف
+    expect(prisma.workOrderStageTransition.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        fromRunId: 'srun-cut-1',
+        toRunId: 'srun-sew-1',
+        fromStage: ProductionStage.CUTTING,
+        toStage: ProductionStage.SEWING,
+      }),
+    });
+  });
+
+  it('PRD-9: يرفض قفز المراحل (CUTTING → IRONING يتخطى SEWING)', async () => {
+    const { prisma, service } = makeService();
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: WORK_ORDER_CODE,
+      status: WorkOrderStatus.IN_PROGRESS,
+      currentStage: ProductionStage.CUTTING,
+      quantity: 10,
+      startDate: new Date('2026-09-06T00:00:00.000Z'),
+    });
+
+    await expect(
+      service.transitionStage(
+        { workOrderId: 'wo-1', toStage: ProductionStage.IRONING },
+        'actor-1',
+      ),
+    ).rejects.toThrow('Invalid stage transition from CUTTING to IRONING');
+
+    // لا stage-run جديد ولا تحديث لأمر العمل
+    expect(prisma.productionStageRun.create).not.toHaveBeenCalled();
+    expect(prisma.workOrder.update).not.toHaveBeenCalled();
+  });
+
+  it('PRD-3: يقفل صف أمر العمل (FOR UPDATE على work_orders) قبل قراءته', async () => {
+    const { prisma, service } = makeService();
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: WORK_ORDER_CODE,
+      status: WorkOrderStatus.PLANNED,
+      currentStage: null,
+      quantity: 10,
+      startDate: null,
+    });
+    prisma.productionStageRun.create.mockResolvedValue({ id: 'srun-cut-1' });
+    prisma.workOrder.update.mockResolvedValue({ id: 'wo-1', stageVersion: 1 });
+    prisma.workOrderStageTransition.create.mockResolvedValue({ id: 'trans-1' });
+
+    await service.transitionStage(
+      { workOrderId: 'wo-1', toStage: ProductionStage.CUTTING },
+      'actor-1',
+    );
+
+    // القفل على الجدول الفعلي "work_orders" بمعرّف الأمر
+    expect(prisma.$queryRaw).toHaveBeenCalledTimes(1);
+    const lockSql = (
+      prisma.$queryRaw.mock.calls as unknown as [Prisma.Sql][]
+    )[0][0];
+    expect(lockSql.sql).toContain('FROM work_orders');
+    expect(lockSql.sql).toContain('FOR UPDATE');
+    expect(lockSql.values).toEqual(['wo-1']);
+    // القفل يسبق قراءة أمر العمل (لا قراءة ما قبل القفل)
+    const lockOrder = prisma.$queryRaw.mock.invocationCallOrder[0];
+    const readOrder = prisma.workOrder.findUnique.mock.invocationCallOrder[0];
+    expect(lockOrder).toBeLessThan(readOrder);
+  });
+
+  it('PRD-3: خرق P2002 خارج نطاق idempotency (انتقال متزامن بلا مفتاح) → 409 لا 500', async () => {
+    const { prisma, service } = makeService();
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: WORK_ORDER_CODE,
+      status: WorkOrderStatus.PLANNED,
+      currentStage: null,
+      quantity: 10,
+      startDate: null,
+    });
+    // انتقال متوازٍ فائز يسجل المرحلة نفسها — الخاسر يكسر القيد الفريد
+    prisma.productionStageRun.create.mockRejectedValue({
+      code: 'P2002',
+      meta: { target: ['workOrderId', 'stage'] },
+    });
+
+    await expect(
+      service.transitionStage(
+        { workOrderId: 'wo-1', toStage: ProductionStage.CUTTING },
+        'actor-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      service.transitionStage(
+        { workOrderId: 'wo-1', toStage: ProductionStage.CUTTING },
+        'actor-1',
+      ),
+    ).rejects.toThrow('انتقال مرحلة متزامن على نفس أمر التشغيل');
+  });
+
+  it('PRD-3: خرق P2002 مع مفتاح بلا استجابة ملزمة → 409 (بعد فشل replay)', async () => {
+    const { prisma, service } = makeService();
+    prisma.$queryRaw.mockResolvedValue([]);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      code: WORK_ORDER_CODE,
+      status: WorkOrderStatus.PLANNED,
+      currentStage: null,
+      quantity: 10,
+      startDate: null,
+    });
+    // المفتاح غير موجود بعد (لا replay متاح) والانتقال المتوازي يكسر الفريد
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.productionStageRun.create.mockRejectedValue({ code: 'P2002' });
+
+    await expect(
+      service.transitionStage(
+        {
+          workOrderId: 'wo-1',
+          toStage: ProductionStage.CUTTING,
+          idempotencyKey: 'transition-key-1',
+        },
+        'actor-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+  });
+});
+
+/**
+ * PRD-9 — finalizeCost: المسار السعيد بمبالغ Decimal على مفتاح upsert
+ * مستقر (workOrderId, FINALIZED) — نفس نمط الطبيعي القائم.
+ */
+describe('ProductionWorkflowService — PRD-9 (finalizeCost)', () => {
+  it('ينجح بمبالغ Decimal ومقسوم أحدث مرحلة مكتملة على مفتاح (workOrderId, FINALIZED)', async () => {
+    const { prisma, service } = makeService();
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.productionMaterialConsumption.findMany.mockResolvedValue([
+      {
+        id: 'cons-1',
+        totalCost: new Prisma.Decimal(100),
+        wasteCost: new Prisma.Decimal(5),
+      },
+      {
+        id: 'cons-2',
+        totalCost: new Prisma.Decimal(60),
+        wasteCost: new Prisma.Decimal(0),
+      },
+    ]);
+    prisma.productionStageRun.findMany.mockResolvedValue([
+      {
+        sequence: 1,
+        status: ProductionStageRunStatus.COMPLETED,
+        acceptedQty: 10,
+      },
+      {
+        sequence: 2,
+        status: ProductionStageRunStatus.COMPLETED,
+        acceptedQty: 8,
+      },
+      {
+        sequence: 3,
+        status: ProductionStageRunStatus.IN_PROGRESS,
+        acceptedQty: 4,
+      },
+    ]);
+    prisma.productionCostSnapshot.upsert.mockResolvedValue({
+      id: 'snap-1',
+      workOrderId: 'wo-1',
+      status: ProductionCostStatus.FINALIZED,
+    });
+
+    const result = await service.finalizeCost('wo-1', 'user-1');
+
+    expect(result.id).toBe('snap-1');
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+
+    // مفتاح upsert مستقر على (workOrderId, FINALIZED)
+    expect(prisma.productionCostSnapshot.upsert).toHaveBeenCalledTimes(1);
+    type FinalizeUpsertArgs = {
+      where: {
+        workOrderId_status: { workOrderId: string; status: string };
+      };
+      create: {
+        materialCost: Prisma.Decimal;
+        wasteCost: Prisma.Decimal;
+        totalCost: Prisma.Decimal;
+        acceptedQty: number;
+        unitCost: Prisma.Decimal;
+        createdById: string;
+      };
+    };
+    const upsertArgs = (
+      prisma.productionCostSnapshot.upsert.mock
+        .calls as unknown as FinalizeUpsertArgs[][]
+    )[0][0];
+    expect(upsertArgs.where.workOrderId_status).toEqual({
+      workOrderId: 'wo-1',
+      status: ProductionCostStatus.FINALIZED,
+    });
+    // مبالغ Decimal دقيقة: 100 + 60 = 160، والمقسوم أحدث مرحلة مكتملة (8)
+    expect(Prisma.Decimal.isDecimal(upsertArgs.create.materialCost)).toBe(true);
+    expect(upsertArgs.create.materialCost.eq(160)).toBe(true);
+    expect(upsertArgs.create.wasteCost.eq(5)).toBe(true);
+    expect(upsertArgs.create.totalCost.eq(160)).toBe(true);
+    expect(upsertArgs.create.acceptedQty).toBe(8);
+    expect(upsertArgs.create.unitCost.eq(20)).toBe(true);
+    expect(upsertArgs.create.createdById).toBe('user-1');
+  });
+});

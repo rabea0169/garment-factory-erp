@@ -441,6 +441,27 @@ async function main() {
       create: cur,
     });
   }
+
+  // GF-IMP-W2 / ACC-3: فترة مالية مفتوحة شاملة السنة الجارية — بدونها يرفض
+  // محرك الترحيل كل القيود الآلية بـ 400 (لا يمكن الترحيل خارج فترة مفتوحة).
+  // upsert على الثنائية (startDate,endDate) — إعادة البذر لا تغلق فترة مفتوحة
+  // قائمة ولا تنشئ نسخة ثانية لنفس النطاق.
+  const year = new Date().getUTCFullYear();
+  const yearStart = new Date(Date.UTC(year, 0, 1));
+  const yearEnd = new Date(Date.UTC(year, 11, 31));
+  await prisma.fiscalPeriod.upsert({
+    where: { startDate_endDate: { startDate: yearStart, endDate: yearEnd } },
+    update: {}, // لا نلمس الفترة القائمة — إقفالها قرار محاسبي يدوي
+    create: {
+      name: `السنة المالية ${year}`,
+      startDate: yearStart,
+      endDate: yearEnd,
+      status: 'OPEN',
+      createdById: admin.id,
+    },
+  });
+  console.log('Fiscal period seeded (open, current year)');
+
   console.log(`Currencies seeded (${currencies.length} currencies)`);
 }
 

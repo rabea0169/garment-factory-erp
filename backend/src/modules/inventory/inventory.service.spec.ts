@@ -5,7 +5,12 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
+import {
+  Prisma,
+  StockMovementType,
+  UserRole,
+  WarehouseType,
+} from '@prisma/client';
 import { InventoryService, StockEvent } from './inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -425,6 +430,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         warehouseId: 'wh-1',
         currentStock: 40,
         minStockLevel: 50,
+        actorId: 'user-1', // CC-8: فاعل الحركة يرافق حدث النقص
       });
     });
   });
@@ -455,6 +461,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       // المعاملة يملكها المستدعي الأعلى — inventory لا يفتح معاملة خاصة به
       expect(prisma.$transaction).not.toHaveBeenCalled();
       // المجمع امتلأ بالأحداث الصحيحة: خصم + انخفاض لحد الطلب (40 ≤ 50)
+      // و CC-8: actorId يرافق حدث النقص (فاعل سجل التنبيه في المستمع)
       expect(events).toEqual([
         {
           name: EVENTS.STOCK_DEDUCTED,
@@ -472,6 +479,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
             warehouseId: 'wh-1',
             currentStock: 40,
             minStockLevel: 50,
+            actorId: 'user-1',
           },
         },
       ]);
@@ -1051,13 +1059,18 @@ describe('InventoryService — أساس المخزون القابل للتدقي
   // ============ القراءات القديمة (انحدار GF-0003) ============
 
   describe('القراءات القديمة (انحدار)', () => {
-    it('يجلب كل الخامات مع الموردين مرتبة بالاسم', async () => {
+    it('يجلب كل الخامات مع الموردين مرتبة بالاسم (دور مالي)', async () => {
       const materials = [
-        { id: 'rm-1', name: 'قماش قطني', supplier: { id: 's-1' } },
+        {
+          id: 'rm-1',
+          name: 'قماش قطني',
+          costPerUnit: 45.5,
+          supplier: { id: 's-1' },
+        },
       ];
       prisma.rawMaterial.findMany.mockResolvedValue(materials);
 
-      const result = await service.getAllRawMaterials({});
+      const result = await service.getAllRawMaterials({}, UserRole.ACCOUNTANT);
 
       expect(result.data).toEqual(materials);
       expect(prisma.rawMaterial.findMany).toHaveBeenCalledWith(
@@ -1186,6 +1199,225 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         lowStockMaterials: 2,
         totalFinishedGoodsTypes: 4,
       });
+    });
+
+    it('INV-5: يقرأ العدد من meta.total بحد صف واحد — لا جلب 10000 صف لعدّها', async () => {
+      prisma.rawMaterial.count.mockResolvedValue(10);
+      prisma.finishedGoodStock.count.mockResolvedValue(4);
+      // استعلام COUNT يقول 7 (هذا مصدر الحقيقة) بينما استعلام الصفوف يعيد
+      // صفًا واحدًا فقط لأن الحد 1 — لو عدّت الخدمة data.length لقالت 1.
+      prisma.$queryRaw = jest
+        .fn()
+        .mockImplementation((strings: TemplateStringsArray) => {
+          const sql = strings.join('?');
+          if (sql.includes('COUNT(*)')) {
+            return Promise.resolve([{ count: 7n }]);
+          }
+          return Promise.resolve([
+            {
+              id: 'rm-1',
+              code: 'RM-001',
+              name: 'A',
+              currentStock: 5,
+              minStockLevel: 20,
+              unit: 'M',
+              supplierId: 's1',
+            },
+          ]);
+        });
+
+      const result = await service.getDashboardSummary();
+
+      // العدد من total لا من length
+      expect(result.lowStockMaterials).toBe(7);
+      // استعلام الصفوف مرّ بحد LIMIT 1 (لا 10000)
+      const limitCalls = prisma.$queryRaw.mock.calls.filter(
+        (call: unknown[]) =>
+          Array.isArray(call[0]) &&
+          (call[0] as string[]).join('?').includes('LIMIT'),
+      );
+      expect(limitCalls).toHaveLength(1);
+      expect(limitCalls[0][1]).toBe(1);
+    });
+  });
+
+  // ============ INV-2: تكلفة المخزون للأدوار المالية فقط ============
+
+  describe('INV-2: تقسيم القراءات بالدور (بيانات التكلفة)', () => {
+    it('PRODUCTION_MANAGER على قائمة المواد: select بلا costPerUnit وبدون المورد', async () => {
+      // الـ mock يحاكي نتيجة select العام — بلا تكلفة ولا مورد
+      const publicRows = [
+        {
+          id: 'rm-1',
+          code: 'RM-001',
+          name: 'قماش قطني',
+          unit: 'METER',
+          currentStock: 120,
+          minStockLevel: 50,
+          supplierId: 'sup-1',
+          isActive: true,
+        },
+      ];
+      prisma.rawMaterial.findMany.mockResolvedValue(publicRows);
+
+      const result = await service.getAllRawMaterials(
+        {},
+        UserRole.PRODUCTION_MANAGER,
+      );
+
+      const findManyArg = prisma.rawMaterial.findMany.mock.calls[0][0] as {
+        select?: Record<string, boolean>;
+        include?: unknown;
+      };
+      // عقد الاستعلام: select صريح بلا costPerUnit وبلا علاقة المورد
+      expect(findManyArg.include).toBeUndefined();
+      expect(findManyArg.select).toBeDefined();
+      expect(findManyArg.select).not.toHaveProperty('costPerUnit');
+      expect(findManyArg.select).not.toHaveProperty('supplier');
+      // الدفاع العمقي: الصفوف المعادة لا تحمل التكلفة ولا المورد
+      expect(result.data[0]).not.toHaveProperty('costPerUnit');
+      expect(result.data[0]).not.toHaveProperty('supplier');
+      expect(result.data[0]).toMatchObject({ id: 'rm-1', supplierId: 'sup-1' });
+    });
+
+    it.each([
+      ['CASHIER', UserRole.CASHIER],
+      ['VIEWER', UserRole.VIEWER],
+      ['HR_MANAGER', UserRole.HR_MANAGER],
+    ])(
+      '%s على قائمة المواد: نفس الـ select العام (دور غير مالي)',
+      async (_name, role) => {
+        prisma.rawMaterial.findMany.mockResolvedValue([{ id: 'rm-1' }]);
+
+        await service.getAllRawMaterials({}, role);
+
+        const findManyArg = prisma.rawMaterial.findMany.mock.calls[0][0] as {
+          select?: Record<string, boolean>;
+          include?: unknown;
+        };
+        expect(findManyArg.include).toBeUndefined();
+        expect(findManyArg.select).not.toHaveProperty('costPerUnit');
+      },
+    );
+
+    it('استدعاء بلا دور (برمجي): fail-closed — التكلفة لا تُعاد', async () => {
+      prisma.rawMaterial.findMany.mockResolvedValue([
+        { id: 'rm-1', supplierId: 'sup-1' },
+      ]);
+
+      await service.getAllRawMaterials({});
+
+      const findManyArg = prisma.rawMaterial.findMany.mock.calls[0][0] as {
+        select?: Record<string, boolean>;
+        include?: unknown;
+      };
+      expect(findManyArg.include).toBeUndefined();
+      expect(findManyArg.select).not.toHaveProperty('costPerUnit');
+    });
+
+    it.each([
+      ['INVENTORY_MANAGER', UserRole.INVENTORY_MANAGER],
+      ['GENERAL_MANAGER', UserRole.GENERAL_MANAGER],
+      ['SUPER_ADMIN', UserRole.SUPER_ADMIN],
+    ])(
+      '%s على قائمة المواد: include المورد (بيانات كاملة بالتكلفة)',
+      async (_name, role) => {
+        const materials = [
+          { id: 'rm-1', costPerUnit: 45.5, supplier: { id: 's-1' } },
+        ];
+        prisma.rawMaterial.findMany.mockResolvedValue(materials);
+
+        const result = await service.getAllRawMaterials({}, role);
+
+        expect(result.data).toEqual(materials);
+        expect(prisma.rawMaterial.findMany).toHaveBeenCalledWith(
+          expect.objectContaining({ include: { supplier: true } }),
+        );
+      },
+    );
+
+    it('دور مالي على الدفتر: unitCost/totalValue تعاد كما هي', async () => {
+      const entries = [
+        {
+          id: 'sle-1',
+          quantityDelta: -20,
+          balanceAfter: 180,
+          unitCost: 45.5,
+          totalValue: 910,
+        },
+      ];
+      prisma.stockLedgerEntry.findMany.mockResolvedValue(entries);
+
+      const result = await service.getLedgerEntries({}, UserRole.ACCOUNTANT);
+
+      expect(result.data).toEqual(entries);
+      expect(result.data[0]).toHaveProperty('unitCost', 45.5);
+      expect(result.data[0]).toHaveProperty('totalValue', 910);
+    });
+
+    it('دور غير مالي على الدفتر (دفاع عمقي): unitCost/totalValue تُسقطان', async () => {
+      prisma.stockLedgerEntry.findMany.mockResolvedValue([
+        {
+          id: 'sle-1',
+          quantityDelta: -20,
+          balanceAfter: 180,
+          unitCost: 45.5,
+          totalValue: 910,
+        },
+      ]);
+
+      const result = await service.getLedgerEntries(
+        {},
+        UserRole.PRODUCTION_MANAGER,
+      );
+
+      expect(result.data[0]).not.toHaveProperty('unitCost');
+      expect(result.data[0]).not.toHaveProperty('totalValue');
+      // الأعمدة الكمية تبقى — سلسلة التدقيق التشغيلية
+      expect(result.data[0]).toMatchObject({
+        id: 'sle-1',
+        quantityDelta: -20,
+        balanceAfter: 180,
+      });
+    });
+
+    it('دور غير مالي على أرصدة المنتج التام: unitCost تُسقط والرصيد الكمي يبقى', async () => {
+      prisma.finishedGoodStock.findMany.mockResolvedValue([
+        {
+          id: 'fg-stock-1',
+          quantity: 12,
+          warehouseId: 'wh-fg',
+          unitCost: 52,
+          productVariant: { product: { name: 'تيشيرت' } },
+          warehouse: { code: 'WH-FG' },
+        },
+      ]);
+
+      const result = await service.getAllFinishedGoods({}, UserRole.CASHIER);
+
+      expect(result.data[0]).not.toHaveProperty('unitCost');
+      expect(result.data[0]).toMatchObject({
+        id: 'fg-stock-1',
+        quantity: 12,
+        variant: { product: { name: 'تيشيرت' } },
+      });
+    });
+
+    it('دور مالي على أرصدة المنتج التام: unitCost تعاد', async () => {
+      prisma.finishedGoodStock.findMany.mockResolvedValue([
+        {
+          id: 'fg-stock-1',
+          quantity: 12,
+          warehouseId: 'wh-fg',
+          unitCost: 52,
+          productVariant: { product: { name: 'تيشيرت' } },
+          warehouse: { code: 'WH-FG' },
+        },
+      ]);
+
+      const result = await service.getAllFinishedGoods({}, UserRole.ACCOUNTANT);
+
+      expect(result.data[0]).toHaveProperty('unitCost', 52);
     });
   });
 });
@@ -1470,7 +1702,7 @@ describe('InventoryService — PERF-F02 bulkIssueFinishedGoods', () => {
     );
   });
 
-  it('يرفض قائمة فارغة ويعيد totalValue=0 دون أي استعلام', async () => {
+  it('يرفض قائمة فارغة ويعيد totalValue=0 وأحداثًا فارغة دون أي استعلام', async () => {
     const result = await service.bulkIssueFinishedGoods(
       [],
       'wh-fg',
@@ -1479,6 +1711,7 @@ describe('InventoryService — PERF-F02 bulkIssueFinishedGoods', () => {
     );
     expect(result.movements).toEqual([]);
     expect(result.totalValue).toBe(0);
+    expect(result.events).toEqual([]);
     expect(tx.finishedGoodStock.findMany).not.toHaveBeenCalled();
     expect(tx.stockLedgerEntry.createMany).not.toHaveBeenCalled();
   });
@@ -1581,7 +1814,7 @@ describe('InventoryService — PERF-F02 bulkIssueFinishedGoods', () => {
         unitCost: true,
       },
     });
-    // updateMany مرتين (مرة لكل بندة) — لكن Promise.all
+    // updateMany مرتين (مرة لكل بندة) — تسلسليًا (INV-3: لا Promise.all)
     expect(tx.finishedGoodStock.updateMany).toHaveBeenCalledTimes(2);
     // createMany مرة واحدة لكل قيود الـ ledger
     expect(tx.stockLedgerEntry.createMany).toHaveBeenCalledTimes(1);
@@ -1633,5 +1866,137 @@ describe('InventoryService — PERF-F02 bulkIssueFinishedGoods', () => {
         'u-1',
       ),
     ).rejects.toThrow(ConflictException);
+  });
+
+  // ============ INV-3: تسلسل التحديثات + سلوك الأحداث ============
+
+  it('INV-3: تحديثات CAS تسلسلية — لا تداخل تنفيذ (لا Promise.all) وبترتيب البنود', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 100,
+        unitCost: new Prisma.Decimal(40),
+      },
+      {
+        id: 's-2',
+        productVariantId: 'v-2',
+        quantity: 50,
+        unitCost: new Prisma.Decimal(80),
+      },
+    ]);
+    // نتتبع التداخل: كل استدعاء يبدأ ثم يسلم دورة الأحداث قبل أن يكتمل.
+    // لو استخدم المسار Promise.all لبدأ الثاني قبل اكتمال الأول → maxInFlight=2.
+    let inFlight = 0;
+    let maxInFlight = 0;
+    tx.finishedGoodStock.updateMany.mockImplementation(async () => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setImmediate(resolve));
+      inFlight--;
+      return { count: 1 };
+    });
+    tx.stockLedgerEntry.createMany.mockResolvedValue({ count: 2 });
+
+    await service.bulkIssueFinishedGoods(
+      [
+        { productVariantId: 'v-1', quantity: 5 },
+        { productVariantId: 'v-2', quantity: 3 },
+      ],
+      'wh-fg',
+      tx as never,
+      'u-1',
+    );
+
+    expect(tx.finishedGoodStock.updateMany).toHaveBeenCalledTimes(2);
+    expect(maxInFlight).toBe(1); // تسلسلي صافٍ — واحد في كل لحظة
+    // نفس ترتيب البنود (CAS شرطي على id الصف الصحيح لكل بندة)
+    expect(
+      tx.finishedGoodStock.updateMany.mock.calls.map(
+        (call) => (call[0] as { where: { id: string } }).where.id,
+      ),
+    ).toEqual(['s-1', 's-2']);
+  });
+
+  it('INV-3: يعبّئ eventsCollector بأحداث STOCK_DEDUCTED ويعيدها — ولا يبث بنفسه', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 100,
+        unitCost: new Prisma.Decimal(40),
+      },
+      {
+        id: 's-2',
+        productVariantId: 'v-2',
+        quantity: 50,
+        unitCost: new Prisma.Decimal(80),
+      },
+    ]);
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 1 });
+    tx.stockLedgerEntry.createMany.mockResolvedValue({ count: 2 });
+
+    const events: StockEvent[] = [];
+    const result = await service.bulkIssueFinishedGoods(
+      [
+        { productVariantId: 'v-1', quantity: 5, reference: 'SO-1' },
+        { productVariantId: 'v-2', quantity: 3, reference: 'SO-1' },
+      ],
+      'wh-fg',
+      tx as never,
+      'u-1',
+      events,
+    );
+
+    // حدث خصم لكل بندة بلقطة الرصيد بعد الخصم — بنمط INV-1 (مؤجل البث)
+    expect(events).toEqual([
+      {
+        name: EVENTS.STOCK_DEDUCTED,
+        payload: {
+          productVariantId: 'v-1',
+          warehouseId: 'wh-fg',
+          quantity: 5,
+          newStock: 95,
+        },
+      },
+      {
+        name: EVENTS.STOCK_DEDUCTED,
+        payload: {
+          productVariantId: 'v-2',
+          warehouseId: 'wh-fg',
+          quantity: 3,
+          newStock: 47,
+        },
+      },
+    ]);
+    // الأحداث تُعاد في النتيجة أيضًا — للمستدعين الذين لم يمرروا مجمعًا
+    expect(result.events).toEqual(events);
+    // INV-1/INV-3: المسار يعمل داخل معاملة خارجية — لا بث قبل commit أبدًا
+    expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
+  });
+
+  it('INV-3: فشل المسار (تعارض CAS) لا يجمع أي حدث — فلا أحداث لحركة رُجعت', async () => {
+    tx.finishedGoodStock.findMany.mockResolvedValue([
+      {
+        id: 's-1',
+        productVariantId: 'v-1',
+        quantity: 100,
+        unitCost: new Prisma.Decimal(40),
+      },
+    ]);
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 0 });
+    const events: StockEvent[] = [];
+
+    await expect(
+      service.bulkIssueFinishedGoods(
+        [{ productVariantId: 'v-1', quantity: 2 }],
+        'wh-fg',
+        tx as never,
+        'u-1',
+        events,
+      ),
+    ).rejects.toThrow(ConflictException);
+
+    expect(events).toEqual([]);
   });
 });

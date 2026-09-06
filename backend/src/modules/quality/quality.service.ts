@@ -21,10 +21,10 @@ import {
   storeIdempotencyResponse,
   tryReplayIdempotencyKey,
 } from '../../core/common/idempotency.util';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { QualityKpiQueryDto } from './dto/quality-kpi-query.dto';
+import { QualityCheckQueryDto } from './dto/quality-check-query.dto';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 
@@ -83,11 +83,44 @@ export class QualityService {
     private readonly financial: FinancialPostingService,
   ) {}
 
-  async getQualityChecks(pagination: PaginationDto = new PaginationDto()) {
-    const page = pagination.page ?? 1;
-    const pageSize = pagination.limit ?? 20;
+  async getQualityChecks(
+    query: QualityCheckQueryDto = new QualityCheckQueryDto(),
+  ) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
     const skip = (page - 1) * pageSize;
-    const where = {};
+
+    // QLT-3 (P1 — GF-IMP-W2): مرشحات اختيارية لنقطة قائمة الفحوص — نفس
+    // مرشحات quality-kpi-query.dto (stage / workOrderId / from / to).
+    // التواريخ تُتحقق كـ ISO صالح و from ≤ to (نفس قواعد KPI). التصفية
+    // تُطبّق على where لتستفيد من الفهارس القائمة (workOrderId+stage)
+    // و(checkedAt). stage في الفحوص مخزّن بالقيمة التراثية
+    // (WorkOrderStatus) لذا يُمرّر عبر LEGACY_STAGE كما في KPI.
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (
+      (from && Number.isNaN(from.getTime())) ||
+      (to && Number.isNaN(to.getTime()))
+    ) {
+      throw new BadRequestException('فلاتر الفحوصات تتطلب تواريخ ISO صالحة');
+    }
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية الفلاتر لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+    const checkedAt =
+      from || to
+        ? {
+            ...(from ? { gte: from } : {}),
+            ...(to ? { lte: to } : {}),
+          }
+        : undefined;
+    const where: Prisma.QualityCheckWhereInput = {
+      ...(query.workOrderId ? { workOrderId: query.workOrderId } : {}),
+      ...(query.stage ? { stage: LEGACY_STAGE[query.stage] } : {}),
+      ...(checkedAt ? { checkedAt } : {}),
+    };
     const options = {
       where,
       orderBy: { checkedAt: 'desc' } as const,

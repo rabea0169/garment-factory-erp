@@ -1,10 +1,18 @@
 import 'reflect-metadata';
+import { ExecutionContext } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { UserRole } from '@prisma/client';
 import { InventoryController } from './inventory.controller';
 import { InventoryService } from './inventory.service';
-import { ROLES_KEY } from '../auth/roles.guard';
+import { ROLES_KEY, RolesGuard } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 
+/**
+ * GF-0003/GF-0007 + INV-2 (W2-4): تفويض المخزون وتمرير دور الجلسة —
+ * القراءات المادية بلا تكلفة للأدوار التشغيلية، والدفتر (المكلف) للأدوار
+ * المالية فقط عبر @Roles — يُختبر سلوك 403 هنا بالـ RolesGuard الحقيقي
+ * (Reflector حقيقي يقرأ ميتاداتا المتحكم نفسه) لا بمجرد فحص الميتاداتا.
+ */
 describe('InventoryController — التفويض وتمرير العمليات (GF-0003/GF-0007)', () => {
   let controller: InventoryController;
   let service: {
@@ -40,14 +48,20 @@ describe('InventoryController — التفويض وتمرير العمليات (
     );
   });
 
-  it('يفوّض قراءات المخزون إلى الخدمة', async () => {
-    await controller.getRawMaterials({});
+  it('يفوّض قراءات المخزون إلى الخدمة مع دور الجلسة (INV-2)', async () => {
+    await controller.getRawMaterials({}, UserRole.INVENTORY_MANAGER);
     await controller.getLowStockMaterials({});
-    await controller.getFinishedGoods({});
+    await controller.getFinishedGoods({}, UserRole.ACCOUNTANT);
     await controller.getSummary();
-    expect(service.getAllRawMaterials).toHaveBeenCalledTimes(1);
+    expect(service.getAllRawMaterials).toHaveBeenCalledWith(
+      {},
+      UserRole.INVENTORY_MANAGER,
+    );
     expect(service.getLowStockMaterials).toHaveBeenCalledTimes(1);
-    expect(service.getAllFinishedGoods).toHaveBeenCalledTimes(1);
+    expect(service.getAllFinishedGoods).toHaveBeenCalledWith(
+      {},
+      UserRole.ACCOUNTANT,
+    );
     expect(service.getDashboardSummary).toHaveBeenCalledTimes(1);
   });
 
@@ -65,7 +79,7 @@ describe('InventoryController — التفويض وتمرير العمليات (
 
   // ============ GF-0007: المخازن / الـ ledger / الحركات ============
 
-  it('قائمة المخازن وسجل الحركات يُفوَّضان للخدمة مع المرشحات', async () => {
+  it('قائمة المخازن وسجل الحركات يُفوَّضان للخدمة مع المرشحات والدور', async () => {
     const filters = {
       rawMaterialId: 'rm-1',
       warehouseId: 'wh-1',
@@ -73,9 +87,12 @@ describe('InventoryController — التفويض وتمرير العمليات (
       from: '2026-08-01T00:00:00Z',
     };
     await controller.getWarehouses({});
-    await controller.getLedger(filters);
+    await controller.getLedger(filters, UserRole.ACCOUNTANT);
     expect(service.getWarehouses).toHaveBeenCalledTimes(1);
-    expect(service.getLedgerEntries).toHaveBeenCalledWith(filters);
+    expect(service.getLedgerEntries).toHaveBeenCalledWith(
+      filters,
+      UserRole.ACCOUNTANT,
+    );
   });
 
   it('استلام: يمرر الـ body + مفتاح idempotency من الترويسة + هوية الجلسة', async () => {
@@ -167,12 +184,25 @@ describe('InventoryController — التفويض وتمرير العمليات (
     }
   });
 
-  it('مسارات القراءة (خامات/مخازن/ledger/تام/ملخص) بلا قيد أدوار — لأي مستخدم موثّق', () => {
+  it('INV-2: الدفتر (القراءة المكلفة) مقيّد بالأدوار المالية فقط', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      InventoryController.prototype,
+      'getLedger',
+    );
+    expect(roles).toEqual([
+      UserRole.INVENTORY_MANAGER,
+      UserRole.ACCOUNTANT,
+      UserRole.GENERAL_MANAGER,
+    ]);
+  });
+
+  it('INV-2: القراءات المادية (خامات/منخفض/مخازن/أرصدة/تام/ملخص) بلا قيد أدوار — لأي مستخدم موثّق لكن بلا تكلفة للأدوار غير المالية', () => {
     const readRoutes = [
       'getRawMaterials',
       'getLowStockMaterials',
       'getWarehouses',
-      'getLedger',
+      'getMaterialBalanceByWarehouse',
       'getFinishedGoods',
       'getSummary',
     ];
@@ -184,5 +214,50 @@ describe('InventoryController — التفويض وتمرير العمليات (
       );
       expect(roles).toBeUndefined();
     }
+  });
+
+  // ============ INV-2: سلوك 403/200 بالـ RolesGuard الحقيقي ============
+
+  describe('INV-2: RolesGuard على مسار الدفتر المكلف (سلوك 403)', () => {
+    let guard: RolesGuard;
+
+    const guardContext = (role: UserRole | undefined): ExecutionContext =>
+      ({
+        // مرجع الـ prototype نفسه مقصود: Reflector يقرأ ميتاداتا @Roles
+        // المعلنة على الدالة — لا نستدعيها هنا فلا خطر فقدان this.
+        // eslint-disable-next-line @typescript-eslint/unbound-method
+        getHandler: () => InventoryController.prototype.getLedger,
+        getClass: () => InventoryController,
+        switchToHttp: () => ({
+          getRequest: () => ({ user: role ? { role } : undefined }),
+        }),
+      }) as unknown as ExecutionContext;
+
+    beforeEach(() => {
+      // Reflector حقيقي يقرأ @Roles المُعلن فعليًا على getLedger
+      guard = new RolesGuard(new Reflector());
+    });
+
+    it.each([
+      ['PRODUCTION_MANAGER', UserRole.PRODUCTION_MANAGER],
+      ['CASHIER', UserRole.CASHIER],
+      ['VIEWER', UserRole.VIEWER],
+      ['HR_MANAGER', UserRole.HR_MANAGER],
+    ])('دور تشغيلي %s على الدفتر → مرفوض (403)', (_name, role) => {
+      // canActivate=false في Nest = ForbiddenException = HTTP 403
+      expect(guard.canActivate(guardContext(role))).toBe(false);
+    });
+
+    it.each([
+      ['INVENTORY_MANAGER', UserRole.INVENTORY_MANAGER],
+      ['ACCOUNTANT', UserRole.ACCOUNTANT],
+      ['GENERAL_MANAGER', UserRole.GENERAL_MANAGER],
+    ])('دور مالي %s على الدفتر → مسموح (يرى unitCost)', (_name, role) => {
+      expect(guard.canActivate(guardContext(role))).toBe(true);
+    });
+
+    it('SUPER_ADMIN يتجاوز قيد الدفتر دائمًا (سلوك RolesGuard القائم)', () => {
+      expect(guard.canActivate(guardContext(UserRole.SUPER_ADMIN))).toBe(true);
+    });
   });
 });

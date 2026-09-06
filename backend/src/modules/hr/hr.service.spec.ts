@@ -6,16 +6,42 @@ import { FinancialPostingService } from '../../core/financial/financial-posting.
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
+/**
+ * HR-2 (GF-IMP-W2): payPayroll يوزّع الخصم على سلف الفترة FIFO عبر
+ * workerAdvance.findMany/update — امتداد محلي للـ mock الموحد بنمط
+ * inventory.service.spec (لا نعدّل الـ helper المشترك).
+ */
+type HrPrismaMock = ReturnType<typeof createPrismaMock> & {
+  workerAdvance: {
+    create: jest.Mock;
+    aggregate: jest.Mock;
+    findMany: jest.Mock;
+    update: jest.Mock;
+  };
+};
+
+function createHrPrismaMock(): HrPrismaMock {
+  return {
+    ...createPrismaMock(),
+    workerAdvance: {
+      create: jest.fn(),
+      aggregate: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn(),
+    },
+  };
+}
+
 describe('HrService — العمال والإنتاج بالقطعة (GF-0003)', () => {
   let service: HrService;
-  let prisma: ReturnType<typeof createPrismaMock>;
+  let prisma: HrPrismaMock;
   let financial: {
     postJournalEntryInTx: jest.Mock;
     postJournalEntry: jest.Mock;
   };
 
   beforeEach(() => {
-    prisma = createPrismaMock();
+    prisma = createHrPrismaMock();
     // RES-F02: make $transaction invoke the callback with prisma so all the
     // tx.* mocks we set up below resolve correctly.
     prisma.$transaction.mockImplementation(
@@ -507,6 +533,56 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
       expect(call[1].treasuryUpdates).toEqual([
         { treasuryId: 't-1', delta: -700 },
       ]);
+    });
+
+    it('HR-2: يوزّع خصم السلف FIFO على سلف الفترة داخل نفس معاملة الدفع', async () => {
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(approvedPayroll)
+        .mockResolvedValueOnce({
+          ...approvedPayroll,
+          status: PayrollStatus.PAID,
+          isPaid: true,
+          paidAt: new Date('2026-09-01T12:00:00.000Z'),
+        });
+      prisma.treasury.findUnique.mockResolvedValue({
+        id: 't-1',
+        isActive: true,
+      });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+      prisma.workerAdvance.findMany.mockResolvedValue([
+        {
+          id: 'adv-1',
+          amount: new Prisma.Decimal('200.00'),
+          settledAmount: new Prisma.Decimal('0.00'),
+        },
+        {
+          id: 'adv-2',
+          amount: new Prisma.Decimal('400.00'),
+          settledAmount: new Prisma.Decimal('0.00'),
+        },
+      ]);
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 't-1', notes: 'صرف راتب أغسطس' },
+        'gm-1',
+      );
+
+      // الخصم 300 يُوزّع FIFO: 200 كاملة على الأولى ثم 100 من الثانية.
+      const updateCalls = prisma.workerAdvance.update.mock.calls as unknown as [
+        [
+          {
+            where: { id: string };
+            data: { settledAmount: { increment: Prisma.Decimal } };
+          },
+        ],
+      ];
+      expect(
+        updateCalls.map(
+          ([call]) =>
+            `${call.where.id}:${call.data.settledAmount.increment.toString()}`,
+        ),
+      ).toEqual(['adv-1:200', 'adv-2:100']);
     });
   });
 });

@@ -14,6 +14,7 @@ import { FinancialPostingService } from '../src/core/financial/financial-posting
 import { CHART_OF_ACCOUNTS } from '../src/core/financial/chart-of-accounts';
 import { PurchasingService } from '../src/modules/purchasing/purchasing.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { seedOpenFiscalPeriod } from './helpers/fiscal-period';
 
 const integrationDescribe = process.env.GF_INTEGRATION_DATABASE_URL
   ? describe
@@ -72,6 +73,9 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
         role: UserRole.INVENTORY_MANAGER,
       },
     });
+
+    // GF-IMP-W2 / ACC-3: الترحيلات تتطلب فترة مفتوحة — تُزرع بعد كل TRUNCATE
+    await seedOpenFiscalPeriod(prisma, user.id);
     userId = user.id;
     await prisma.account.createMany({
       data: [
@@ -119,7 +123,7 @@ integrationDescribe('GF-0016 purchasing receipt integration', () => {
         userId,
         paymentType: PaymentType.CREDIT,
         totalAmount: new Prisma.Decimal('50.00'),
-        status: PurchaseOrderStatus.PENDING,
+        status: PurchaseOrderStatus.APPROVED,
         items: {
           create: {
             rawMaterialId,

@@ -6,12 +6,18 @@ import {
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
+import {
+  Prisma,
+  StockMovementType,
+  UserRole,
+  WarehouseType,
+} from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { EVENTS, EventName } from '../../events/event-types';
 import { PaginationDto } from '../../common/dto/pagination.dto';
+import { round2, round4 } from '../../core/common/money.util';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
 /**
@@ -102,6 +108,8 @@ interface StockEventContext {
   quantity: number;
   newBalance: number;
   minStockLevel: number;
+  /** CC-8: منفذ الحركة — فاعل تنبيه النقص في ActivityLog إن هبط الرصيد. */
+  actorId?: string;
 }
 
 /**
@@ -175,14 +183,6 @@ function isRecordNotFound(err: unknown): boolean {
   return known !== null && known.code === 'P2025';
 }
 
-function round2(value: number): number {
-  return Math.round(value * 100) / 100;
-}
-
-function round4(value: number): number {
-  return Math.round(value * 10000) / 10000;
-}
-
 /** كود حركة فريد قابل للقراءة: SLE-YYYYMMDD-XXXXXXXX (تاريخ UTC + عشوائية). */
 function generateEntryCode(): string {
   const now = new Date();
@@ -193,6 +193,43 @@ function generateEntryCode(): string {
   ].join('');
   return `SLE-${ymd}-${randomBytes(4).toString('hex').toUpperCase()}`;
 }
+
+/**
+ * INV-2: الأدوار المالية المسموح لها برؤية بيانات التكلفة (costPerUnit /
+ * unitCost / totalValue) وبيانات المورد في قراءات المخزون.
+ * القرار التصميمي الموثق: القراءات المادية (قوائم المواد والأرصدة) متاحة
+ * لكل الأدوار الموثقة لكن بلا تكلفة للأدوار غير المالية، والقراءة المالية
+ * (الدفتر بالتكاليف) مقيّدة في المتحكم بـ @Roles لنفس هذه الأدوار
+ * (SUPER_ADMIN يتجاوز قيود الأدوار في RolesGuard أصلًا). الدور غير المعروف
+ * (استدعاء برمجي بلا دور) يُعامل غير مالي — fail-closed على التكلفة.
+ */
+const COST_VISIBLE_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.INVENTORY_MANAGER,
+  UserRole.ACCOUNTANT,
+  UserRole.GENERAL_MANAGER,
+  UserRole.SUPER_ADMIN,
+]);
+
+function isCostVisibleRole(viewerRole?: UserRole): boolean {
+  return viewerRole !== undefined && COST_VISIBLE_ROLES.has(viewerRole);
+}
+
+/**
+ * INV-2: الحقول العامة للمادة الخام — كل الحقول التشغيلية بدون costPerUnit
+ * وبدون علاقة المورد (select صريح فلا تعود التكلفة من القاعدة أصلًا).
+ */
+const RAW_MATERIAL_PUBLIC_SELECT = {
+  id: true,
+  code: true,
+  name: true,
+  unit: true,
+  currentStock: true,
+  minStockLevel: true,
+  supplierId: true,
+  isActive: true,
+  createdAt: true,
+  updatedAt: true,
+} satisfies Prisma.RawMaterialSelect;
 
 /** بصمة الطلب — نفس المفتاح بمحتوى مختلف = تعارض يُرفض بـ 409 لا إعادة تنفيذ. */
 function computeRequestHash(payload: Record<string, unknown>): string {
@@ -211,18 +248,32 @@ export class InventoryService {
 
   // ===================== RAW MATERIALS (reads) =====================
 
-  async getAllRawMaterials(pagination: PaginationDto) {
+  /**
+   * INV-2: قائمة المواد الخام. للأدوار المالية (isCostVisibleRole) تعاد
+   * الصفوف كاملة مع costPerUnit وعلاقة المورد؛ وللأدوار التشغيلية/غير
+   * المالية تُستعلم بـ RAW_MATERIAL_PUBLIC_SELECT — لا تكلفة ولا مورد من
+   * القاعدة أصلًا (select صريح، فلا تُنقل حقول حساسة إلى التطبيق).
+   */
+  async getAllRawMaterials(pagination: PaginationDto, viewerRole?: UserRole) {
     const page = pagination.page || 1;
     const limit = pagination.limit || 20;
     const skip = (page - 1) * limit;
+    const costVisible = isCostVisibleRole(viewerRole);
 
     const [data, total] = await Promise.all([
-      this.prisma.rawMaterial.findMany({
-        skip,
-        take: limit,
-        include: { supplier: true },
-        orderBy: { name: 'asc' },
-      }),
+      costVisible
+        ? this.prisma.rawMaterial.findMany({
+            skip,
+            take: limit,
+            include: { supplier: true },
+            orderBy: { name: 'asc' },
+          })
+        : this.prisma.rawMaterial.findMany({
+            skip,
+            take: limit,
+            select: RAW_MATERIAL_PUBLIC_SELECT,
+            orderBy: { name: 'asc' },
+          }),
       this.prisma.rawMaterial.count(),
     ]);
 
@@ -345,10 +396,20 @@ export class InventoryService {
 
   // ===================== STOCK LEDGER (GF-0007) =====================
 
-  async getLedgerEntries(filter: LedgerFilter & PaginationDto) {
+  /**
+   * INV-2: الدفتر قراءة مالية — المتحكم يقيدها بـ @Roles للأدوار المالية،
+   * وهنا دفاع عمقي إضافي: استدعاء برمجي (أو دور غير مالي) يعيد الصفوف
+   * بلا unitCost/totalValue. الأعمدة الكمية (quantityDelta/balanceAfter)
+   * تبقى للجميع — سلسلة التدقيق التشغيلية.
+   */
+  async getLedgerEntries(
+    filter: LedgerFilter & PaginationDto,
+    viewerRole?: UserRole,
+  ) {
     const page = filter.page || 1;
     const limit = filter.limit || 20;
     const skip = (page - 1) * limit;
+    const costVisible = isCostVisibleRole(viewerRole);
 
     const where: Prisma.StockLedgerEntryWhereInput = {};
     if (filter.rawMaterialId) where.rawMaterialId = filter.rawMaterialId;
@@ -360,7 +421,7 @@ export class InventoryService {
         ...(filter.to ? { lte: new Date(filter.to) } : {}),
       };
     }
-    const [data, total] = await Promise.all([
+    const [rows, total] = await Promise.all([
       this.prisma.stockLedgerEntry.findMany({
         where,
         skip,
@@ -373,6 +434,11 @@ export class InventoryService {
       }),
       this.prisma.stockLedgerEntry.count({ where }),
     ]);
+    const data = costVisible
+      ? rows
+      : rows.map(
+          ({ unitCost: _unitCost, totalValue: _totalValue, ...rest }) => rest,
+        );
 
     return new PaginatedResult(data, total, page, limit);
   }
@@ -795,21 +861,29 @@ export class InventoryService {
   /**
    * PERF-F02: إصدار جماعي لمنتجات تامة الصنع لأمر بيع متعدد البنود.
    *
-   * يحل محل for...await على issueFinishedGood في SalesService.confirmOrder
-   * ويعتمد على نمط bulk:
+   * يعتمد على نمط bulk:
    *   1. findMany واحد لجلب كل أرصدة FG للمستودع + المنتجات في استعلام واحد
    *   2. تحقق من الكميات في الذاكرة — يرفض الكل لو أي بنفة لا يكفيها الرصيد
-   *   3. updateMany متوازي (Promise.all) لكل بنفة — تنفيذ ذري لكل صف لكن
-   *      بضمان أن المعاملة الأب (tx) تلفّهم جميعًا
+   *   3. (INV-3) تحديثات CAS تسلسلية — حلقة await واحدة تلو الأخرى داخل
+   *      المعاملة التفاعلية (كل updateMany شرطي quantity >= المطلوب)؛
+   *      لا Promise.all داخل interactive transaction: الاتصال واحد
+   *      والتنفيذ المتوازي استعلامات متشابكة يصعب تتبعها وتقتل إمكانية
+   *      إعادة المحاولة، والتسلسل لا يضيف جولات شبكة (نفس العدد من
+   *      الاستعلامات على نفس الاتصال).
    *   4. createMany واحد لكل قيود الـ StockLedgerEntry — استعلام إدخال واحد
+   *   5. (INV-3/INV-1) أحداث STOCK_DEDUCTED لكل بند تُجمع وتُعاد للمستدعي
+   *      (مالك المعاملة) ليبثها بعد commit فقط — لا بث هنا إطلاقًا.
    *
    * النتيجة: من 3N+1 استعلام → 3 استعلامات فقط (findMany + N×updateMany
-   * متوازية + createMany واحد). للأمر بـ 10 بنود، من 31 استعلام إلى ~12.
+   * تسلسلية + createMany واحد). للأمر بـ 10 بنود، من 31 استعلام إلى ~12.
    *
    * ملاحظات:
    *   - لا يستخدم idempotencyKey لكل بندة — يُتوقع أن الـ parent يلفّ كل
    *     العملية في idempotencyKey خاص به (confirmOrder يفعل ذلك).
-   *   - يحتاج externalTx مُمرر — لا يفتح معاملة جديدة (الـ parent يديرها).
+   *   - يحتاج externalTx مُمرر — لا يفتح معاملة جديدة (الـ parent يديرها)،
+   *     لذلك لا يبث الأحداث بنفسه أبدًا (INV-1: مالك المعاملة يبث بعد
+   *     نجاحها) — يعبّئ eventsCollector إن مُرر، ويعيد الأحداث في النتيجة
+   *     للمستدعين الذين لم يعتمدوا المجمع بعد.
    *   - يرمي BadRequestException لو أي كمية غير صالحة، NotFoundException لو
    *     بنفة لا تملك رصيدًا، ConflictException لو نقص بعد التحديث الذري.
    */
@@ -823,12 +897,15 @@ export class InventoryService {
     warehouseId: string,
     externalTx: TxClient,
     userId?: string,
+    eventsCollector?: StockEvent[],
   ): Promise<{
     movements: StockMovementResult[];
     totalValue: number;
+    /** INV-3: أحداث STOCK_DEDUCTED مؤجلة — للمستدعي بثها بعد commit فقط. */
+    events: StockEvent[];
   }> {
     if (items.length === 0) {
-      return { movements: [], totalValue: 0 };
+      return { movements: [], totalValue: 0, events: [] };
     }
     // 1) تحقق من الكميات
     for (const item of items) {
@@ -879,19 +956,23 @@ export class InventoryService {
       );
     }
 
-    // 3) Promise.all على updateMany لكل بنفة (كل صف مختلف، لكن نفس tx)
-    //    Prisma interactive transaction يدعم Promise.all بأمان (تُنفّذ على نفس
-    //    الاتصال ولكن يدير الترتيب داخليًا).
-    const updateResults = await Promise.all(
-      items.map(async (item) => {
-        const stock = stockByVariant.get(item.productVariantId)!;
-        const updated = await externalTx.finishedGoodStock.updateMany({
-          where: { id: stock.id, quantity: { gte: item.quantity } },
-          data: { quantity: { decrement: item.quantity } },
-        });
-        return { item, stock, updated };
-      }),
-    );
+    // 3) INV-3: تحديثات CAS تسلسلية — حلقة await واحدة تلو الأخرى داخل
+    //    المعاملة التفاعلية (لا Promise.all). كل updateMany شرطي
+    //    (quantity >= المطلوب) فيمنع السباقات، وفشل أي بند يرجع المعاملة
+    //    كلها مع بقية أثر المسار (الـ ledger لا يُكتب بعدها).
+    const updateResults: Array<{
+      item: (typeof items)[number];
+      stock: (typeof stocks)[number];
+      updated: { count: number };
+    }> = [];
+    for (const item of items) {
+      const stock = stockByVariant.get(item.productVariantId)!;
+      const updated = await externalTx.finishedGoodStock.updateMany({
+        where: { id: stock.id, quantity: { gte: item.quantity } },
+        data: { quantity: { decrement: item.quantity } },
+      });
+      updateResults.push({ item, stock, updated });
+    }
 
     // تحقق أن كل التحديثات أثرت على صف واحد (atomic CAS guard)
     const conflictVariants = updateResults
@@ -958,13 +1039,40 @@ export class InventoryService {
       movements.reduce((sum, m) => sum + (m.totalValue ?? 0), 0),
     );
 
-    return { movements, totalValue };
+    // 5) INV-3/INV-1: أحداث STOCK_DEDUCTED لكل بند — تُبنى هنا بعد نجاح كل
+    //    الكتابات (فشل أي خطوة يرمي قبل الوصول هنا = لا أحداث لحركة رُجعت)،
+    //    لكن لا تُبث: المسار يعمل دائمًا داخل معاملة خارجية فيملك القرار
+    //    المستدعي الأعلى. تُعبّئ المجمع إن مُرر (نمط INV-1) وتُعاد في النتيجة
+    //    معًا ليعتمد عليها المستدعون الذين لم يمرروا مجمعًا — البث بعد commit
+    //    فقط. (منتجات التام لا تملك عتبة إعادة طلب — لا STOCK_LOW هنا.)
+    const events: StockEvent[] = items.map((item) => ({
+      name: EVENTS.STOCK_DEDUCTED,
+      payload: {
+        productVariantId: item.productVariantId,
+        warehouseId,
+        quantity: item.quantity,
+        newStock:
+          Number(stockByVariant.get(item.productVariantId)!.quantity) -
+          item.quantity,
+      },
+    }));
+    if (eventsCollector) {
+      eventsCollector.push(...events);
+    }
+
+    return { movements, totalValue, events };
   }
 
-  async getAllFinishedGoods(pagination: PaginationDto) {
+  /**
+   * INV-2: أرصدة المنتج التام — الرصيد الكمي للجميع (تشغيلي)، وunitCost
+   * تُسقط في الـ mapping للأدوار غير المالية (الصف يخلط أعمدة تشغيلية
+   * وتكلفة فلا يفصلها select واحد دون فقدان الباقي).
+   */
+  async getAllFinishedGoods(pagination: PaginationDto, viewerRole?: UserRole) {
     const page = pagination.page || 1;
     const limit = pagination.limit || 20;
     const skip = (page - 1) * limit;
+    const costVisible = isCostVisibleRole(viewerRole);
 
     const where: Prisma.FinishedGoodStockWhereInput = {
       quantity: { gt: 0 },
@@ -984,19 +1092,23 @@ export class InventoryService {
       }),
       this.prisma.finishedGoodStock.count({ where }),
     ]);
-    const data = rows.map(({ productVariant, ...stock }) => ({
-      ...stock,
-      variant: productVariant,
-    }));
+    const data = rows.map(({ productVariant, unitCost, ...stock }) =>
+      costVisible
+        ? { ...stock, unitCost, variant: productVariant }
+        : { ...stock, variant: productVariant },
+    );
 
     return new PaginatedResult(data, total, page, limit);
   }
 
   async getDashboardSummary() {
     const materials = await this.prisma.rawMaterial.count();
-    const lowStock = (
-      await this.getLowStockMaterials({ page: 1, limit: 10000 })
-    ).data.length;
+    // INV-5: نقرأ العدد الإجمالي من استجابة getLowStockMaterials بحد صف واحد
+    // (meta.total من استعلام COUNT(*) مستقل) — لا جلب 10000 صف لعدّها في
+    // الذاكرة (كانت LIMIT 10000 + data.length: نقل بيانات بلا داعٍ + عدّ
+    // مقصوص عند تجاوز الـ 10000).
+    const lowStock = (await this.getLowStockMaterials({ page: 1, limit: 1 }))
+      .meta.total;
     const finishedGoods = await this.prisma.finishedGoodStock.count({
       where: { quantity: { gt: 0 } },
     });
@@ -1309,6 +1421,8 @@ export class InventoryService {
         quantity: input.unsignedQuantity,
         newBalance: warehouseBalanceAfter,
         minStockLevel,
+        // CC-8: منفذ الحركة يرافق حدث النقص ليكون فاعل سجل التنبيه
+        ...(input.userId ? { actorId: input.userId } : {}),
       };
 
       return { ...response, replayed: false };
@@ -1385,6 +1499,8 @@ export class InventoryService {
           warehouseId: ctx.warehouseId,
           currentStock: ctx.newBalance,
           minStockLevel: ctx.minStockLevel,
+          // CC-8: فاعل التنبيه لسجل ActivityLog (userId إلزامي في المخطط)
+          ...(ctx.actorId ? { actorId: ctx.actorId } : {}),
         },
       });
     }

@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -21,6 +22,11 @@ export class ReceiveStockDto {
   warehouseId: string;
 
   @ApiProperty({ example: 50, description: 'الكمية المستلمة (موجبة)' })
+  // INV-4: 4 منازل عشرية كحد أقصى — مطابقة Decimal(12,4) لعمود quantityDelta.
+  @IsNumber(
+    { maxDecimalPlaces: 4 },
+    { message: 'الكمية تقبل حتى 4 منازل عشرية كحد أقصى' },
+  )
   @IsPositive({ message: 'الكمية يجب أن تكون رقمًا موجبًا' })
   quantity: number;
 
@@ -28,6 +34,12 @@ export class ReceiveStockDto {
     example: 48,
     description: 'تكلفة الوحدة لهذه الشحنة (موجبة) — تُدمج بمتوسط مرجح',
   })
+  // INV-4: 2 منزلة عشرية كحد أقصى — مطابقة Decimal(10,2) لـ RawMaterial.costPerUnit
+  // (متوسط التكلفة المرجح يقبل أيضًا المنزلتين)؛ 10 منازل ترفض بـ 400 قبل GL.
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'تكلفة الوحدة تقبل منزلتين عشريتين كحد أقصى' },
+  )
   @IsPositive({ message: 'تكلفة الوحدة يجب أن تكون رقمًا موجبًا' })
   unitCost: number;
 

@@ -156,6 +156,13 @@ export class ShippingService {
         // PREPARING أو IN_TRANSIT (نفس تعريف الفهرس الجزئي الفريد
         // shipments_active_per_order_unique في هجرة 20260906000000؛
         // الفهرس يظل خط الدفاع الأخير ضد سباق لم يلتقطه هذا الفحص).
+        //
+        // SHP-3 (أ) (GF-IMP-W2) — قرار موثّق: الشحنة الملغاة (CANCELLED)
+        // ليست نشطة فلا تُضاف لهذا الفحص ولا تحجب إنشاء شحنة جديدة
+        // (الفهرس الجزئي يستثنيها أصلًا: WHERE status IN
+        // ('PREPARING','IN_TRANSIT')). ملاحظة: قيمة CANCELLED موجودة
+        // في الـ enum من الهجرة الموحدة 20260906100000 لكن لا يوجد مسار
+        // يصلها حاليًا — راجع مصفوفة الانتقالات وتحذيرها أدناه وADR-0017.
         const activeShipments = await tx.shipment.count({
           where: {
             salesOrderId: data.salesOrderId,
@@ -289,7 +296,11 @@ export class ShippingService {
           shippingCost: Number(created.shippingCost),
         };
         await storeIdempotencyResponse(tx, idempotencyKey, response);
-        return created;
+        // SHP-4 (P1 — GF-IMP-W2): المسار السعيد يرجع نفس الكائن المنسّق
+        // المُخزَّن لإعادة التشغيل (shippingCost رقمي) — كانت الاستجابة الأولى
+        // ترجع كائن Prisma خامًا (shippingCost Decimal نصي عند التسلسل) فكانت
+        // إعادة التشغيل تختلف عن الأولى في الشكل والقيم.
+        return response;
       });
     } catch (error) {
       if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
@@ -317,8 +328,20 @@ export class ShippingService {
     });
     if (!shipment) throw new NotFoundException('Shipment not found');
 
+    // SHP-3 (أ) (P1 — GF-IMP-W2) — إلغاء شحنة في طور التحضير مسموح ومكتمل:
+    // انتقال PREPARING → CANCELLED داخل المعاملة يعكس قيد تكلفة الشحن
+    // المرحّل عند الإنشاء (نقدًا أو استحقاقًا عبر reverseJournalEntryInTx)
+    // ويعيد أمر البيع من SHIPPED إلى CONFIRMED (CAS) بحيث يمكن إنشاء شحنة
+    // بديلة. القيود التاريخية (قبل لقطات ACC-2) يرفضها محرك العكس برسالة
+    // واضحة — قرار موثق في ADR-0017. لا آثار مخزون: createShipment لا
+    // يحرك المخزون (ADR-0017) — الأثر الوحيد مالي (قيد التكلفة) وحالوي
+    // (حالة الأمر) وكلاهما يعالج داخل المعاملة نفسها.
     const allowed: Record<ShipmentStatus, ShipmentStatus[]> = {
-      [ShipmentStatus.PREPARING]: [ShipmentStatus.SHIPPED],
+      [ShipmentStatus.PREPARING]: [
+        ShipmentStatus.SHIPPED,
+        ShipmentStatus.CANCELLED,
+      ],
+      [ShipmentStatus.CANCELLED]: [],
       [ShipmentStatus.SHIPPED]: [ShipmentStatus.IN_TRANSIT],
       [ShipmentStatus.IN_TRANSIT]: [
         ShipmentStatus.DELIVERED,
@@ -337,6 +360,63 @@ export class ShippingService {
     }
 
     return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      // SHP-3 (ب) (P1 — GF-IMP-W2): RETURNED لا يُقبل إلا بوجود مرتجع بيع
+      // مقترن بأمر البيع (SalesReturn بـ salesOrderId) — الدلالة الجديدة:
+      // البضاعة عادت فعليًا وأُثبت أثرها المالي عبر مرتجع البيع، فالشحنة
+      // لا «تُرجَع» تخطيطيًا قبل أن يُنشأ المرتجع (409 برسالة عربية).
+      if (status === ShipmentStatus.RETURNED) {
+        const linkedReturn = await tx.salesReturn.findFirst({
+          where: { salesOrderId: shipment.salesOrderId },
+          select: { id: true },
+        });
+        if (!linkedReturn) {
+          throw new ConflictException(
+            'لا يمكن تحويل الشحنة إلى RETURNED — أنشئ مرتجع البيع المقترن بالأمر أولًا',
+          );
+        }
+      }
+
+      // SHP-3 (أ): إلغاء شحنة PREPARING — عكس قيد تكلفة الشحن (نقد أو
+      // استحقاق) داخل نفس المعاملة عبر النسخة InTx، ثم إعادة أمر البيع
+      // إلى CONFIRMED بـ CAS حتى يمكن إنشاء شحنة بديلة. القيد يوجد بأحد
+      // مفتاحين ثابتين مشتقين من معرف الشحنة (كما في createShipment).
+      if (status === ShipmentStatus.CANCELLED) {
+        const costEntry = await tx.journalEntry.findFirst({
+          where: {
+            postingKey: {
+              in: [`shipping-cost-cash:${id}`, `shipping-cost-accrual:${id}`],
+            },
+          },
+          select: { id: true, isReversed: true, code: true },
+        });
+        if (costEntry) {
+          if (costEntry.isReversed) {
+            throw new ConflictException(
+              `قيد تكلفة الشحنة ${costEntry.code} معكوس بالفعل — حالة غير متسقة تتطلب مراجعة يدوية`,
+            );
+          }
+          await this.financialPosting.reverseJournalEntryInTx(
+            tx,
+            costEntry.id,
+            actorId,
+            `عكس قيد تكلفة شحنة ملغاة ${shipment.code}`,
+          );
+        }
+        // قيد غائب = شحنة بلا تكلفة مرحّلة (تكلفة صفر) — لا شيء لعكسه.
+
+        const orderRevert = await tx.salesOrder.updateMany({
+          where: {
+            id: shipment.salesOrderId,
+            status: SalesOrderStatus.SHIPPED,
+          },
+          data: { status: SalesOrderStatus.CONFIRMED },
+        });
+        if (orderRevert.count !== 1) {
+          throw new ConflictException(
+            'تعذر إعادة أمر البيع إلى CONFIRMED — تغيّرت حالته بشكل متزامن؛ راجع الأمر قبل إعادة المحاولة',
+          );
+        }
+      }
       const result = await tx.shipment.updateMany({
         where: { id, status: shipment.status },
         data: {

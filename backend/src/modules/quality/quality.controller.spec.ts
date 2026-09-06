@@ -49,6 +49,20 @@ describe('QualityController — التفويض والصلاحيات (GF-0003)', 
     );
   });
 
+  // QLT-3 (GF-IMP-W2): فلاتر قائمة الفحوص تمرر كما هي إلى الخدمة
+  it('QLT-3: getChecks يمرر فلاتر stage/workOrderId/from/to إلى الخدمة', async () => {
+    const filters = {
+      stage: ProductionStage.CUTTING,
+      workOrderId: 'wo-2',
+      from: '2026-08-01T00:00:00Z',
+      to: '2026-08-31T23:59:59Z',
+      page: 2,
+      limit: 10,
+    };
+    await controller.getChecks(filters);
+    expect(service.getQualityChecks).toHaveBeenCalledWith(filters);
+  });
+
   it('تسجيل فحص مقيّد بـ PRODUCTION_MANAGER وGENERAL_MANAGER', () => {
     const roles = getMethodMetadata<UserRole[]>(
       ROLES_KEY,

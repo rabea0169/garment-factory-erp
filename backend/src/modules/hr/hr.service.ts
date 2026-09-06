@@ -441,17 +441,35 @@ export class HrService {
         });
         if (!worker) throw new NotFoundException('العامل غير موجود');
 
-        const existing = await tx.payroll.findFirst({
+        // HR-3 (P1 — GF-IMP-W2): رفض تداخل فترات الرواتب. الفحص القائم كان
+        // مطابقة تامة على (periodStart, periodEnd) فكانت الكشوف المتداخلة
+        // جزئيًا تمر — يُنشأ كشف ثانٍ يخصم نفس السلف والإنتاج مرة أخرى.
+        // الآن نرفض أي تقاطع نطاقات لنفس العامل: كشف قائم يبدأ قبل نهاية
+        // الفترة المطلوبة وينتهي بعد بدايتها.
+        //
+        // PayrollStatus الفعلي في schema: DRAFT / APPROVED / PAID — لا
+        // توجد حالة CANCELLED، ولا توجد أي حالة "منتهية يمكن تجاهلها":
+        // كل صف payrolls لجميع حالاته يمثل كشفًا حيًا يخصم سلفًا وإنتاجًا،
+        // فالفحص يشمل كل الحالات بلا استثناء.
+        //
+        // ملاحظة DB: قيد استثناء نطاقي على مستوى القاعدة (EXCLUDE USING
+        // btree_gist على workerId مع periodStart/periodEnd) كان يمكن أن
+        // يكون خط دفاع أخير ضد السباقات، لكنه مؤجل بقرار لتجنب مخاطر
+        // الامتدادات (btree_gist) على Railway — الفحص داخل $transaction
+        // + القيد الفريد القائم على (workerId, periodStart, periodEnd)
+        // يغطيان الحالات العملية.
+        const overlapping = await tx.payroll.findFirst({
           where: {
             workerId: input.workerId,
-            periodStart: input.periodStart,
-            periodEnd: input.periodEnd,
+            // periodStart <= input.periodEnd AND periodEnd >= input.periodStart
+            periodStart: { lte: input.periodEnd },
+            periodEnd: { gte: input.periodStart },
           },
           select: { id: true },
         });
-        if (existing) {
+        if (overlapping) {
           throw new ConflictException(
-            'يوجد كشف راتب للعامل في هذه الفترة بالفعل',
+            'تتداخل فترة كشف الراتب مع كشف قائم لنفس العامل — لا يُسمح بتداخل فترات الرواتب',
           );
         }
 
@@ -463,20 +481,32 @@ export class HrService {
             },
             _sum: { totalAmount: true },
           }),
-          tx.workerAdvance.aggregate({
+          // HR-2 (P1 — GF-IMP-W2): نجلب صفوف السلف (لا مجموعها الأعمى) —
+          // الخصم يُحسب من المتبقي غير المسى فقط (amount - settledAmount)،
+          // والترتيب الزمني يجهّز للتوزيع FIFO عند الدفع. سلفة بلغت
+          // settledAmount == amount مسوية بالكامل ولا تدخل الحساب أبدًا.
+          tx.workerAdvance.findMany({
             where: {
               workerId: input.workerId,
               date: { gte: input.periodStart, lt: periodEndExclusive },
             },
-            _sum: { amount: true },
+            select: { id: true, amount: true, settledAmount: true },
+            orderBy: [{ date: 'asc' }, { id: 'asc' }],
           }),
         ]);
         const grossAmount =
           production._sum.totalAmount ?? new Prisma.Decimal(0);
-        const advanceTotal = advances._sum.amount ?? new Prisma.Decimal(0);
-        const advanceDeduct = advanceTotal.gt(grossAmount)
+        // HR-2: الخصم = مجموع المتبقي غير المسى (amount - settledAmount)
+        // لسلف الفترة. السلوك القديم كان يجمع السلف كاملة كل مرة — بلا
+        // ذاكرة لما خُصم فعليًا — فتُخصم السلفة الواحدة مرات متعددة.
+        const unsettledAdvanceTotal = advances.reduce(
+          (sum, advance) =>
+            sum.plus(advance.amount.minus(advance.settledAmount)),
+          new Prisma.Decimal(0),
+        );
+        const advanceDeduct = unsettledAdvanceTotal.gt(grossAmount)
           ? grossAmount
-          : advanceTotal;
+          : unsettledAdvanceTotal;
         const absenceDeduct = new Prisma.Decimal(0);
         const netAmount = grossAmount.minus(advanceDeduct).minus(absenceDeduct);
         const payrollIdempotencyKeyId = await createIdempotencyKey(
@@ -520,8 +550,10 @@ export class HrService {
       });
     } catch (error) {
       if (isPayrollPeriodUniqueViolation(error)) {
+        // HR-3: القيد الفريد القائم (workerId, periodStart, periodEnd) خط
+        // الدفاع الأخير ضد السباقات — نفس رسالة رفض التداخل للاتساق.
         throw new ConflictException(
-          'يوجد كشف راتب للعامل في هذه الفترة بالفعل',
+          'تتداخل فترة كشف الراتب مع كشف قائم لنفس العامل — لا يُسمح بتداخل فترات الرواتب',
         );
       }
       if (isIdempotencyUniqueViolation(error) && idempotencyKey) {
@@ -756,6 +788,22 @@ export class HrService {
           throw new ConflictException('تعذر دفع الراتب؛ حالته تغيرت بالتزامن');
         }
 
+        // HR-2 (P1 — GF-IMP-W2): وزّع خصم السلف فعليًا على سلف الفترة FIFO
+        // داخل نفس معاملة الدفع — حدّث settledAmount لكل سلفة تُغطى جزئيًا
+        // أو كليًا (settledAmount += المخصص، بحد amount). هذا يمنح الخصم
+        // ذاكرة دائمة: الكشف التالي لنفس العامل يرى المتبقي غير المسى فقط
+        // فلا يُعاد خصم ما سُدد. القيد GL (Cr WORKER_ADVANCES بالخصومات)
+        // يبقى كما أصلحته الموجة الأولى — التوزيع هنا يطابق سجلات السلف
+        // مع القيد نفسه داخل المعاملة الواحدة.
+        if (payroll.advanceDeduct.gt(0)) {
+          await this.settleWorkerAdvancesFifoInTx(tx, {
+            workerId: payroll.workerId,
+            periodStart: payroll.periodStart,
+            periodEnd: payroll.periodEnd,
+            allocation: payroll.advanceDeduct,
+          });
+        }
+
         // HR-1 (P0 — GF-IMP-W1): قيد الدفع يصفّي الالتزام المتراكم من قيد
         // الاعتماد (Dr SALARIES_EXPENSE / Cr SALARIES_PAYABLE بالإجمالي) بدل
         // تسجيل المصروف مرة ثانية. القيد الصحيح:
@@ -844,6 +892,51 @@ export class HrService {
       }
       throw error;
     }
+  }
+
+  /**
+   * HR-2 (P1 — GF-IMP-W2): توزيع خصم السلف على سلف الفترة FIFO داخل معاملة
+   * الدفع. لكل سلفة بالترتيب الزمني: المخصص = min(المتبقي من الخصم،
+   * amount - settledAmount)، ويُحدّث settledAmount بالمخصص (بحد amount).
+   * السلف المسية بالكامل (settledAmount == amount) تُتخطى عمدًا — لا تدخل
+   * حسابات الخصم لاحقًا. إن تجاوز الخصم مجموع المتبقي (بيانات متقادمة)
+   * يُوزّع المتاح فقط ويبقى الفارق بلا تحديث سلف — القيد GL يبقى مصدر
+   * الحقيقة المالية.
+   */
+  private async settleWorkerAdvancesFifoInTx(
+    tx: Prisma.TransactionClient,
+    input: {
+      workerId: string;
+      periodStart: Date;
+      periodEnd: Date;
+      allocation: Prisma.Decimal;
+    },
+  ): Promise<void> {
+    const periodEndExclusive = getPeriodEndExclusive(input.periodEnd);
+    const advances = await tx.workerAdvance.findMany({
+      where: {
+        workerId: input.workerId,
+        date: { gte: input.periodStart, lt: periodEndExclusive },
+      },
+      select: { id: true, amount: true, settledAmount: true },
+      orderBy: [{ date: 'asc' }, { id: 'asc' }],
+    });
+    let remaining = input.allocation;
+    for (const advance of advances) {
+      if (remaining.lte(0)) break;
+      const outstanding = advance.amount.minus(advance.settledAmount);
+      if (outstanding.lte(0)) continue; // سلفة مسية بالكامل (HR-2 ج)
+      const allocation = outstanding.lt(remaining) ? outstanding : remaining;
+      await tx.workerAdvance.update({
+        where: { id: advance.id },
+        data: { settledAmount: { increment: allocation } },
+      });
+      remaining = remaining.minus(allocation);
+    }
+    // أي متبقٍ من الخصم بعد آخر سلفة (لا يحدث في المسارات الحالية لأن
+    // التوزيع يستخدم نفس نطاق الفترة المستخدم في حساب الخصم وabsenceDeduct
+    // صفر) يبقى بلا تحديث سلف — القيد GL مصدر الحقيقة المالية، وسجل
+    // النشاط أدناه يوثّق قيمة الخصم الكاملة للمراجعة.
   }
 
   private validatePayrollPeriod(periodStart: Date, periodEnd: Date): void {

@@ -70,6 +70,8 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       const order = {
         id: orderId,
         code: 'PO-001',
+        // PUR-5 (أ): الاستلام على APPROVED فقط (كانت الحالة غير مضبوطة)
+        status: PurchaseOrderStatus.APPROVED,
         items: [
           { id: 'item-1', quantity: 10, rawMaterialId: 'rm-1', unitCost: 5 },
         ],
@@ -104,6 +106,9 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
       const orderId = 'order-1';
       const order = {
         id: orderId,
+        // PUR-5 (أ): أمر معتمد وكل بنوده مستلمة — نصل إلى فحص «All items
+        // are already received» نفسه (لو كانت RECEIVED لسبقه فحص أسبق)
+        status: PurchaseOrderStatus.APPROVED,
         items: [{ id: 'item-1', quantity: 10 }],
       };
       mockPrisma.purchaseOrder.findUnique.mockResolvedValue(order);
@@ -189,6 +194,76 @@ describe('PurchasingService Audit (GF-AUDIT-001D)', () => {
         'user-1',
         expect.anything(),
       );
+    });
+  });
+
+  // PUR-4 (P1 — GF-IMP-W2): كود مرتجع مستقر + سجل تدقيق لمرتجع المورد
+  describe('returnToSupplier — PUR-4 كود مستقر وتدقيق', () => {
+    it('يكتب ActivityLog SUPPLIER_RETURN_CREATED ويربط كل السجلات بكود مرتجع واحد مستقر', async () => {
+      const orderId = 'order-1';
+      const itemId = 'item-1';
+      mockPrisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: orderId,
+        code: 'PO-001',
+        status: PurchaseOrderStatus.RECEIVED,
+        supplierId: 'sup-1',
+        items: [{ id: itemId, rawMaterialId: 'rm-1', unitCost: 5 }],
+      });
+      mockPrisma.warehouse.findFirst.mockResolvedValue({
+        id: 'wh-1',
+        code: 'WH-RAW',
+      });
+      mockPrisma.purchaseReceiptItem.aggregate.mockResolvedValue({
+        _sum: { quantity: 10 },
+      });
+      mockPrisma.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: -5 },
+      });
+      mockInventory.issue.mockResolvedValue({ entryCode: 'SLE-001' });
+      mockPrisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      // مسح أثر الاختبارات السابقة في الملف — الـ mocks مشتركة على مستوى الملف
+      mockPrisma.activityLog.create.mockClear();
+      (mockInventory.issue as jest.Mock).mockClear();
+      (mockFinancial.postJournalEntryInTx as jest.Mock).mockClear();
+
+      await service.returnToSupplier(
+        orderId,
+        { purchaseOrderItemId: itemId, quantity: 2 },
+        'user-1',
+      );
+
+      // (ب) ActivityLog داخل المعاملة بالفعل بالكود والكمية والمبلغ
+      expect(mockPrisma.activityLog.create).toHaveBeenCalledTimes(1);
+      const logCall = mockPrisma.activityLog.create.mock.calls[0][0];
+      expect(logCall.data).toMatchObject({
+        userId: 'user-1',
+        action: 'SUPPLIER_RETURN_CREATED',
+        module: 'PURCHASING',
+      });
+      const details = logCall.data.details;
+      expect(details.purchaseOrderId).toBe(orderId);
+      expect(details.purchaseOrderItemId).toBe(itemId);
+      expect(details.quantity).toBe(2);
+      expect(details.amount).toBe(10);
+      // (أ) الكود المستقر بصيغة supplier-return:<uuid>
+      expect(details.returnCode).toMatch(
+        /^supplier-return:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+      );
+
+      // (أ) نفس الكود في reference حركة المخزون وmetadata القيد
+      const issueCall = mockInventory.issue.mock.calls[0][0];
+      expect(issueCall.reference).toBe(
+        `PURCHASE_RETURN_ITEM:${itemId}:${details.returnCode}`,
+      );
+      const postingCall = (mockFinancial.postJournalEntryInTx as jest.Mock).mock
+        .calls[0];
+      expect(postingCall[1].reference).toBe(issueCall.reference);
+      expect(postingCall[1].metadata).toMatchObject({
+        source: 'PURCHASE_RETURN',
+        returnCode: details.returnCode,
+        returnQuantity: 2,
+        returnAmount: 10,
+      });
     });
   });
 });

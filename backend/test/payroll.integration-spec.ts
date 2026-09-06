@@ -1,5 +1,6 @@
 import {
   AccountType,
+  FiscalPeriodStatus,
   PayrollStatus,
   Prisma,
   UserRole,
@@ -21,6 +22,7 @@ integrationDescribe('GF-0015 payroll integration', () => {
   let actorId: string;
   let approverId: string;
   let workerId: string;
+  let secondWorkerId: string;
   let treasuryId: string;
   const periodStart = new Date('2026-08-01T00:00:00.000Z');
   const periodEnd = new Date('2026-08-31T00:00:00.000Z');
@@ -49,7 +51,8 @@ integrationDescribe('GF-0015 payroll integration', () => {
         "worker_advances",
         "attendance",
         "workers",
-        "users"
+        "users",
+        "fiscal_periods"
       CASCADE
     `);
     const actor = await prisma.user.create({
@@ -74,6 +77,19 @@ integrationDescribe('GF-0015 payroll integration', () => {
       },
     });
     approverId = approver.id;
+    // ACC-3 (GF-IMP-W2): كل ترحيل آلي بلا fiscalPeriodId (اعتماد/دفع الرواتب)
+    // يُحل الآن إلى الفترة المفتوحة الشاملة لتاريخ القيد — نزرع فترة مفتوحة
+    // تغطي تواريخ السيناريو (أغسطس) وتاريخ اليوم (قيود بلا تاريخ صريح تُرحّل
+    // بتاريخ الآن). بلا فترة مفتوحة يُرفض الترحيل بـ 400 (سلوك مقصود).
+    await prisma.fiscalPeriod.create({
+      data: {
+        name: `GF-0015-open-${randomUUID().slice(0, 8)}`,
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+        endDate: new Date('2026-12-31T00:00:00.000Z'),
+        status: FiscalPeriodStatus.OPEN,
+        createdById: actorId,
+      },
+    });
     await prisma.account.createMany({
       data: [
         {
@@ -131,6 +147,16 @@ integrationDescribe('GF-0015 payroll integration', () => {
       },
     });
     workerId = worker.id;
+    // HR-3: عامل ثانٍ للتحقق أن فحص التداخل مقيد بالعامل نفسه.
+    const secondWorker = await prisma.worker.create({
+      data: {
+        code: `WR-GF15-B-${randomUUID().slice(0, 8)}`,
+        name: 'GF-0015 Second Worker',
+        specialty: WorkerSpecialty.SEWING,
+        pieceRate: new Prisma.Decimal('5.50'),
+      },
+    });
+    secondWorkerId = secondWorker.id;
     await prisma.dailyProduction.createMany({
       data: [
         {
@@ -204,7 +230,10 @@ integrationDescribe('GF-0015 payroll integration', () => {
     expect(stored?.netAmount.toNumber()).toBe(0);
     await expect(
       hrService.createPayroll({ workerId, periodStart, periodEnd }, actorId),
-    ).rejects.toThrow('يوجد كشف راتب للعامل في هذه الفترة بالفعل');
+    ).rejects.toThrow(
+      // HR-3 (GF-IMP-W2): نفس الفترة تُرفض الآن برسالة رفض التداخل النطاقي.
+      'تتداخل فترة كشف الراتب مع كشف قائم لنفس العامل — لا يُسمح بتداخل فترات الرواتب',
+    );
   });
 
   it('replays create and approval idempotency without a second effect', async () => {
@@ -334,6 +363,15 @@ integrationDescribe('GF-0015 payroll integration', () => {
       where: { id: CHART_OF_ACCOUNTS.GENERAL_EXPENSE },
     });
     expect(generalExpense?.balance.toNumber()).toBe(0);
+    // HR-2 (GF-IMP-W2): الخصم 250 وُزّع فعليًا FIFO على سلفة الفترة داخل
+    // معاملة الدفع — سجل السلفة يوثّق التسوية الكاملة (settledAmount=250)
+    // فلا يعيد كشف لاحق خصمها.
+    const settledAdvance = await prisma.workerAdvance.findFirst({
+      where: { workerId },
+      orderBy: { date: 'asc' },
+    });
+    expect(settledAdvance?.settledAmount.toNumber()).toBe(250);
+    expect(settledAdvance?.amount.toNumber()).toBe(250);
   });
 
   it('does not allow concurrent requests to create two payrolls for one worker period', async () => {
@@ -348,5 +386,129 @@ integrationDescribe('GF-0015 payroll integration', () => {
       results.filter((result) => result.status === 'rejected'),
     ).toHaveLength(1);
     expect(await prisma.payroll.count()).toBe(1);
+  });
+
+  // HR-3 (P1 — GF-IMP-W2): منع تداخل فترات الرواتب على قاعدة حقيقية.
+  it('rejects a partially overlapping payroll period for the same worker (HR-3)', async () => {
+    await hrService.createPayroll(
+      { workerId, periodStart, periodEnd },
+      actorId,
+      `gf0015-hr3-${randomUUID()}`,
+    );
+
+    // فترة متداخلة جزئيًا: 15 أغسطس - 15 سبتمبر تتقاطع مع 1-31 أغسطس.
+    await expect(
+      hrService.createPayroll(
+        {
+          workerId,
+          periodStart: new Date('2026-08-15T00:00:00.000Z'),
+          periodEnd: new Date('2026-09-15T00:00:00.000Z'),
+        },
+        actorId,
+      ),
+    ).rejects.toThrow('تتداخل فترة كشف الراتب');
+    // فترة سابقة منتهية لا تتقاطع → تنجح.
+    await expect(
+      hrService.createPayroll(
+        {
+          workerId,
+          periodStart: new Date('2026-07-01T00:00:00.000Z'),
+          periodEnd: new Date('2026-07-31T00:00:00.000Z'),
+        },
+        actorId,
+      ),
+    ).resolves.toMatchObject({ status: PayrollStatus.DRAFT });
+    expect(await prisma.payroll.count()).toBe(2);
+  });
+
+  it('allows the same period for a different worker (HR-3 scope is per worker)', async () => {
+    const first = await hrService.createPayroll(
+      { workerId, periodStart, periodEnd },
+      actorId,
+    );
+    const second = await hrService.createPayroll(
+      { workerId: secondWorkerId, periodStart, periodEnd },
+      actorId,
+    );
+
+    expect(first).toMatchObject({ status: PayrollStatus.DRAFT });
+    expect(second).toMatchObject({ status: PayrollStatus.DRAFT });
+    expect(await prisma.payroll.count()).toBe(2);
+  });
+
+  // HR-2 (P1 — GF-IMP-W2): ذاكرة تسوية السلف عبر الدفع الفعلي — الخصم
+  // يُوزّع FIFO على سلف الفترة داخل معاملة الدفع، والسلفة المسية بالكامل
+  // لا تُعاد خصمًا في كشف لاحق (يغطيها فحص HR-3 + حساب المتبقي غير المسى).
+  it('settles advances FIFO on payment and never re-deducts a fully settled advance (HR-2)', async () => {
+    // سلفة 200 بتاريخ داخل الفترة + سلفة 300 بتاريخ لاحق داخل الفترة.
+    await prisma.workerAdvance.create({
+      data: {
+        workerId,
+        amount: new Prisma.Decimal('200.00'),
+        date: new Date('2026-08-10T00:00:00.000Z'),
+      },
+    });
+    await prisma.workerAdvance.create({
+      data: {
+        workerId,
+        amount: new Prisma.Decimal('300.00'),
+        date: new Date('2026-08-20T00:00:00.000Z'),
+      },
+    });
+
+    // الإنتاج في الفترة 660 — المتبقي غير المسى من السلف 750 (250+200+300)
+    // فيُحدّ الخصم عند gross (HR-2: الحد الأقصى الإجمالي كما كان).
+    const payroll = await hrService.createPayroll(
+      { workerId, periodStart, periodEnd },
+      actorId,
+      `gf0015-hr2-create-${randomUUID()}`,
+    );
+    expect(payroll).toMatchObject({
+      grossAmount: 660,
+      advanceDeduct: 660, // 750 (متبقي السلف) مُحدّ عند gross
+      netAmount: 0,
+    });
+
+    await hrService.approvePayroll(
+      payroll.id,
+      approverId,
+      `gf0015-hr2-approve-${randomUUID()}`,
+    );
+    await hrService.payPayroll(
+      payroll.id,
+      { treasuryId, paymentDate: periodEnd },
+      actorId,
+      `gf0015-hr2-pay-${randomUUID()}`,
+    );
+
+    // التوزيع FIFO بالترتيب الزمني: سلفة 10/8 (200) كاملة، ثم سلفة
+    // beforeEach 15/8 (250) كاملة، ثم 210 فقط من سلفة 20/8 (300) —
+    // المجموع 660 (قيمة الخصم) ولا سلفة تتجاوز amount.
+    const rows = await prisma.workerAdvance.findMany({
+      where: { workerId },
+      orderBy: { date: 'asc' },
+    });
+    expect(
+      rows.map((row) => [row.amount.toNumber(), row.settledAmount.toNumber()]),
+    ).toEqual([
+      [200, 200],
+      [250, 250],
+      [300, 210],
+    ]);
+
+    // صافٍ = صفر: لا نقدية تخرج من الخزينة (قيد خصومات فقط) — HR-1.
+    const treasuryAfter = await prisma.treasury.findUnique({
+      where: { id: treasuryId },
+    });
+    expect(treasuryAfter?.balance.toNumber()).toBe(1000);
+
+    // كشف لاحق لنفس الفترة مرفوض بفحص HR-3 — لا مسار لإعادة الخصم أصلًا،
+    // وحتى مع بيانات قديمة: السلفان المسيتان بالكامل (200/250) لن تدخلا
+    // حساب الخصم — المتبقي غير المسى الوحيد هو 90 من سلفة الـ300.
+    const remainingUnsettled = rows.reduce(
+      (sum, row) => sum + row.amount.minus(row.settledAmount).toNumber(),
+      0,
+    );
+    expect(remainingUnsettled).toBe(90);
   });
 });
