@@ -5,6 +5,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import { json, urlencoded } from 'express';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { GlobalExceptionFilter } from './common/global-exception.filter';
 import { RequestContextInterceptor } from './common/request-context.interceptor';
 
@@ -63,7 +64,14 @@ async function bootstrap() {
     process.exit(1);
   }
 
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // CC-1: الوكيل الموثوق — Railway يمرر الطلبات عبر وكيل واحد. بضبط
+  // trust proxy=1 يصبح req.ip عنوان العميل الحقيقي (من X-Forwarded-For
+  // بعد تحقق الوكيل الموثوق) بدل عنوان الوكيل المشترك، فتعمل حدود المعدل
+  // (throttler) لكل عميل فعلي لا على كل المستخدمين مجتمعين، ويصبح req.ip
+  // مصدر الـ IP الموثوق في كل الموديولات.
+  app.set('trust proxy', 1);
 
   const configService = app.get(ConfigService);
   const nodeEnv = configService.get<string>('NODE_ENV', 'development');

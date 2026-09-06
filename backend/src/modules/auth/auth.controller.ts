@@ -101,9 +101,9 @@ function extractMeta(req?: Request): { userAgent?: string; ip?: string } {
       typeof headers['user-agent'] === 'string'
         ? headers['user-agent']
         : undefined,
-    ip:
-      (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0] ??
-      req.ip ??
-      req.socket?.remoteAddress,
+    // CC-1: مصدر IP الموثوق هو req.ip المحسوب من express بعد ضبط
+    // trust proxy=1 في main.ts. قراءة x-forwarded-for الخام مباشرة كانت
+    // قابلة للتزييف من العميل قبل ذلك الضبط فأُزيل الاعتماد عليها.
+    ip: req.ip ?? req.socket?.remoteAddress,
   };
 }

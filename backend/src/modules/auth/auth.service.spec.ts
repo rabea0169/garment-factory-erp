@@ -152,7 +152,19 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
       prisma.refreshToken as { findUnique: jest.Mock }
     ).findUnique.mockResolvedValue(null);
     (prisma.refreshToken as { update: jest.Mock }).update.mockResolvedValue({});
-    (prisma as { $transaction: jest.Mock }).$transaction.mockResolvedValue([]);
+    // AUTH-2: refresh ينفذ داخل معاملة تفاعلية واحدة — الـ mock يشغّل
+    // callback المعاملة بتمرير prisma نفسها كعميل tx (النمط القائم في specs
+    // الشراء). logout يستخدم صيغة المصفوفة فندعم الشكلين معًا.
+    (prisma as { $transaction: jest.Mock }).$transaction.mockImplementation(
+      (arg: unknown) => {
+        if (typeof arg === 'function') {
+          return (arg as (tx: unknown) => Promise<unknown>)(prisma);
+        }
+        return Promise.resolve(arg ?? []);
+      },
+    );
+    // AUTH-2: التحديث الشرطي الذري ينجح افتراضيًا (صف متأثر واحد)
+    prisma.$executeRaw.mockResolvedValue(1);
     prisma.user.update.mockResolvedValue({ jwtVersion: 1 });
     service = new AuthService(
       prisma as unknown as PrismaService,
@@ -170,7 +182,7 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
     await expect(service.refresh('short')).rejects.toThrow(BadRequestException);
   });
 
-  it('يرفض token ملغى بـ 401 (مؤشر سرقة)', async () => {
+  it('يرفض إعادة استخدام token ملغى بـ 401 (executeRaw يعيد 0 صفوف — مؤشر سرقة)', async () => {
     const raw = await issueRefreshViaLogin();
     const expectedHash = hashToken(raw);
     (
@@ -180,7 +192,7 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
       userId: 'u-1',
       tokenHash: expectedHash,
       expiresAt: new Date(Date.now() + 86400_000),
-      revokedAt: new Date(), // ملغى
+      revokedAt: new Date(), // ملغى مسبقًا
       user: {
         id: 'u-1',
         email: 'admin@factory.com',
@@ -193,7 +205,41 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
         updatedAt: new Date(),
       },
     });
+    // AUTH-2: الشرط الذري (revoked_at IS NULL) لا يطابق صفًا ملغى مسبقًا
+    prisma.$executeRaw.mockResolvedValue(0);
     await expect(service.refresh(raw)).rejects.toThrow(UnauthorizedException);
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+  });
+
+  it('AUTH-2: يرفض سباق استخدام متزامن لنفس التوكن (executeRaw يعيد 0) بـ 401', async () => {
+    const raw = await issueRefreshViaLogin();
+    const expectedHash = hashToken(raw);
+    (
+      prisma.refreshToken as { findUnique: jest.Mock }
+    ).findUnique.mockResolvedValue({
+      id: 'rt-race',
+      userId: 'u-1',
+      tokenHash: expectedHash,
+      expiresAt: new Date(Date.now() + 86400_000),
+      revokedAt: null, // عند القراءة بدا غير ملغى — لكن طلبًا موازيًا سبق فألغاه
+      user: {
+        id: 'u-1',
+        email: 'admin@factory.com',
+        role: 'SUPER_ADMIN',
+        isActive: true,
+        jwtVersion: 0,
+        password: 'x',
+        name: 'مدير',
+        createdAt: new Date(),
+        updatedAt: new Date(),
+      },
+    });
+    prisma.$executeRaw.mockResolvedValue(0);
+    // نصفّي عدّاد sign لأن issueRefreshViaLogin وقّع access توكن الدخول
+    jwtService.sign.mockClear();
+    await expect(service.refresh(raw)).rejects.toThrow(UnauthorizedException);
+    // الخاسر في السباق لا يحصل على access token جديد رغم صلاحية القراءة الأولى
+    expect(jwtService.sign).not.toHaveBeenCalled();
   });
 
   it('يرفض token منتهي الصلاحية بـ 401', async () => {
@@ -220,6 +266,8 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
       },
     });
     await expect(service.refresh(raw)).rejects.toThrow(UnauthorizedException);
+    // فحص الانتهاء يسبق أي كتابة — لا يصل للتحديث الذري أصلًا
+    expect(prisma.$executeRaw).not.toHaveBeenCalled();
   });
 
   it('يدور token صالح: يصدر access+refresh جديد ويلغي القديم', async () => {
@@ -239,7 +287,7 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
         return Promise.resolve(row);
       },
     );
-    // findUnique: يُستدعى مرتين — أولًا على الـ token القديم، ثم على الجديد
+    // findUnique: يُستدعى على الـ token القديم فقط (AUTH-2: لا إعادة قراءة للجديد)
     (
       prisma.refreshToken as { findUnique: jest.Mock }
     ).findUnique.mockImplementation(
@@ -280,15 +328,36 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
     expect(jwtService.sign).toHaveBeenCalledWith(
       expect.objectContaining({ v: 5, sub: 'u-1' }),
     );
-    // الـ token القديم يُلغى
+
+    // AUTH-2: الدورة كاملة داخل معاملة تفاعلية واحدة
+    expect(prisma.$transaction).toHaveBeenCalledTimes(1);
+
+    // AUTH-2: التوكن الجديد يُنشأ داخل المعاملة مع replacedById مضبوطًا
+    // منذ الإنشاء مباشرة (لا تحديث لاحق منفصل لربطه بالقديم)
     expect(
-      (prisma.refreshToken as { update: jest.Mock }).update,
+      (prisma.refreshToken as { create: jest.Mock }).create,
     ).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ id: 'rt-old' }),
-        data: expect.objectContaining({ revokedAt: expect.any(Date) }),
+        data: expect.objectContaining({
+          userId: 'u-1',
+          replacedById: 'rt-old',
+        }),
       }),
     );
+
+    // AUTH-2: الإلغاء والربط في تحديث شرطي ذري واحد بشرط revoked_at IS NULL —
+    // لا استدعاءات update منفصلة
+    expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+    const [sqlParts, newTokenId, oldTokenId] = prisma.$executeRaw.mock.calls[0];
+    expect(String(sqlParts)).toContain('UPDATE refresh_tokens');
+    expect(String(sqlParts)).toContain('revoked_at IS NULL');
+    expect(String(sqlParts)).toContain('replaced_by_id');
+    // المعاملات بالترتيب: [id-التوكن-الجديد, id-التوكن-القديم]
+    expect(String(newTokenId)).toMatch(/^rt-new-/);
+    expect(String(oldTokenId)).toBe('rt-old');
+    expect(
+      (prisma.refreshToken as { update: jest.Mock }).update,
+    ).not.toHaveBeenCalled();
   });
 
   it('logout — يلغي token صالح ويرفع jwtVersion', async () => {

@@ -5,6 +5,7 @@ import { LoginDto } from './dto/login.dto';
 import { RefreshDto } from './dto/refresh.dto';
 import { IS_PUBLIC_KEY } from './public.decorator';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
+import type { Request } from 'express';
 
 describe('AuthController — الوصول العام والتفويض (GF-0003 + SEC-F04)', () => {
   let controller: AuthController;
@@ -39,6 +40,20 @@ describe('AuthController — الوصول العام والتفويض (GF-0003 +
     expect(result.access_token).toBe('t');
     // SEC-F04: يجب أن يرجع refresh_token ضمن الـ response
     expect(result.refresh_token).toBe('r');
+  });
+
+  it('CC-1: يستخدم req.ip (لا ترويسة x-forwarded-for القابلة للتزييف) كمصدر IP', async () => {
+    const req = {
+      headers: { 'x-forwarded-for': '1.2.3.4, 5.6.7.8' },
+      ip: '9.9.9.9',
+    } as unknown as Request;
+    await controller.login(dto, req);
+    // الترويسة الخام تُتجاهل تمامًا — IP من req.ip فقط (محسوب من express
+    // بعد ضبط trust proxy في main.ts)
+    expect(authService.login).toHaveBeenCalledWith(dto, {
+      userAgent: undefined,
+      ip: '9.9.9.9',
+    });
   });
 
   it('يعيد profile المستخدم الحالي من سياق JWT', () => {
