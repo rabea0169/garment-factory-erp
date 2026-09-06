@@ -12,7 +12,6 @@ import {
   QualityCheckStatus,
   QualityWasteReason,
   RejectionReason,
-  WorkOrderStatus,
 } from '@prisma/client';
 import {
   computeRequestHash,
@@ -58,6 +57,8 @@ type QualityCheckResponse = {
   createdById: string | null;
   checkedAt: Date;
   closedAt: Date;
+  /** QLT-5: وصف الفحص (notes) — يعاد في الاستجابة ويُسجّل في التدقيق. */
+  notes: string | null;
 };
 
 function isStageRunUniqueViolation(error: unknown): boolean {
@@ -69,12 +70,10 @@ function isStageRunUniqueViolation(error: unknown): boolean {
   );
 }
 
-const LEGACY_STAGE: Record<ProductionStage, WorkOrderStatus> = {
-  [ProductionStage.CUTTING]: WorkOrderStatus.CUTTING,
-  [ProductionStage.SEWING]: WorkOrderStatus.SEWING,
-  [ProductionStage.IRONING]: WorkOrderStatus.IRONING,
-  [ProductionStage.PACKING]: WorkOrderStatus.PACKAGING,
-};
+// QLT-2 (P2 — GF-IMP-W3): خريطة LEGACY_STAGE حُذفت — عمود QualityCheck.stage
+// أصبح من نوع ProductionStage مباشرة (الهجرة 20260906200000_wave3_qlt2_stage_type
+// ترجمت القيم التراثية PACKAGING→PACKING وغيرها في القاعدة)؛ كل القراءات
+// والكتابات تستخدم ProductionStage بلا وسيط.
 
 @Injectable()
 export class QualityService {
@@ -94,8 +93,7 @@ export class QualityService {
     // مرشحات quality-kpi-query.dto (stage / workOrderId / from / to).
     // التواريخ تُتحقق كـ ISO صالح و from ≤ to (نفس قواعد KPI). التصفية
     // تُطبّق على where لتستفيد من الفهارس القائمة (workOrderId+stage)
-    // و(checkedAt). stage في الفحوص مخزّن بالقيمة التراثية
-    // (WorkOrderStatus) لذا يُمرّر عبر LEGACY_STAGE كما في KPI.
+    // و(checkedAt). QLT-2: stage الآن ProductionStage مباشرة بلا ترجمة.
     const from = query.from ? new Date(query.from) : undefined;
     const to = query.to ? new Date(query.to) : undefined;
     if (
@@ -118,7 +116,7 @@ export class QualityService {
         : undefined;
     const where: Prisma.QualityCheckWhereInput = {
       ...(query.workOrderId ? { workOrderId: query.workOrderId } : {}),
-      ...(query.stage ? { stage: LEGACY_STAGE[query.stage] } : {}),
+      ...(query.stage ? { stage: query.stage } : {}),
       ...(checkedAt ? { checkedAt } : {}),
     };
     const options = {
@@ -169,7 +167,7 @@ export class QualityService {
     const where = {
       status: QualityCheckStatus.COMPLETED,
       ...(query.workOrderId ? { workOrderId: query.workOrderId } : {}),
-      ...(query.stage ? { stage: LEGACY_STAGE[query.stage] } : {}),
+      ...(query.stage ? { stage: query.stage } : {}),
       ...(checkedAt ? { checkedAt } : {}),
     };
     const aggregate = await this.prisma.qualityCheck.aggregate({
@@ -303,7 +301,7 @@ export class QualityService {
           data: {
             workOrderId: input.workOrderId,
             stageRunId: input.stageRunId,
-            stage: LEGACY_STAGE[input.stage],
+            stage: input.stage,
             checkedQty: input.checkedQty,
             passedQty: input.passedQty,
             rejectedQty: input.rejectedQty,
@@ -375,6 +373,12 @@ export class QualityService {
                 rejectedQty: response.rejectedQty,
                 wasteQty: response.wasteQty,
                 wasteCost: response.wasteCost,
+                // QLT-5: تثبيت الوصف وأساس تكلفة الوحدة في سجل التدقيق —
+                // مواد فقط بلا عمالة حتى إقرار سياسة التحميل (التعليق في
+                // resolveUnitCost).
+                notes: response.notes,
+                unitCostBasis: 'MATERIALS_ONLY',
+                unitCost: response.unitCost,
               },
             },
           });
@@ -435,6 +439,17 @@ export class QualityService {
     }
   }
 
+  /**
+   * QLT-5 (حدود موثقة): تكلفة الوحدة هنا = مواد فقط (لقطة التكلفة المثبتة أو
+   * مجموع بنود BOM × تكلفة الخامة). أجور القطعة/العمالة خارج الحساب عمدًا حتى
+   * إقرار سياسة تحميل العمالة على أمر التشغيل — أي توسيع مستقبلي يجب أن يقرر:
+   * هل تُحمّل أجور القطعة على لقطة ProductionCostSnapshot (المصدر الموحد)
+   * أم تُضاف هنا، حتى لا تتضارب التكاليف بين الجودة والإنتاج والمحاسبة.
+   * الحد نفسه يُثبَّت في notes الاستجابة وفي سجل التدقيق (unitCostBasis).
+   *
+   * مسار الاحتياط (لا لقطة مثبتة): مجموع Decimal(كمية البند × تكلفة وحدة
+   * الخامة) — تخفيض Decimal كامل بلا تحويل عائم (QLT-4).
+   */
   private async resolveUnitCost(
     tx: Prisma.TransactionClient,
     bomVersionId: string,
@@ -459,6 +474,7 @@ export class QualityService {
       throw new NotFoundException('BOM version not found');
     }
 
+    // QLT-5: مواد فقط — لا تحميل عمالة حتى إقرار السياسة (تعليق الدالة أعلاه).
     return bom.lines.reduce(
       (sum, line) =>
         sum.add(
@@ -485,6 +501,7 @@ export class QualityService {
       createdById: string | null;
       checkedAt: Date;
       closedAt: Date;
+      notes: string | null;
     },
     stage: ProductionStage,
   ): QualityCheckResponse {
@@ -510,6 +527,8 @@ export class QualityService {
       createdById: row.createdById,
       checkedAt: row.checkedAt,
       closedAt: row.closedAt,
+      // QLT-5: الوصف يعاد في الاستجابة (حقل notes الموجود في المخطط).
+      notes: row.notes,
     };
   }
 }

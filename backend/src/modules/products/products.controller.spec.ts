@@ -40,8 +40,22 @@ describe('ProductsController — التفويض والتحقق من المسار
     await controller.getProduct('123e4567-e89b-12d3-a456-426614174000');
     expect(service.getAllSeasons).toHaveBeenCalledTimes(1);
     expect(service.getAllProducts).toHaveBeenCalledTimes(1);
+    // PROD-7: includeInactive يمرر false افتراضيًا (توحيد السلوكين)
     expect(service.getProductDetails).toHaveBeenCalledWith(
       '123e4567-e89b-12d3-a456-426614174000',
+      false,
+    );
+  });
+
+  // PROD-7: معامل الاستعلام includeInactive يُمرر كقيمة منطقية للخدمتين
+  it('PROD-7: includeInactive=true يمرر إلى قائمة المنتجات وتفاصيله', async () => {
+    await controller.getAllProducts({}, 'true');
+    await controller.getProduct('123e4567-e89b-12d3-a456-426614174000', 'true');
+
+    expect(service.getAllProducts).toHaveBeenCalledWith({}, true);
+    expect(service.getProductDetails).toHaveBeenCalledWith(
+      '123e4567-e89b-12d3-a456-426614174000',
+      true,
     );
   });
 
@@ -61,8 +75,13 @@ describe('ProductsController — التفويض والتحقق من المسار
         },
       ],
     };
-    await controller.createFullProduct(body);
-    expect(service.createFullProduct).toHaveBeenCalledWith(body, undefined);
+    await controller.createFullProduct(body, 'user-1');
+    // PROD-6: الفاعل من الجلسة يمرر للخدمة لسجل التدقيق (idempotencyKey ثم actorId)
+    expect(service.createFullProduct).toHaveBeenCalledWith(
+      body,
+      undefined,
+      'user-1',
+    );
   });
 
   it('ينشئ منتجًا عبر الخدمة ببيانات الطلب كما هي', async () => {
@@ -94,35 +113,45 @@ describe('ProductsController — التفويض والتحقق من المسار
 
   it('يفوّض إضافة متغير إلى الخدمة', async () => {
     const productId = '123e4567-e89b-12d3-a456-426614174000';
-    await controller.createVariant(productId, { size: 'L', color: 'أزرق' });
+    await controller.createVariant(
+      productId,
+      { size: 'L', color: 'أزرق' },
+      'user-1',
+    );
     expect(service.createVariant).toHaveBeenCalledWith(
       productId,
       'L',
       'أزرق',
       undefined,
+      'user-1',
     );
   });
 
   it('يفوّض إضافة BOM إلى الخدمة', async () => {
     const productId = '123e4567-e89b-12d3-a456-426614174000';
     const rawMaterialId = '223e4567-e89b-12d3-a456-426614174000';
-    await controller.addBomItem(productId, {
-      rawMaterialId,
-      quantity: 1.25,
-      unit: 'METER',
-    });
+    await controller.addBomItem(
+      productId,
+      {
+        rawMaterialId,
+        quantity: 1.25,
+        unit: 'METER',
+      },
+      'user-1',
+    );
     expect(service.addBomItem).toHaveBeenCalledWith(
       productId,
       rawMaterialId,
       1.25,
       'METER',
       undefined,
+      'user-1',
     );
   });
 
-  it('يفوّض حذف BOM إلى الخدمة', async () => {
+  it('يفوّض حذف BOM إلى الخدمة مع فاعل الجلسة (PROD-6)', async () => {
     const bomId = '323e4567-e89b-12d3-a456-426614174000';
-    await controller.deleteBomItem(bomId);
-    expect(service.deleteBomItem).toHaveBeenCalledWith(bomId);
+    await controller.deleteBomItem(bomId, 'user-1');
+    expect(service.deleteBomItem).toHaveBeenCalledWith(bomId, 'user-1');
   });
 });

@@ -9,7 +9,6 @@ import {
   QualityCheckStatus,
   QualityWasteReason,
   RejectionReason,
-  WorkOrderStatus,
 } from '@prisma/client';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import { QualityService } from './quality.service';
@@ -72,7 +71,7 @@ describe('QualityService — GF-0014', () => {
       id: 'qc-2',
       workOrderId: data.workOrderId,
       stageRunId: data.stageRunId,
-      stage: WorkOrderStatus.SEWING,
+      stage: ProductionStage.SEWING,
       checkedQty: data.checkedQty,
       passedQty: data.passedQty,
       rejectedQty: data.rejectedQty,
@@ -83,6 +82,7 @@ describe('QualityService — GF-0014', () => {
       wasteCost: new Prisma.Decimal(12.5),
       status: QualityCheckStatus.COMPLETED,
       createdById: 'user-1',
+      notes: 'عيوب وهالك في خط الخياطة',
       checkedAt: new Date('2026-08-30T10:00:00.000Z'),
       closedAt: new Date('2026-08-30T10:00:00.000Z'),
     };
@@ -130,7 +130,7 @@ describe('QualityService — GF-0014', () => {
     expect(createCall.data).toMatchObject({
       workOrderId: 'wo-1',
       stageRunId: 'run-1',
-      stage: WorkOrderStatus.SEWING,
+      stage: ProductionStage.SEWING,
       wasteQty: 5,
       wasteReason: QualityWasteReason.DEFECT_RELATED,
       unitCost: new Prisma.Decimal(2.5),
@@ -210,7 +210,7 @@ describe('QualityService — GF-0014', () => {
         id: 'qc-waste',
         workOrderId: 'wo-1',
         stageRunId: 'run-1',
-        stage: WorkOrderStatus.SEWING,
+        stage: ProductionStage.SEWING,
         checkedQty: 100,
         passedQty: 90,
         rejectedQty: 5,
@@ -221,6 +221,7 @@ describe('QualityService — GF-0014', () => {
         wasteCost: new Prisma.Decimal(12.5),
         status: QualityCheckStatus.COMPLETED,
         createdById: 'user-1',
+        notes: 'هدر خياطة',
         checkedAt: new Date('2026-08-30T10:00:00.000Z'),
         closedAt: new Date('2026-08-30T10:00:00.000Z'),
         ...overrides,
@@ -352,7 +353,7 @@ describe('QualityService — GF-0014', () => {
 
       const expectedWhere = {
         workOrderId: 'wo-1',
-        stage: WorkOrderStatus.SEWING,
+        stage: ProductionStage.SEWING,
         checkedAt: {
           gte: new Date(query.from as string),
           lte: new Date(query.to as string),
@@ -448,7 +449,7 @@ describe('QualityService — GF-0014', () => {
       where: {
         status: QualityCheckStatus.COMPLETED,
         workOrderId: 'wo-1',
-        stage: WorkOrderStatus.SEWING,
+        stage: ProductionStage.SEWING,
         checkedAt: {
           gte: new Date(query.from),
           lte: new Date(query.to),
@@ -547,5 +548,237 @@ describe('QualityService — GF-0014', () => {
 
     expect(result).toMatchObject({ id: 'qc-existing', replayed: true });
     expect(prisma.qualityCheck.create).not.toHaveBeenCalled();
+  });
+
+  // ============ QLT-4 (GF-IMP-W3): المسارات السلبية بلا اختبارات سابقًا ============
+
+  describe('QLT-4 — المسارات السلبية لتحقق المرحلة والكمية', () => {
+    /** تهيئة مشتركة: معاملة + أمر عمل + مرحلة مكتملة قابلة للفحص. */
+    const setupValidRun = (overrides: Record<string, unknown> = {}) => {
+      prisma.$transaction.mockImplementation(
+        (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+      );
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.workOrder.findUnique.mockResolvedValue({
+        id: 'wo-1',
+        bomVersionId: 'bom-1',
+      });
+      prisma.productionStageRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        stage: ProductionStage.SEWING,
+        status: ProductionStageRunStatus.COMPLETED,
+        inputQty: 100,
+        ...overrides,
+      });
+      prisma.qualityCheck.findUnique.mockResolvedValue(null);
+      prisma.qualityCheck.create.mockResolvedValue({});
+      prisma.activityLog.create.mockResolvedValue(undefined);
+    };
+
+    it('تجاوز checkedQty لمدخل المرحلة يُرفض بـ 400 قبل أي كتابة', async () => {
+      setupValidRun();
+
+      await expect(
+        service.addQualityCheck({
+          workOrderId: 'wo-1',
+          stageRunId: 'run-1',
+          stage: ProductionStage.SEWING,
+          checkedQty: 101,
+          passedQty: 101,
+          rejectedQty: 0,
+          wasteQty: 0,
+        }),
+      ).rejects.toThrow('Checked quantity cannot exceed stage input quantity');
+      // لا كتابة على الإطلاق — لا فحص ولا تكلفة
+      expect(prisma.qualityCheck.create).not.toHaveBeenCalled();
+      expect(prisma.productionCostSnapshot.findFirst).not.toHaveBeenCalled();
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+
+    it('عدم تطابق المرحلة مع stage run يُرفض بـ 400 (PACKING على run خياطة)', async () => {
+      setupValidRun();
+
+      await expect(
+        service.addQualityCheck({
+          workOrderId: 'wo-1',
+          stageRunId: 'run-1',
+          stage: ProductionStage.PACKING,
+          checkedQty: 10,
+          passedQty: 10,
+          rejectedQty: 0,
+          wasteQty: 0,
+        }),
+      ).rejects.toThrow('Quality stage must match the selected stage run');
+      expect(prisma.qualityCheck.create).not.toHaveBeenCalled();
+    });
+
+    it('مرحلة غير مكتملة (IN_PROGRESS) يُرفض فحصها بـ 409 Conflict', async () => {
+      setupValidRun({ status: ProductionStageRunStatus.IN_PROGRESS });
+
+      await expect(
+        service.addQualityCheck({
+          workOrderId: 'wo-1',
+          stageRunId: 'run-1',
+          stage: ProductionStage.SEWING,
+          checkedQty: 10,
+          passedQty: 10,
+          rejectedQty: 0,
+          wasteQty: 0,
+        }),
+      ).rejects.toThrow(
+        'Quality can only be recorded for a completed stage run',
+      );
+      expect(prisma.qualityCheck.create).not.toHaveBeenCalled();
+    });
+
+    it('مسار احتياط resolveUnitCost: بلا لقطة مثبتة → مجموع بنود BOM بتخفيض Decimal', async () => {
+      setupValidRun();
+      // لا لقطة تكلفة مثبتة → المسار الاحتياطي عبر BOM
+      prisma.productionCostSnapshot.findFirst.mockResolvedValue(null);
+      prisma.bomVersion.findUnique.mockResolvedValue({
+        id: 'bom-1',
+        lines: [
+          {
+            quantity: new Prisma.Decimal('1.2'),
+            rawMaterial: { costPerUnit: new Prisma.Decimal('5') },
+          },
+          {
+            quantity: new Prisma.Decimal('0.5'),
+            rawMaterial: { costPerUnit: new Prisma.Decimal('2.6') },
+          },
+        ],
+      });
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+      prisma.qualityCheck.create.mockResolvedValue({
+        id: 'qc-fallback',
+        workOrderId: 'wo-1',
+        stageRunId: 'run-1',
+        stage: ProductionStage.SEWING,
+        checkedQty: 10,
+        passedQty: 10,
+        rejectedQty: 0,
+        wasteQty: 0,
+        rejectionReason: null,
+        wasteReason: null,
+        unitCost: new Prisma.Decimal('7.3'),
+        wasteCost: new Prisma.Decimal('0.00'),
+        status: QualityCheckStatus.COMPLETED,
+        createdById: 'user-1',
+        notes: 'فحص بلا لقطة تكلفة',
+        checkedAt: new Date('2026-08-30T10:00:00.000Z'),
+        closedAt: new Date('2026-08-30T10:00:00.000Z'),
+      });
+      prisma.idempotencyKey.update.mockResolvedValue(undefined);
+
+      const result = await service.addQualityCheck(
+        {
+          workOrderId: 'wo-1',
+          stageRunId: 'run-1',
+          stage: ProductionStage.SEWING,
+          checkedQty: 10,
+          passedQty: 10,
+          rejectedQty: 0,
+          wasteQty: 0,
+          notes: 'فحص بلا لقطة تكلفة',
+        },
+        'user-1',
+        'quality-fallback-key',
+      );
+
+      // القيمة المكتوبة = مجموع Decimal للبنود (1.2×5 + 0.5×2.6 = 7.3) بلا عائم
+      const createCalls = prisma.qualityCheck.create.mock
+        .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+      const createCall = createCalls[0]?.[0];
+      expect(
+        (createCall?.data.unitCost as Prisma.Decimal).equals(
+          new Prisma.Decimal('7.3'),
+        ),
+      ).toBe(true);
+      expect(result).toMatchObject({
+        id: 'qc-fallback',
+        unitCost: 7.3,
+        wasteCost: 0,
+        notes: 'فحص بلا لقطة تكلفة',
+      });
+      // هدر صفري → لا قيد GL من المسار الاحتياطي
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+  });
+
+  // ============ QLT-5 (GF-IMP-W3): حدود تكلفة الوحدة — مواد فقط ============
+
+  describe('QLT-5 — تكلفة الوحدة تتجاهل العمالة (حدود موثقة)', () => {
+    it('سجل التدقيق يثبّت أساس التكلفة MATERIALS_ONLY والوصف notes في الاستجابة', async () => {
+      prisma.$transaction.mockImplementation(
+        (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+      );
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+      prisma.workOrder.findUnique.mockResolvedValue({
+        id: 'wo-1',
+        bomVersionId: 'bom-1',
+      });
+      prisma.productionStageRun.findFirst.mockResolvedValue({
+        id: 'run-1',
+        stage: ProductionStage.CUTTING,
+        status: ProductionStageRunStatus.COMPLETED,
+        inputQty: 10,
+      });
+      prisma.qualityCheck.findUnique.mockResolvedValue(null);
+      prisma.productionCostSnapshot.findFirst.mockResolvedValue({
+        unitCost: new Prisma.Decimal(2.5),
+      });
+      prisma.qualityCheck.create.mockResolvedValue({
+        id: 'qc-basis',
+        workOrderId: 'wo-1',
+        stageRunId: 'run-1',
+        stage: ProductionStage.CUTTING,
+        checkedQty: 10,
+        passedQty: 10,
+        rejectedQty: 0,
+        wasteQty: 0,
+        rejectionReason: null,
+        wasteReason: null,
+        unitCost: new Prisma.Decimal(2.5),
+        wasteCost: new Prisma.Decimal('0.00'),
+        status: QualityCheckStatus.COMPLETED,
+        createdById: 'user-1',
+        notes: 'فحص قطع قياسي',
+        checkedAt: new Date('2026-08-30T10:00:00.000Z'),
+        closedAt: new Date('2026-08-30T10:00:00.000Z'),
+      });
+      prisma.idempotencyKey.update.mockResolvedValue(undefined);
+      prisma.activityLog.create.mockResolvedValue(undefined);
+
+      const result = await service.addQualityCheck(
+        {
+          workOrderId: 'wo-1',
+          stageRunId: 'run-1',
+          stage: ProductionStage.CUTTING,
+          checkedQty: 10,
+          passedQty: 10,
+          rejectedQty: 0,
+          wasteQty: 0,
+          notes: 'فحص قطع قياسي',
+        },
+        'user-1',
+        'quality-basis-key',
+      );
+
+      // الحقل الوصفي يعاد في الاستجابة (بلا schema جديد — notes الموجود)
+      expect(result).toMatchObject({
+        notes: 'فحص قطع قياسي',
+        unitCost: 2.5,
+      });
+      // سجل التدقيق يثبّت الأساس: مواد فقط — أجور القطعة خارج الحساب
+      const activityCalls = prisma.activityLog.create.mock
+        .calls as unknown as Array<[{ data: Record<string, unknown> }]>;
+      const activityCall = activityCalls[0]?.[0];
+      expect(activityCall?.data.details).toMatchObject({
+        notes: 'فحص قطع قياسي',
+        unitCostBasis: 'MATERIALS_ONLY',
+        unitCost: 2.5,
+      });
+    });
   });
 });

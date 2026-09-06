@@ -365,7 +365,7 @@ integrationDescribe('GF-0014 quality and waste integration', () => {
       prisma.qualityCheck.create({
         data: {
           workOrderId: scenario.workOrderId,
-          stage: WorkOrderStatus.SEWING,
+          stage: ProductionStage.SEWING,
           checkedQty: 100,
           passedQty: 95,
           rejectedQty: 5,

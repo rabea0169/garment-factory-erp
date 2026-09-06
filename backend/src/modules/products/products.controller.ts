@@ -9,9 +9,16 @@ import {
   ParseUUIDPipe,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
-import { ApiHeader, ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import {
+  ApiHeader,
+  ApiTags,
+  ApiOperation,
+  ApiQuery,
+  ApiResponse,
+} from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
+import { CurrentUser } from '../auth/current-user.decorator';
 import { CreateProductDto } from './dto/create-product.dto';
 import { CreateProductVariantDto } from './dto/create-product-variant.dto';
 import { CreateBomLineDto } from './dto/create-bom-line.dto';
@@ -32,18 +39,43 @@ export class ProductsController {
   @Get()
   @ApiOperation({ summary: 'جلب كل المنتجات' })
   @ApiResponse({ status: 200, description: 'قائمة المنتجات (Paginated)' })
+  // PROD-7 (GF-IMP-W3): includeInactive اختياري (افتراضي false) — نفس
+  // الافتراضي في القائمة والتفاصيل (توحيد السلوكين المتضاربين).
+  @ApiQuery({
+    name: 'includeInactive',
+    required: false,
+    type: Boolean,
+    description: 'تضمين المتغيرات غير النشطة (الافتراضي: النشطة فقط)',
+  })
   async getAllProducts(
     @Query() pagination: PaginationDto = new PaginationDto(),
+    @Query('includeInactive') includeInactive?: string,
   ) {
-    return this.productsService.getAllProducts(pagination);
+    return this.productsService.getAllProducts(
+      pagination,
+      includeInactive === 'true',
+    );
   }
 
   @Get(':id')
   @ApiOperation({
     summary: 'تفاصيل المنتج تشمل مقاساته وألوانه والخامات (BOM)',
   })
-  async getProduct(@Param('id', new ParseUUIDPipe()) id: string) {
-    return this.productsService.getProductDetails(id);
+  // PROD-7: نفس معامل الاستعلام في التفاصيل — الافتراضي موحد (false).
+  @ApiQuery({
+    name: 'includeInactive',
+    required: false,
+    type: Boolean,
+    description: 'تضمين المتغيرات غير النشطة (الافتراضي: النشطة فقط)',
+  })
+  async getProduct(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    return this.productsService.getProductDetails(
+      id,
+      includeInactive === 'true',
+    );
   }
 
   @Post('full')
@@ -56,9 +88,15 @@ export class ProductsController {
   @ApiOperation({ summary: 'إضافة منتج كامل مع المتغيرات وBOM ذرّيًا' })
   async createFullProduct(
     @Body() body: CreateFullProductDto,
+    @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.productsService.createFullProduct(body, idempotencyKey);
+    // PROD-6: الفاعل من الجلسة لسجل التدقيق داخل المعاملة
+    return this.productsService.createFullProduct(
+      body,
+      idempotencyKey,
+      actorId,
+    );
   }
 
   @Post()
@@ -87,13 +125,16 @@ export class ProductsController {
   async createVariant(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: CreateProductVariantDto,
+    @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
+    // PROD-6: الفاعل من الجلسة لسجل التدقيق داخل المعاملة
     return this.productsService.createVariant(
       id,
       body.size,
       body.color,
       idempotencyKey,
+      actorId,
     );
   }
 
@@ -104,18 +145,24 @@ export class ProductsController {
     required: false,
     description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لإضافة بند BOM',
   })
-  @ApiOperation({ summary: 'إضافة مادة خام لشجرة التصنيع (BOM)' })
+  @ApiOperation({
+    summary:
+      'إضافة مادة خام لشجرة التصنيع (BOM) — تعديل بند قائم ينشئ إصدارًا جديدًا (PROD-4)',
+  })
   async addBomItem(
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: CreateBomLineDto,
+    @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
+    // PROD-6: الفاعل من الجلسة لسجل التدقيق داخل المعاملة
     return this.productsService.addBomItem(
       id,
       body.rawMaterialId,
       body.quantity,
       body.unit,
       idempotencyKey,
+      actorId,
     );
   }
 
@@ -123,7 +170,11 @@ export class ProductsController {
   @Roles(UserRole.GENERAL_MANAGER, UserRole.PRODUCTION_MANAGER)
   // Delete method can be tricky with some mobile clients, so using POST to delete is sometimes safer or we can just use Delete()
   @ApiOperation({ summary: 'حذف مادة من شجرة التصنيع' })
-  async deleteBomItem(@Param('bomId', new ParseUUIDPipe()) bomId: string) {
-    return this.productsService.deleteBomItem(bomId);
+  async deleteBomItem(
+    @Param('bomId', new ParseUUIDPipe()) bomId: string,
+    @CurrentUser('id') actorId: string,
+  ) {
+    // PROD-6: الفاعل من الجلسة لسجل التدقيق داخل معاملة الحذف
+    return this.productsService.deleteBomItem(bomId, actorId);
   }
 }

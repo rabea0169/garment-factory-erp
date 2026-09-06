@@ -18,6 +18,8 @@ import { ReceiveStockDto } from './dto/receive-stock.dto';
 import { IssueStockDto } from './dto/issue-stock.dto';
 import { AdjustStockDto } from './dto/adjust-stock.dto';
 import { WasteStockDto } from './dto/waste-stock.dto';
+import { ReturnStockDto } from './dto/return-stock.dto';
+import { WasteFinishedGoodDto } from './dto/waste-finished-good.dto';
 import { LedgerQueryDto } from './dto/ledger-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
@@ -167,6 +169,49 @@ export class InventoryController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.inventoryService.waste({ ...body, idempotencyKey }, userId);
+  }
+
+  // INV-8 (أ) (GF-IMP-W3): مرتجع من الإنتاج — RETURN بلا قيد GL (ADR-0020).
+  @Post('return')
+  @Roles(UserRole.INVENTORY_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لمرتجع الإنتاج',
+  })
+  @ApiOperation({
+    summary:
+      'إرجاع خامات من الإنتاج إلى المخزن (RETURN) — بلا قيد GL (مرتجع داخلي، ADR-0020)',
+  })
+  async returnStock(
+    @Body() body: ReturnStockDto,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.inventoryService.return({ ...body, idempotencyKey }, userId);
+  }
+
+  // INV-8 (ب) (GF-IMP-W3): هدر البضاعة الجاهزة — مسار موازٍ لهدر الخامات.
+  @Post('movements/waste-finished-good')
+  @Roles(UserRole.INVENTORY_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'RES-F02: مفتاح إعادة المحاولة الآمنة لهدر المنتج التام',
+  })
+  @ApiOperation({
+    summary:
+      'تسجيل هدر بضاعة جاهزة (CAS على finished_good_stocks + Dr WASTE_EXPENSE / Cr FINISHED_GOOD_STOCK)',
+  })
+  async wasteFinishedGood(
+    @Body() body: WasteFinishedGoodDto,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.inventoryService.wasteFinishedGood(
+      { ...body, idempotencyKey },
+      userId,
+    );
   }
 
   // ===================== FINISHED GOODS / SUMMARY =====================

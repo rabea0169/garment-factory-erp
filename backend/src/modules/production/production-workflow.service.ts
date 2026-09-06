@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
@@ -13,7 +14,7 @@ import {
   ProductionWasteReason,
   WorkOrderStatus,
 } from '@prisma/client';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { InventoryService, StockEvent } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -95,9 +96,9 @@ const STAGE_ORDER: readonly ProductionStage[] = [
   ProductionStage.PACKING,
 ];
 
-function requestHash(payload: object): string {
-  return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
-}
+// PRD-8: حساب البصمة عبر الأداة المشتركة computeRequestHash (idempotency.util)
+// بدل النسخة المحلية المكررة — نفس الخوارزمية (SHA-256 على JSON.stringify)
+// فالمفاتيح الملتزمة سابقًا تعاد محتواها كما هي بلا انحراف.
 
 function isUniqueConstraintViolation(error: unknown): boolean {
   if (typeof error !== 'object' || error === null) return false;
@@ -114,6 +115,9 @@ function assertNonNegativeQuantities(values: Record<string, number>): void {
 
 @Injectable()
 export class ProductionWorkflowService {
+  /** PRD-6: مسجل تحذيرات انحراف استمرارية الكميات بين المراحل. */
+  private readonly logger = new Logger(ProductionWorkflowService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
@@ -131,7 +135,9 @@ export class ProductionWorkflowService {
     input: TransitionStageInput,
     actorId: string,
   ): Promise<StageTransitionResult> {
-    const hash = requestHash(input);
+    const hash = computeRequestHash(
+      input as unknown as Record<string, unknown>,
+    );
     const replay = await this.findTransitionReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
@@ -309,7 +315,9 @@ export class ProductionWorkflowService {
       );
     }
 
-    const hash = requestHash(input);
+    const hash = computeRequestHash(
+      input as unknown as Record<string, unknown>,
+    );
     const replay = await this.findStageOutputReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
@@ -437,6 +445,37 @@ export class ProductionWorkflowService {
           throw new BadRequestException('Stage run is cancelled');
         }
 
+        // PRD-6 (P2 — GF-IMP-W3): استمرارية الكميات عبر سلسلة المراحل — مدخل
+        // المرحلة (inputQty) لا يتجاوز مقبول المرحلة السابقة (acceptedQty).
+        // الخطة تسمح بالتحذير أو الرفض؛ المطبق هنا التحذير اللاصق لا الرفض:
+        // - Logger.warn بتفاصيل كاملة (الأمر/المرحلتان/الكميتان) للرصد الفوري.
+        // - وسم نصي يُخزّن في notes الـ StageRun نفسه داخل المعاملة — لا صمت:
+        // الانحراف يبقى مقروءًا من السجل بعد الالتزام حتى لو ضاع اللوج.
+        // المرحلة الأولى (CUTTING) بلا سابقة فلا فحص — المدخل مرجعه كمية الأمر.
+        let stageRunNotes: string | undefined = input.notes;
+        const stageIndex = STAGE_ORDER.indexOf(input.stage);
+        if (stageIndex > 0) {
+          const previousStage = STAGE_ORDER[stageIndex - 1];
+          const previousRun = await tx.productionStageRun.findUnique({
+            where: {
+              workOrderId_stage: {
+                workOrderId: input.workOrderId,
+                stage: previousStage,
+              },
+            },
+            select: { acceptedQty: true },
+          });
+          if (previousRun && input.inputQty > previousRun.acceptedQty) {
+            const deviation = `[PRD-6] انحراف استمرارية المراحل: مدخل ${input.stage} (${input.inputQty}) يتجاوز مقبول ${previousStage} (${previousRun.acceptedQty})`;
+            this.logger.warn(
+              `PRD-6: أمر ${input.workOrderId} — مدخل مرحلة ${input.stage} (${input.inputQty}) يتجاوز مقبول المرحلة السابقة ${previousStage} (${previousRun.acceptedQty})`,
+            );
+            stageRunNotes = [input.notes, deviation]
+              .filter(Boolean)
+              .join(' | ');
+          }
+        }
+
         let idempotencyKeyId: string | undefined;
         if (input.idempotencyKey) {
           const key = await tx.idempotencyKey.create({
@@ -459,7 +498,8 @@ export class ProductionWorkflowService {
             wasteQty: input.wasteQty,
             status: ProductionStageRunStatus.COMPLETED,
             completedAt: new Date(),
-            notes: input.notes,
+            // PRD-6: notes الوسم بالانحراف (إن وجد) وليس مدخل المستخدم وحده
+            notes: stageRunNotes,
             idempotencyKeyId,
           },
         });
@@ -703,7 +743,9 @@ export class ProductionWorkflowService {
       );
     }
 
-    const hash = requestHash(input);
+    const hash = computeRequestHash(
+      input as unknown as Record<string, unknown>,
+    );
     const replay = await this.findConsumptionReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
@@ -942,100 +984,131 @@ export class ProductionWorkflowService {
     });
   }
 
-  private async findTransitionReplay(
+  /**
+   * PRD-8 (P2 — GF-IMP-W3): مُحمِّل replay موحّد للمسارات الثلاثة (انتقال
+   * المرحلة / مخرج المرحلة / صرف الخامات) — كانت ثلاث نسخ شبه متطابقة،
+   * إحداها (findStageOutputReplay) تفحص scope وشقيقتاها لا تفعلان. الدمج:
+   * فحص scope إلزامي للجميع (معلمة scope) + فحص requestHash نفسه + نفس
+   * رسائل التعارض، والفرق الوحيد بين المسارات هو كيفية تحميل الكيان المرتبط
+   * بالمفتاح (loadResult). db اختياري للاستخدام تحت قفل أمر العمل داخل
+   * $transaction (نمط PRD-3) — يقرأ آخر حالة ملتزمة بدل لقطة ما قبل القفل.
+   */
+  private async findReplay<T>(
     key: string | undefined,
+    scope: string,
     hash: string,
+    loadResult: (
+      idempotencyKeyId: string,
+      db: Prisma.TransactionClient,
+    ) => Promise<T | null>,
     tx?: Prisma.TransactionClient,
-  ): Promise<StageTransitionResult | null> {
+  ): Promise<T | null> {
     if (!key) return null;
-    // PRD-3: يقبل معاملة خارجية لاستخدامه تحت قفل أمر العمل داخل
-    // $transaction — يقرأ آخر حالة ملتزمة بدل لقطة ما قبل القفل.
     const db = tx ?? this.prisma;
     const idempotency = await db.idempotencyKey.findUnique({
       where: { key },
     });
     if (!idempotency) return null;
-    if (idempotency.requestHash !== hash) {
-      throw new ConflictException('Idempotency key payload mismatch');
-    }
-    const transition = await db.workOrderStageTransition.findUnique({
-      where: { idempotencyKeyId: idempotency.id },
-      include: {
-        toRun: true,
-        workOrder: { select: { stageVersion: true } },
-      },
-    });
-    if (!transition || !transition.toRun) return null;
-    return {
-      replayed: true,
-      transitionId: transition.id,
-      workOrderId: transition.workOrderId,
-      fromStage: transition.fromStage,
-      toStage: transition.toStage,
-      stageRunId: transition.toRun.id,
-      stageVersion: transition.workOrder.stageVersion,
-    };
-  }
-
-  private async findStageOutputReplay(
-    key: string | undefined,
-    hash: string,
-  ): Promise<StageOutputResult | null> {
-    if (!key) return null;
-    const idempotency = await this.prisma.idempotencyKey.findUnique({
-      where: { key },
-    });
-    if (!idempotency) return null;
-    if (idempotency.scope !== 'production.stage-output') {
+    if (idempotency.scope !== scope) {
       throw new ConflictException('Idempotency key scope mismatch');
     }
     if (idempotency.requestHash !== hash) {
       throw new ConflictException('Idempotency key payload mismatch');
     }
-    const stageRun = await this.prisma.productionStageRun.findUnique({
-      where: { idempotencyKeyId: idempotency.id },
-    });
-    if (!stageRun || stageRun.status !== ProductionStageRunStatus.COMPLETED) {
-      return null;
-    }
-    return {
-      replayed: true,
-      workOrderId: stageRun.workOrderId,
-      stage: stageRun.stage,
-      stageRunId: stageRun.id,
-      status: stageRun.status,
-    };
+    return loadResult(idempotency.id, db);
   }
 
-  private async findConsumptionReplay(
+  /** PRD-8: انتقال المرحلة — النتيجة من سجل الانتقال المرتبط بالمفتاح. */
+  private findTransitionReplay(
+    key: string | undefined,
+    hash: string,
+    tx?: Prisma.TransactionClient,
+  ): Promise<StageTransitionResult | null> {
+    return this.findReplay(
+      key,
+      'production.transition',
+      hash,
+      async (idempotencyKeyId, db) => {
+        const transition = await db.workOrderStageTransition.findUnique({
+          where: { idempotencyKeyId },
+          include: {
+            toRun: true,
+            workOrder: { select: { stageVersion: true } },
+          },
+        });
+        if (!transition || !transition.toRun) return null;
+        return {
+          replayed: true,
+          transitionId: transition.id,
+          workOrderId: transition.workOrderId,
+          fromStage: transition.fromStage,
+          toStage: transition.toStage,
+          stageRunId: transition.toRun.id,
+          stageVersion: transition.workOrder.stageVersion,
+        } satisfies StageTransitionResult;
+      },
+      tx,
+    );
+  }
+
+  /** PRD-8: مخرج المرحلة — النتيجة من الـ stage run المرتبط بالمفتاح. */
+  private findStageOutputReplay(
+    key: string | undefined,
+    hash: string,
+  ): Promise<StageOutputResult | null> {
+    return this.findReplay(
+      key,
+      'production.stage-output',
+      hash,
+      async (idempotencyKeyId, db) => {
+        const stageRun = await db.productionStageRun.findUnique({
+          where: { idempotencyKeyId },
+        });
+        if (
+          !stageRun ||
+          stageRun.status !== ProductionStageRunStatus.COMPLETED
+        ) {
+          return null;
+        }
+        return {
+          replayed: true,
+          workOrderId: stageRun.workOrderId,
+          stage: stageRun.stage,
+          stageRunId: stageRun.id,
+          status: stageRun.status,
+        } satisfies StageOutputResult;
+      },
+    );
+  }
+
+  /** PRD-8: صرف الخامات — النتيجة من سجل الاستهلاك المرتبط بالمفتاح. */
+  private findConsumptionReplay(
     key: string | undefined,
     hash: string,
   ): Promise<MaterialConsumptionResult | null> {
-    if (!key) return null;
-    const idempotency = await this.prisma.idempotencyKey.findUnique({
-      where: { key },
-    });
-    if (!idempotency) return null;
-    if (idempotency.requestHash !== hash) {
-      throw new ConflictException('Idempotency key payload mismatch');
-    }
-    const consumption =
-      await this.prisma.productionMaterialConsumption.findUnique({
-        where: { idempotencyKeyId: idempotency.id },
-        include: { stockLedgerEntry: true },
-      });
-    if (!consumption || !consumption.stockLedgerEntry) return null;
-    return {
-      replayed: true,
-      consumptionId: consumption.id,
-      workOrderId: consumption.workOrderId,
-      stageRunId: consumption.stageRunId,
-      stockLedgerEntryId: consumption.stockLedgerEntry.id,
-      actualQuantity: Number(consumption.actualQuantity),
-      wasteQuantity: Number(consumption.wasteQuantity),
-      unitCost: Number(consumption.unitCost),
-      totalCost: Number(consumption.totalCost),
-      wasteCost: Number(consumption.wasteCost),
-    };
+    return this.findReplay(
+      key,
+      'production.consume',
+      hash,
+      async (idempotencyKeyId, db) => {
+        const consumption = await db.productionMaterialConsumption.findUnique({
+          where: { idempotencyKeyId },
+          include: { stockLedgerEntry: true },
+        });
+        if (!consumption || !consumption.stockLedgerEntry) return null;
+        return {
+          replayed: true,
+          consumptionId: consumption.id,
+          workOrderId: consumption.workOrderId,
+          stageRunId: consumption.stageRunId,
+          stockLedgerEntryId: consumption.stockLedgerEntry.id,
+          actualQuantity: Number(consumption.actualQuantity),
+          wasteQuantity: Number(consumption.wasteQuantity),
+          unitCost: Number(consumption.unitCost),
+          totalCost: Number(consumption.totalCost),
+          wasteCost: Number(consumption.wasteCost),
+        } satisfies MaterialConsumptionResult;
+      },
+    );
   }
 }

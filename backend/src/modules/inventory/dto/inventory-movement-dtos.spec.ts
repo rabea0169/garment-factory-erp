@@ -5,6 +5,8 @@ import { ReceiveStockDto } from './receive-stock.dto';
 import { IssueStockDto } from './issue-stock.dto';
 import { AdjustStockDto } from './adjust-stock.dto';
 import { WasteStockDto } from './waste-stock.dto';
+import { ReturnStockDto } from './return-stock.dto';
+import { WasteFinishedGoodDto } from './waste-finished-good.dto';
 
 /**
  * INV-4 (W2-4): حدود الدقة العشرية في DTOs حركات المخزون —
@@ -54,6 +56,23 @@ describe('INV-4 — حدود الدقة العشرية في DTOs حركات ال
         reason: 'قماش تالف',
         ...o,
       }),
+    // INV-8 (أ): مرتجع الإنتاج — RETURN
+    ReturnStockDto: (o) =>
+      plainToInstance(ReturnStockDto, {
+        rawMaterialId: RM_ID,
+        warehouseId: WH_ID,
+        quantity: 12.5,
+        reason: 'بقايا قص',
+        ...o,
+      }),
+    // INV-8 (ب): هدر البضاعة الجاهزة
+    WasteFinishedGoodDto: (o) =>
+      plainToInstance(WasteFinishedGoodDto, {
+        finishedGoodVariantId: '7b1f7c2e-0000-4000-8000-000000000003',
+        quantity: 3,
+        reason: 'تلف بالتخزين',
+        ...o,
+      }),
   };
 
   async function errorsOf(dto: object): Promise<ValidationError[]> {
@@ -70,10 +89,21 @@ describe('INV-4 — حدود الدقة العشرية في DTOs حركات ال
     return keys;
   }
 
-  it('كل الـ DTOs الخمسة صالحة بالقيم المرجعية قبل أي تعديل', async () => {
+  it('كل DTOs الحركات السبعة صالحة بالقيم المرجعية قبل أي تعديل', async () => {
     for (const build of Object.values(builders)) {
       expect(await errorsOf(build({}))).toHaveLength(0);
     }
+  });
+
+  // INV-8 (أ): حرفية التكليف — ReturnStockDto يصح بلا warehouseId إطلاقًا
+  // (rawMaterialId/quantity/reason وحدها)؛ الغياب يُحلّ للمخزن الافتراضي (INV-6).
+  it('ReturnStockDto: حمولة التكليف الحرفية بلا warehouseId صالحة — warehouseId اختياري', async () => {
+    const dto = plainToInstance(ReturnStockDto, {
+      rawMaterialId: RM_ID,
+      quantity: 12.5,
+      reason: 'بقايا قص',
+    });
+    expect(await errorsOf(dto)).toHaveLength(0);
   });
 
   // ============ الكميات: 4 منازل مقبولة / 10 منازل مرفوضة ============
@@ -164,5 +194,55 @@ describe('INV-4 — حدود الدقة العشرية في DTOs حركات ال
   it('ReceiveStockDto: كمية سالبة → تبقى مرفوضة بـ isPositive', async () => {
     const errors = await errorsOf(builders.ReceiveStockDto({ quantity: -5 }));
     expect(allConstraintKeys(errors)).toContain('isPositive');
+  });
+
+  // ============ INV-8 (أ): ReturnStockDto — مرتجع الإنتاج ============
+
+  it('ReturnStockDto: كمية كسرية بـ 4 منازل → مقبولة (مطابقة Decimal(12,4))', async () => {
+    expect(
+      await errorsOf(builders.ReturnStockDto({ quantity: 12.5005 })),
+    ).toHaveLength(0);
+  });
+
+  it('ReturnStockDto: كمية بـ 5 منازل → خطأ isNumber (400)', async () => {
+    const errors = await errorsOf(
+      builders.ReturnStockDto({ quantity: 12.50055 }),
+    );
+    expect(allConstraintKeys(errors)).toContain('isNumber');
+  });
+
+  it('ReturnStockDto: سبب فارغ → مرفوض (لا مرتجع بلا سبب موثق)', async () => {
+    const errors = await errorsOf(builders.ReturnStockDto({ reason: '' }));
+    expect(allConstraintKeys(errors)).toContain('isNotEmpty');
+  });
+
+  it('ReturnStockDto: معرف خامة غير UUID → مرفوض', async () => {
+    const errors = await errorsOf(
+      builders.ReturnStockDto({ rawMaterialId: 'not-a-uuid' }),
+    );
+    expect(allConstraintKeys(errors)).toContain('isUuid');
+  });
+
+  // ============ INV-8 (ب): WasteFinishedGoodDto — هدر التام ============
+
+  it('WasteFinishedGoodDto: كمية كسرية → مرفوضة بـ IsInt (رصيد التام أعداد صحيحة)', async () => {
+    const errors = await errorsOf(
+      builders.WasteFinishedGoodDto({ quantity: 2.5 }),
+    );
+    expect(allConstraintKeys(errors)).toContain('isInt');
+  });
+
+  it('WasteFinishedGoodDto: كمية سالبة → مرفوضة بـ isPositive', async () => {
+    const errors = await errorsOf(
+      builders.WasteFinishedGoodDto({ quantity: -3 }),
+    );
+    expect(allConstraintKeys(errors)).toContain('isPositive');
+  });
+
+  it('WasteFinishedGoodDto: سبب فارغ → مرفوض (نفس قاعدة الخامات)', async () => {
+    const errors = await errorsOf(
+      builders.WasteFinishedGoodDto({ reason: '' }),
+    );
+    expect(allConstraintKeys(errors)).toContain('isNotEmpty');
   });
 });

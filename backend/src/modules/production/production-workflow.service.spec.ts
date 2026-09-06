@@ -1115,3 +1115,308 @@ describe('ProductionWorkflowService — PRD-9 (finalizeCost)', () => {
     expect(upsertArgs.create.createdById).toBe('user-1');
   });
 });
+
+/**
+ * PRD-6 (GF-IMP-W3): استمرارية الكميات بين المراحل — مدخل المرحلة لا يتجاوز
+ * مقبول السابقة. القرار: تحذير لاصق (Logger.warn + وسم في notes الـ StageRun)
+ * لا رفض — الخطة تسمح بالخيارين والتحذير يبقي المسار التشغيلي مفتوحًا
+ * ويوثّق الانحراف.
+ */
+describe('ProductionWorkflowService — PRD-6 (استمرارية كميات المراحل)', () => {
+  const setupIroningRun = () => {
+    const ctx = makeService();
+    const { prisma } = ctx;
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.IN_PROGRESS,
+    });
+    // run المرحلة الحالية يُقرأ مرتين (قبل قفل الصف وبعده — نمط الانتقال
+    // المسلسل)، ثم الاستدعاء الثالث هو فحص PRD-6 للمرحلة السابقة (SEWING).
+    const ironingRun = {
+      id: 'srun-iron',
+      stage: ProductionStage.IRONING,
+      status: ProductionStageRunStatus.IN_PROGRESS,
+      workOrder: {
+        currentStage: ProductionStage.IRONING,
+        productVariantId: 'v-1',
+        code: WORK_ORDER_CODE,
+        status: WorkOrderStatus.IN_PROGRESS,
+      },
+    };
+    prisma.productionStageRun.findUnique
+      .mockResolvedValueOnce(ironingRun)
+      .mockResolvedValueOnce(ironingRun);
+    return ctx;
+  };
+
+  it('PRD-6: تجاوز inputQty لمقبول المرحلة السابقة يستدعي تحذيرًا ولا يرفض — والوسم يُخزّن في notes', async () => {
+    const { prisma, service } = setupIroningRun();
+    // الاستدعاء الثاني (PRD-6): run المرحلة السابقة (SEWING) بمقبول 90
+    prisma.productionStageRun.findUnique.mockResolvedValueOnce({
+      acceptedQty: 90,
+    });
+    prisma.productionStageRun.update.mockResolvedValue({});
+    const warnSpy = jest.spyOn(
+      (
+        service as unknown as {
+          logger: { warn: jest.Mock };
+        }
+      ).logger,
+      'warn',
+    );
+    prisma.activityLog.create.mockResolvedValue({});
+
+    const result = await service.recordStageOutput({
+      workOrderId: 'wo-1',
+      stage: ProductionStage.IRONING,
+      inputQty: 110,
+      acceptedQty: 100,
+      rejectedQty: 5,
+      wasteQty: 5,
+      notes: 'كي الدفعة الثانية',
+    });
+
+    // التحذير لا الرفض: المرحلة تكتمل بنجاح
+    expect(result).toMatchObject({
+      replayed: false,
+      status: ProductionStageRunStatus.COMPLETED,
+    });
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(warnSpy.mock.calls[0][0]).toContain('wo-1');
+    expect(warnSpy.mock.calls[0][0]).toContain('110');
+    expect(warnSpy.mock.calls[0][0]).toContain('90');
+    // الوسم النصي يُخزّن في notes الـ StageRun مع وصف المستخدم — لا صمت
+    const updateArgs = (
+      prisma.productionStageRun.update.mock.calls as unknown as Array<
+        [{ data: { notes?: string } }]
+      >
+    )[0]?.[0];
+    expect(updateArgs?.data.notes).toContain('PRD-6');
+    expect(updateArgs?.data.notes).toContain('110');
+    expect(updateArgs?.data.notes).toContain('90');
+    expect(updateArgs?.data.notes).toContain('كي الدفعة الثانية');
+    // فحص المرحلة السابقة تم بمفتاح (workOrderId, stage=SEWING) — بعد
+    // قراءتي run المرحلة الحالية (قبل القفل وبعده)
+    expect(prisma.productionStageRun.findUnique).toHaveBeenNthCalledWith(3, {
+      where: {
+        workOrderId_stage: {
+          workOrderId: 'wo-1',
+          stage: ProductionStage.SEWING,
+        },
+      },
+      select: { acceptedQty: true },
+    });
+  });
+
+  it('PRD-6: بلا تجاوز (inputQty ≤ مقبول السابقة) — لا تحذير وnotes كما وردت', async () => {
+    const { prisma, service } = setupIroningRun();
+    prisma.productionStageRun.findUnique.mockResolvedValueOnce({
+      acceptedQty: 90,
+    });
+    prisma.productionStageRun.update.mockResolvedValue({});
+    const warnSpy = jest.spyOn(
+      (
+        service as unknown as {
+          logger: { warn: jest.Mock };
+        }
+      ).logger,
+      'warn',
+    );
+    prisma.activityLog.create.mockResolvedValue({});
+
+    await service.recordStageOutput({
+      workOrderId: 'wo-1',
+      stage: ProductionStage.IRONING,
+      inputQty: 90,
+      acceptedQty: 85,
+      rejectedQty: 3,
+      wasteQty: 2,
+      notes: 'ضمن الحدود',
+    });
+
+    expect(warnSpy).not.toHaveBeenCalled();
+    const updateArgs = (
+      prisma.productionStageRun.update.mock.calls as unknown as Array<
+        [{ data: { notes?: string } }]
+      >
+    )[0]?.[0];
+    expect(updateArgs?.data.notes).toBe('ضمن الحدود');
+  });
+
+  it('PRD-6: المرحلة الأولى (CUTTING) بلا سابقة — لا استعلام سابقة ولا تحذير', async () => {
+    const { prisma, service } = makeService();
+    const cuttingRun = {
+      id: 'srun-cut',
+      stage: ProductionStage.CUTTING,
+      status: ProductionStageRunStatus.IN_PROGRESS,
+      workOrder: {
+        currentStage: ProductionStage.CUTTING,
+        productVariantId: 'v-1',
+        code: WORK_ORDER_CODE,
+        status: WorkOrderStatus.IN_PROGRESS,
+      },
+    };
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.IN_PROGRESS,
+    });
+    prisma.productionStageRun.findUnique
+      .mockResolvedValueOnce(cuttingRun)
+      .mockResolvedValueOnce(cuttingRun);
+    prisma.productionStageRun.update.mockResolvedValue({});
+    const warnSpy = jest.spyOn(
+      (
+        service as unknown as {
+          logger: { warn: jest.Mock };
+        }
+      ).logger,
+      'warn',
+    );
+    prisma.activityLog.create.mockResolvedValue({});
+
+    await service.recordStageOutput({
+      workOrderId: 'wo-1',
+      stage: ProductionStage.CUTTING,
+      inputQty: 100,
+      acceptedQty: 95,
+      rejectedQty: 3,
+      wasteQty: 2,
+    });
+
+    // قراءتا run المرحلة الحالية فقط (بمفتاح المرحلة ثم بمفتاح id بعد
+    // القفل) — لا فحص سابقة لأول مرحلة إطلاقًا
+    expect(prisma.productionStageRun.findUnique).toHaveBeenCalledTimes(2);
+    expect(prisma.productionStageRun.findUnique).toHaveBeenNthCalledWith(1, {
+      where: {
+        workOrderId_stage: {
+          workOrderId: 'wo-1',
+          stage: ProductionStage.CUTTING,
+        },
+      },
+      include: expect.anything(),
+    });
+    expect(prisma.productionStageRun.findUnique).toHaveBeenNthCalledWith(2, {
+      where: { id: 'srun-cut' },
+      include: expect.anything(),
+    });
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * PRD-8 (GF-IMP-W3): الدمج الموحد لمُحمّلات إعادة التشغيل الثلاثة في
+ * findReplay واحدة بفحص scope إلزامي — تثبيت سلوك كل مسار بعد الدمج.
+ */
+describe('ProductionWorkflowService — PRD-8 (replay موحد بفحص scope)', () => {
+  it('PRD-8: replay الانتقال يعمل بعد الدمج — الاستجابة من سجل الانتقال دون معاملة', async () => {
+    const { prisma, service } = makeService();
+    const input = {
+      workOrderId: 'wo-1',
+      toStage: ProductionStage.SEWING,
+      idempotencyKey: 'transition-replay-key',
+    };
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      id: 'idem-tr',
+      scope: 'production.transition',
+      requestHash: crypto
+        .createHash('sha256')
+        .update(JSON.stringify(input))
+        .digest('hex'),
+    });
+    prisma.workOrderStageTransition.findUnique.mockResolvedValue({
+      id: 'trans-1',
+      workOrderId: 'wo-1',
+      fromStage: ProductionStage.CUTTING,
+      toStage: ProductionStage.SEWING,
+      toRun: { id: 'srun-2' },
+      workOrder: { stageVersion: 3 },
+    });
+
+    const result = await service.transitionStage(input, 'actor-1');
+
+    expect(result).toEqual({
+      replayed: true,
+      transitionId: 'trans-1',
+      workOrderId: 'wo-1',
+      fromStage: ProductionStage.CUTTING,
+      toStage: ProductionStage.SEWING,
+      stageRunId: 'srun-2',
+      stageVersion: 3,
+    });
+    // الـ replay يعمل قبل المعاملة — لا قفل ولا كتابة
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(prisma.productionStageRun.create).not.toHaveBeenCalled();
+  });
+
+  it('PRD-8: replay الصرف يعمل بعد الدمج — الاستجابة من سجل الاستهلاك دون معاملة أو issue', async () => {
+    const { prisma, service, issue } = makeService();
+    const input = {
+      workOrderId: 'wo-1',
+      stageRunId: 'srun-1',
+      rawMaterialId: 'rm-1',
+      warehouseId: 'wh-1',
+      plannedQuantity: 10,
+      actualQuantity: 8,
+      wasteQuantity: 1,
+      unit: 'METER',
+      idempotencyKey: 'consume-replay-key',
+    };
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      id: 'idem-cons',
+      scope: 'production.consume',
+      requestHash: crypto
+        .createHash('sha256')
+        .update(JSON.stringify(input))
+        .digest('hex'),
+    });
+    prisma.productionMaterialConsumption.findUnique.mockResolvedValue({
+      id: 'cons-replay',
+      workOrderId: 'wo-1',
+      stageRunId: 'srun-1',
+      stockLedgerEntry: { id: 'sle-1' },
+      actualQuantity: new Prisma.Decimal(8),
+      wasteQuantity: new Prisma.Decimal(1),
+      unitCost: new Prisma.Decimal('4.5'),
+      totalCost: new Prisma.Decimal(36),
+      wasteCost: new Prisma.Decimal('4.5'),
+    });
+
+    const result = await service.consumeMaterial(input, 'actor-1');
+
+    expect(result).toMatchObject({
+      replayed: true,
+      consumptionId: 'cons-replay',
+      stockLedgerEntryId: 'sle-1',
+      actualQuantity: 8,
+      wasteQuantity: 1,
+      unitCost: 4.5,
+      totalCost: 36,
+      wasteCost: 4.5,
+    });
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+    expect(issue).not.toHaveBeenCalled();
+  });
+
+  it('PRD-8: فحص scope صارم للجميع — مفتاح انتقال بمحتوى نطاق مختلف → 409 scope mismatch', async () => {
+    const { prisma, service } = makeService();
+    const input = {
+      workOrderId: 'wo-1',
+      toStage: ProductionStage.CUTTING,
+      idempotencyKey: 'cross-scope-key',
+    };
+    // مفتاح مستخدم سابقًا في نطاق مخرج المرحلة — الانتقال يرفضه بوضوح
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      id: 'idem-other',
+      scope: 'production.stage-output',
+      requestHash: crypto
+        .createHash('sha256')
+        .update(JSON.stringify(input))
+        .digest('hex'),
+    });
+
+    await expect(service.transitionStage(input, 'actor-1')).rejects.toThrow(
+      'Idempotency key scope mismatch',
+    );
+    expect(prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
