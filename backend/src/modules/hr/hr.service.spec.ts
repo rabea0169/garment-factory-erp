@@ -3,6 +3,7 @@ import { PayrollStatus, Prisma, WorkerSpecialty } from '@prisma/client';
 import { HrService } from './hr.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 describe('HrService — العمال والإنتاج بالقطعة (GF-0003)', () => {
@@ -409,6 +410,103 @@ describe('HrService — العمال والإنتاج بالقطعة (GF-0003)',
       await expect(service.approvePayroll('pay-1', 'gm-1')).rejects.toThrow(
         ConflictException,
       );
+    });
+  });
+
+  // HR-1 (P0 — GF-IMP-W1): قيد الدفع يصفّي SALARIES_PAYABLE بالإجمالي ولا
+  // يسجّل المصروف مرتين (المصروف يُقيّد مرة واحدة من الاعتماد فقط).
+  describe('HR-1 — قيد دفع الرواتب', () => {
+    const approvedPayroll = {
+      id: 'pay-1',
+      workerId: 'w-1',
+      periodStart: new Date('2026-08-01'),
+      periodEnd: new Date('2026-08-31'),
+      grossAmount: new Prisma.Decimal(1000),
+      advanceDeduct: new Prisma.Decimal(300),
+      absenceDeduct: new Prisma.Decimal(0),
+      netAmount: new Prisma.Decimal(700),
+      status: PayrollStatus.APPROVED,
+      isPaid: false,
+      paidAt: null,
+      notes: null,
+      createdById: 'hr-1',
+      approvedById: 'gm-1',
+      approvedAt: new Date('2026-08-31T12:00:00.000Z'),
+    };
+
+    it('يدفع بDr SALARIES_PAYABLE بالإجمالي / Cr CASH بالصافي / Cr WORKER_ADVANCES بالخصومات', async () => {
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(approvedPayroll)
+        .mockResolvedValueOnce({
+          ...approvedPayroll,
+          status: PayrollStatus.PAID,
+          isPaid: true,
+          paidAt: new Date('2026-09-01T12:00:00.000Z'),
+        });
+      prisma.treasury.findUnique.mockResolvedValue({
+        id: 't-1',
+        isActive: true,
+      });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+      financial.postJournalEntryInTx.mockResolvedValue({
+        entryId: 'je-2',
+        entryCode: 'JE-2',
+        totalDebit: 1000,
+        totalCredit: 1000,
+        linesCount: 2,
+        createdAt: new Date(),
+      });
+
+      const result = await service.payPayroll(
+        'pay-1',
+        { treasuryId: 't-1', notes: 'صرف راتب أغسطس' },
+        'gm-1',
+      );
+
+      expect(result).toMatchObject({ status: PayrollStatus.PAID });
+      expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        {
+          postingKey: string;
+          lines: {
+            debitAccountId: string;
+            creditAccountId: string;
+            amount: number;
+          }[];
+          treasuryUpdates: { treasuryId: string; delta: number }[];
+        },
+        unknown,
+      ];
+      expect(call[1].postingKey).toBe('hr-payroll-pay:pay-1');
+      // مجموع المدين على SALARIES_PAYABLE = الإجمالي 1000 (صافٍ 700 + خصم 300)
+      // فيعود رصيد رواتب مستحقة إلى صفر بعد الاعتماد والدفع.
+      const payableDebit = call[1].lines
+        .filter((l) => l.debitAccountId === CHART_OF_ACCOUNTS.SALARIES_PAYABLE)
+        .reduce((sum, l) => sum + l.amount, 0);
+      expect(payableDebit).toBe(1000);
+      expect(
+        call[1].lines.some((l) => l.creditAccountId === CHART_OF_ACCOUNTS.CASH),
+      ).toBe(true);
+      expect(call[1].lines).toContainEqual(
+        expect.objectContaining({
+          debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+          creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+          amount: 300,
+        }),
+      );
+      // المصروف يُقيّد مرة واحدة من الاعتماد فقط — الدفع لا يلمس المصاريف.
+      expect(
+        call[1].lines.some(
+          (l) =>
+            l.debitAccountId === CHART_OF_ACCOUNTS.GENERAL_EXPENSE ||
+            l.debitAccountId === CHART_OF_ACCOUNTS.SALARIES_EXPENSE,
+        ),
+      ).toBe(false);
+      // الخزينة تُخصم بالصافي فقط.
+      expect(call[1].treasuryUpdates).toEqual([
+        { treasuryId: 't-1', delta: -700 },
+      ]);
     });
   });
 });

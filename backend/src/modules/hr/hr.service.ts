@@ -15,7 +15,10 @@ import {
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import {
+  FinancialPostingService,
+  JournalLineInput,
+} from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import {
   DocumentCodePrefix,
@@ -315,6 +318,11 @@ export class HrService {
         return replay as Awaited<ReturnType<typeof tx.workerAdvance.create>> & {
           replayed: true;
         };
+
+      // GF-IMP-W1 / W1-A: أنشئ صف مفتاح idempotency داخل المعاملة قبل التأثير —
+      // بدونه يفشل storeIdempotencyResponse لاحقًا بـ P2025 على أي قاعدة حقيقية
+      // (كان الكامن ينجو في الـ mocks فقط). نمط موازٍ لمساري الاعتماد والدفع.
+      await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
 
       // COMM-F05 / ACC-F02: validate worker exists + treasury (if provided) is
       // active BEFORE we touch money. We do this inside the tx so a partial
@@ -697,11 +705,22 @@ export class HrService {
           throw new ConflictException('كشف الراتب مدفوع بالفعل');
         }
 
-        const amount = payroll.netAmount.toNumber();
-        if (!Number.isFinite(amount) || amount <= 0) {
-          throw new BadRequestException(
-            'لا يمكن دفع كشف راتب بصافي مبلغ غير موجب',
-          );
+        // HR-1 (P0 — GF-IMP-W1): صافٍ = صفر حالة مشروعة (كل الإجمالي سلف
+        // استُرد بالخصومات) — يُسمح بالدفع ويُرحَّل قيد الخصومات فقط. المرفوض
+        // هو الصافي السالب فقط.
+        const net = payroll.netAmount.toNumber();
+        // إجمالي الخصومات (سلف + غياب) = الجزء المدين من SALARIES_PAYABLE
+        // الذي لا يخرج نقدًا بل يُسترد من أصل سلف العامل.
+        const deductions = payroll.advanceDeduct
+          .plus(payroll.absenceDeduct)
+          .toNumber();
+        if (
+          !Number.isFinite(net) ||
+          !Number.isFinite(deductions) ||
+          net < 0 ||
+          deductions < 0
+        ) {
+          throw new BadRequestException('لا يمكن دفع كشف راتب بصافي مبلغ سالب');
         }
 
         const treasury = await tx.treasury.findUnique({
@@ -737,34 +756,62 @@ export class HrService {
           throw new ConflictException('تعذر دفع الراتب؛ حالته تغيرت بالتزامن');
         }
 
-        await this.financial.postJournalEntryInTx(
-          tx,
-          {
-            description: `دفع راتب ${payrollId}`,
-            reference: `PAYROLL:${payrollId}`,
-            postingKey: `hr-payroll-pay:${payrollId}`,
-            isAuto: true,
-            lines: [
-              {
-                debitAccountId: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
-                creditAccountId: CHART_OF_ACCOUNTS.CASH,
-                amount,
-                description:
-                  input.notes ?? `دفع صافي راتب العامل ${payroll.workerId}`,
+        // HR-1 (P0 — GF-IMP-W1): قيد الدفع يصفّي الالتزام المتراكم من قيد
+        // الاعتماد (Dr SALARIES_EXPENSE / Cr SALARIES_PAYABLE بالإجمالي) بدل
+        // تسجيل المصروف مرة ثانية. القيد الصحيح:
+        //   Dr SALARIES_PAYABLE بالإجمالي (صافٍ + خصومات)
+        //   Cr CASH بالصافِ المدفوع فعليًا من الخزينة
+        //   Cr WORKER_ADVANCES بإجمالي الخصومات (استرداد السلف)
+        // النتيجة: SALARIES_PAYABLE يعود صفرًا، المصروف يبقى مقيّدًا مرة واحدة
+        // فقط (من الاعتماد)، وWORKER_ADVANCES يُخفَّض بقيمة الخصومات.
+        // حالة صافٍ = صفر: قيد خصومات فقط (Dr SALARIES_PAYABLE /
+        // Cr WORKER_ADVANCES) بلا بند نقدية ولا تحديث خزينة.
+        // حالة صافٍ = خصومات = 0 (إجمالي صفري): لا قيد مالي أصلًا.
+        const paymentLines: JournalLineInput[] = [];
+        if (net > 0) {
+          paymentLines.push({
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+            creditAccountId: CHART_OF_ACCOUNTS.CASH,
+            amount: net,
+            description:
+              input.notes ?? `دفع صافي راتب العامل ${payroll.workerId}`,
+          });
+        }
+        if (deductions > 0) {
+          paymentLines.push({
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+            creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+            amount: deductions,
+            description: `استرداد سلف العامل ${payroll.workerId} من كشف الراتب`,
+          });
+        }
+        if (paymentLines.length > 0) {
+          await this.financial.postJournalEntryInTx(
+            tx,
+            {
+              description: `دفع راتب ${payrollId}`,
+              reference: `PAYROLL:${payrollId}`,
+              postingKey: `hr-payroll-pay:${payrollId}`,
+              isAuto: true,
+              lines: paymentLines,
+              treasuryUpdates:
+                net > 0
+                  ? [{ treasuryId: input.treasuryId, delta: -net }]
+                  : undefined,
+              metadata: {
+                source: 'HR_PAYROLL_PAYMENT',
+                payrollId,
+                workerId: payroll.workerId,
+                treasuryId: input.treasuryId,
+                paymentDate: paymentDate.toISOString(),
+                net,
+                deductions,
               },
-            ],
-            treasuryUpdates: [{ treasuryId: input.treasuryId, delta: -amount }],
-            metadata: {
-              source: 'HR_PAYROLL_PAYMENT',
-              payrollId,
-              workerId: payroll.workerId,
-              treasuryId: input.treasuryId,
-              paymentDate: paymentDate.toISOString(),
+              date: paymentDate,
             },
-            date: paymentDate,
-          },
-          actorId,
-        );
+            actorId,
+          );
+        }
 
         const paid = await tx.payroll.findUnique({ where: { id: payrollId } });
         if (!paid) throw new NotFoundException('كشف الراتب غير موجود');
@@ -777,7 +824,7 @@ export class HrService {
             details: {
               payrollId,
               workerId: payroll.workerId,
-              amount,
+              amount: net,
               treasuryId: input.treasuryId,
             },
           },
