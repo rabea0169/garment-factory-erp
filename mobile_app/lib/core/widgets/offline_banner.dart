@@ -19,7 +19,8 @@ class OfflineBanner extends StatefulWidget {
 
   final Widget child;
 
-  /// يُحقن في الاختبارات؛ الافتراضي الخدمة المشتركة للتطبيق.
+  /// يُحقن في الاختبارات؛ الافتراضي الخدمة المشتركة للتطبيق
+  /// ([sharedConnectivityService] — مثيل واحد تشاركه بقية الخدمات).
   final ConnectivityService? service;
 
   @override
@@ -33,7 +34,7 @@ class _OfflineBannerState extends State<OfflineBanner> {
   @override
   void initState() {
     super.initState();
-    _listen(widget.service ?? _defaultService);
+    _listen(widget.service ?? sharedConnectivityService);
   }
 
   @override
@@ -42,7 +43,7 @@ class _OfflineBannerState extends State<OfflineBanner> {
     if (oldWidget.service != widget.service) {
       _subscription?.cancel();
       _offline = false;
-      _listen(widget.service ?? _defaultService);
+      _listen(widget.service ?? sharedConnectivityService);
     }
   }
 
@@ -97,7 +98,3 @@ class _OfflineBannerState extends State<OfflineBanner> {
     );
   }
 }
-
-/// الخدمة المشتركة للتطبيق (تُبدأ عند أول بناء للشريط). تُستبدل بحقن
-/// [OfflineBanner.service] في الاختبارات.
-final ConnectivityService _defaultService = ConnectivityService()..start();

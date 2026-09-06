@@ -17,6 +17,22 @@ function hashToken(value: string): string {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+// AUTH-7: compare يُحاكى جزئيًا (التنفيذ الحقيقي يبقى الافتراضي) كي يمكن
+// التخفي على استدعاءاته والتحقق منها دون كسر التجزئة الحقيقية في بقية
+// الملف — bcrypt.compare على تجزئة كلفة 10 يكلف ~100ms لكل استدعاء.
+jest.mock('bcrypt', () => {
+  const actual = jest.requireActual<typeof import('bcrypt')>('bcrypt');
+  return {
+    ...actual,
+    compare: jest.fn((plain: string, hash: string) =>
+      actual.compare(plain, hash),
+    ),
+  };
+});
+
+/** وصول آمن نوعيًا إلى compare المُحاكى (الافتراضي = التنفيذ الحقيقي) */
+const compareMock = (): jest.Mock => bcrypt.compare as unknown as jest.Mock;
+
 /** مستخدم أساسي مشترك بين كل المجموعات */
 const baseUser = {
   id: 'u-1',
@@ -111,6 +127,60 @@ describe('AuthService — سلوك تسجيل الدخول (GF-0003 + SEC-F04)',
     expect(prisma.user.findUnique).toHaveBeenCalledWith({
       where: { email: 'x@factory.com' },
     });
+  });
+
+  // ---------- AUTH-7: تسوية القناة الزمنية ----------
+
+  it('AUTH-7: عند غياب المستخدم ينفّذ bcrypt.compare ضد تجزئة وهمية بكلفة 10 قبل الرفض', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    // نتجاوز التنفيذ الحقيقي لاستدعاء واحد كي لا ندفع كلفة bcrypt الفعلية
+    // (~100ms) — المطلوب إثبات الاستدعاء نفسه لا نتيجته
+    const compareSpy = compareMock();
+    compareSpy.mockClear();
+    compareSpy.mockImplementationOnce(() => Promise.resolve(false));
+
+    await expect(
+      service.login({ email: 'ghost@factory.com', password: 'Pass@123' }),
+    ).rejects.toThrow(UnauthorizedException);
+
+    // استُدعي مرة واحدة بذات كلفة تجزئة كلمات المرور ($2b$10$)
+    expect(compareSpy).toHaveBeenCalledTimes(1);
+    expect(compareSpy).toHaveBeenCalledWith(
+      'Pass@123',
+      expect.stringMatching(/^\$2[aby]\$10\$/),
+    );
+  });
+
+  it('AUTH-7: رفض غياب المستخدم يرجع نفس رسالة 401 الموحدة (لا كشف وجود البريد)', async () => {
+    prisma.user.findUnique.mockResolvedValue(null);
+    const compareSpy = compareMock();
+    compareSpy.mockClear();
+    compareSpy.mockImplementationOnce(() => Promise.resolve(false));
+
+    await expect(
+      service.login({ email: 'ghost@factory.com', password: 'Pass@123' }),
+    ).rejects.toMatchObject({
+      status: 401,
+      message: 'البريد الإلكتروني أو كلمة المرور غير صحيحة',
+    });
+  });
+
+  it('AUTH-7: المقارنة الوهمية لا تُستخدم في المسار الطبيعي (موجود + كلمة صحيحة)', async () => {
+    const user = { ...baseUser, password: await bcrypt.hash('Pass@123', 4) };
+    prisma.user.findUnique.mockResolvedValue(user);
+    const compareSpy = compareMock();
+    compareSpy.mockClear();
+    compareSpy.mockImplementationOnce(() => Promise.resolve(true));
+
+    const result = await service.login({
+      email: 'admin@factory.com',
+      password: 'Pass@123',
+    });
+
+    expect(result.access_token).toBe('signed-jwt-token');
+    // مقارنة واحدة فقط ضد تجزئة المستخدم الحقيقي — لا مقارنة وهمية إضافية
+    expect(compareSpy).toHaveBeenCalledTimes(1);
+    expect(compareSpy).toHaveBeenCalledWith('Pass@123', user.password);
   });
 });
 
@@ -415,6 +485,16 @@ describe('AuthService — SEC-F04 refresh rotation + revoke', () => {
     );
     expect(result.revoked).toBe(false);
     expect(result.reason).toBe('not_found');
+  });
+
+  it('AUTH-8: logout بلا توكن يرجع no_token دون رفع jwtVersion أو أي بحث/إبطال (السلوك الفعلي الموثّق)', async () => {
+    const result = await service.logout('');
+    expect(result).toEqual({ revoked: false, reason: 'no_token' });
+    // لا رفع نسخة ولا لمس لجدول الرموز — التوكن الحالي يبقى حتى انتهاء عمره القصير
+    expect(prisma.user.update).not.toHaveBeenCalled();
+    expect(
+      (prisma.refreshToken as { findUnique: jest.Mock }).findUnique,
+    ).not.toHaveBeenCalled();
   });
 });
 

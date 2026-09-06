@@ -5,10 +5,10 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
-import { WorkOrderStatus } from '@prisma/client';
+import { Prisma, WorkOrderStatus } from '@prisma/client';
 import { InventoryService } from '../inventory/inventory.service';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import { WorkOrderQueryDto } from './dto/work-order-query.dto';
 import {
   generateDocumentCode,
   DocumentCodePrefix,
@@ -35,23 +35,79 @@ export class ProductionService {
     private readonly inventoryService: InventoryService,
   ) {}
 
-  async getAllWorkOrders(pagination: PaginationDto) {
-    const page = pagination.page || 1;
-    const limit = pagination.limit || 20;
+  /**
+   * PRD-7 (P2 — GF-IMP-W3): فلاتر القائمة (status / currentStage / from-to /
+   * q) عبر WorkOrderQueryDto (قالب ListQueryDto المشترك — CC-6) + select
+   * نحيف بدلاً من include كامل مع stageUpdates — القائمة كانت تجلب كل علاقات
+   * أمر التشغيل (المنتج كاملًا + إصدار BOM + تحديثات المراحل كاملة) لكل
+   * صف؛ الآن: الهوية والملخص فقط (id/code/status/currentStage/quantity/
+   * createdAt + ملخص المنتج والمتغير). count يستخدم نفس where فالترقيم يتفق
+   * مع الفلاتر. q يبحث في كود الأمر (الحقل النصي المعرف الوحيد) بcontains
+   * غير حساس — نمط القالب.
+   */
+  async getAllWorkOrders(query: WorkOrderQueryDto = new WorkOrderQueryDto()) {
+    const page = query.page || 1;
+    const limit = query.limit || 20;
     const skip = (page - 1) * limit;
+
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (
+      (from && Number.isNaN(from.getTime())) ||
+      (to && Number.isNaN(to.getTime()))
+    ) {
+      throw new BadRequestException(
+        'فلاتر أوامر التشغيل تتطلب تواريخ ISO صالحة',
+      );
+    }
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية الفلاتر لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+
+    const where: Prisma.WorkOrderWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.currentStage ? { currentStage: query.currentStage } : {}),
+      ...(from || to
+        ? {
+            createdAt: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {}),
+            },
+          }
+        : {}),
+      // PRD-7/CC-6: q على كود الأمر — الحقل النصي المعرف الوحيد في المخطط
+      ...(query.q
+        ? { code: { contains: query.q, mode: 'insensitive' as const } }
+        : {}),
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.workOrder.findMany({
         skip,
         take: limit,
-        include: {
-          variant: { include: { product: true } },
-          bomVersion: true,
-          stageUpdates: true,
+        where,
+        // PRD-7: select نحيف — لا stageUpdates ولا bomVersion كامل
+        select: {
+          id: true,
+          code: true,
+          status: true,
+          currentStage: true,
+          quantity: true,
+          createdAt: true,
+          variant: {
+            select: {
+              id: true,
+              size: true,
+              color: true,
+              product: { select: { id: true, code: true, name: true } },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.workOrder.count(),
+      this.prisma.workOrder.count({ where }),
     ]);
 
     return new PaginatedResult(data, total, page, limit);

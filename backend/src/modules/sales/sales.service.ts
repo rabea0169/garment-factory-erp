@@ -20,6 +20,11 @@ import {
 } from '../../core/financial/chart-of-accounts';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+// SAL-5 (GF-IMP-W3): قائمة أوامر البيع تلتزم عقد الاستجابة الكنوني
+// { items, total, page, limit } (قالب CC-6 المشترك) مع حقلي توافق
+// انتقاليين (data/meta) لمستهلكي الجوال الحاليين.
+import { ListResponseDto } from '../../common/dto/list-response.dto';
+import { SalesOrderQueryDto } from './dto/sales-order-query.dto';
 import {
   DocumentCodePrefix,
   generateDocumentCode,
@@ -38,6 +43,9 @@ const IDEMPOTENCY_SCOPE_SALES_ORDER_CONFIRM = 'sales-order-confirm';
 const IDEMPOTENCY_SCOPE_CUSTOMER_PAYMENT_CREATE = 'customer-payment-create';
 const IDEMPOTENCY_SCOPE_SALES_ORDER_CANCEL = 'sales-order-cancel';
 const IDEMPOTENCY_SCOPE_SALES_RETURN_CREATE = 'sales-return-create';
+// SAL-7 (GF-IMP-W3): نطاق مفتاح إبطال أمر البيع المؤكد — نفس نمط نطاقات
+// الإلغاء/التأكيد القائمة.
+const IDEMPOTENCY_SCOPE_SALES_ORDER_VOID = 'sales-order-void';
 // SAL-4 (ب): نطاق مستقل لمفتاح سند القبض الآلي للبيع الفوري — مفتاح مشتق
 // ثابت (sales-confirm-cash:<orderId>) يمنع إنشاء السند مرتين مهما كانت
 // مفاتيح التأكيد الخارجية.
@@ -748,26 +756,268 @@ export class SalesService {
     }
   }
 
-  async getSalesOrders(pagination: PaginationDto) {
-    const page = pagination.page || 1;
-    const limit = pagination.limit || 20;
+  /**
+   * SAL-7 (P2 — GF-IMP-W3): إبطال أمر بيع مؤكد — التدفق الإداري الكامل:
+   *
+   * 1. قفل صف الأمر (FOR UPDATE) داخل المعاملة (نفس نمط المرتجع).
+   * 2. متاح فقط للأوامر CONFIRMED (400 لغيرها) وبلا أي مرتجع قائم
+   *    (409 برسالة عربية — مرتجع على أمر ملغى يكسر سلسلة العكس المزدوج).
+   * 3. عكس قيد sales-confirm عبر reverseJournalEntryInTx داخل نفس
+   *    المعاملة — لقطات ACC-2 تضمن عكس أرصدة الحسابات وذمم العميل معه
+   *    (نفس نمط إلغاء شحنة PREPARING في shipping.service).
+   * 4. استعادة المخزون لكل بند عبر receiveFinishedGood بالتكلفة الموثقة
+   *    في cogsLines metadata لقيد التأكيد («كما بيعت بها») — التكلفة
+   *    الحالية ملاذ عند غياب اللقطة (نفس أولوية SAL-3 في المرتجع).
+   * 5. قلب الحالة CONFIRMED → CANCELLED عبر CAS (409 عند السباق).
+   * 6. ActivityLog + idempotency كامل النمط (scope: sales-order-void).
+   *
+   * ملاحظات دلالية موثقة:
+   *  - سند القبض الآلي للأمر الفوري (CustomerPayment التوثيقي) يبقى
+   *    محفوظًا — أثره المالي مقلوب ضمن عكس قيد التأكيد نفسه (السند لم
+   *    يُرحّل قيدًا مستقلًا)؛ السجل التدقيقي يوثق الاسترداد.
+   *  - paidAmount يبقى كقيمة تاريخية على الأمر الملغى (لا مسار يستهلكه
+   *    بعد CANCELLED — الدفعات والمرتجعات تشترط CONFIRMED/SHIPPED).
+   */
+  async voidOrder(orderId: string, userId: string, idempotencyKey?: string) {
+    const requestHash = computeRequestHash({
+      operation: IDEMPOTENCY_SCOPE_SALES_ORDER_VOID,
+      orderId,
+      userId,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      IDEMPOTENCY_SCOPE_SALES_ORDER_VOID,
+      requestHash,
+    );
+    if (replay) return replay;
+
+    try {
+      return await this.prisma.$transaction(async (tx) => {
+        await createIdempotencyKey(
+          tx,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_SALES_ORDER_VOID,
+          requestHash,
+        );
+        // (1) قفل صف الأمر — يمنع السباق مع تأكيد/شحن/مرتجع متزامن.
+        await tx.$queryRaw(
+          Prisma.sql`SELECT id FROM sales_orders WHERE id = ${orderId} FOR UPDATE`,
+        );
+        const order = await tx.salesOrder.findUnique({
+          where: { id: orderId },
+          include: { items: true },
+        });
+        if (!order) throw new NotFoundException('أمر البيع غير موجود');
+        if (order.status !== SalesOrderStatus.CONFIRMED) {
+          throw new BadRequestException(
+            'لا يمكن إبطال إلا أمر بيع مؤكد (CONFIRMED) — استخدم الإلغاء للمسودة أو معالجة المرتجع للمشحون',
+          );
+        }
+
+        // (2) لا إبطال مع مرتجعات قائمة — عكس التأكيد سيصطدم بآثار
+        // المرتجع (مخزون مستعاد مرة أخرى وقيد عكس مزدوج للإيراد/التكلفة).
+        const existingReturn = await tx.salesReturn.findFirst({
+          where: { salesOrderId: orderId },
+          select: { id: true, code: true },
+        });
+        if (existingReturn) {
+          throw new ConflictException(
+            `لا يمكن إبطال أمر بيع له مرتجعات قائمة (${existingReturn.code}) — عالج المرتجع أولًا`,
+          );
+        }
+
+        // (3) عكس قيد التأكيد (postingKey ثابت sales-confirm:<orderId>)
+        // داخل نفس المعاملة — لقطات ACC-2 تعيد أرصدة الخزائن/العملاء/
+        // الموردين/الحسابات الموثقة في metadata القيد.
+        const confirmEntry = await tx.journalEntry.findUnique({
+          where: { postingKey: `sales-confirm:${orderId}` },
+          select: { id: true, code: true, isReversed: true, metadata: true },
+        });
+        if (confirmEntry) {
+          if (confirmEntry.isReversed) {
+            throw new ConflictException(
+              `قيد تأكيد البيع ${confirmEntry.code} معكوس بالفعل — حالة غير متسقة تتطلب مراجعة يدوية`,
+            );
+          }
+          await this.financial.reverseJournalEntryInTx(
+            tx,
+            confirmEntry.id,
+            userId,
+            `إبطال أمر بيع ${order.code} — عكس قيد التأكيد`,
+          );
+        }
+        // قيد غائب = أمر تاريخي قبل الترحيل الموحد — لا قيدًا لعكسه
+        // (الحالة والمخزون يُعالجان، والقيد التدقيقي الجديد غير مطلوب).
+
+        // (4) استعادة المخزون لكل بند — التكلفة «كما بيعت بها» من
+        // cogsLines metadata، ثم التكلفة الحالية، ثم صفر (ملاذ أخير).
+        const cogsByVariant = parseCogsLinesMetadata(
+          confirmEntry?.metadata ?? null,
+        );
+        const fgWarehouse = await tx.warehouse.findFirst({
+          where: {
+            code: 'WH-FG',
+            type: WarehouseType.FINISHED_GOODS,
+            isActive: true,
+          },
+        });
+        if (!fgWarehouse) {
+          throw new BadRequestException(
+            'مخزن المنتج التام الافتراضي غير موجود',
+          );
+        }
+        for (const item of order.items) {
+          const metadataCost = cogsByVariant.get(item.productVariantId);
+          let unitCost = metadataCost;
+          if (unitCost === undefined) {
+            const stock = await tx.finishedGoodStock.findUnique({
+              where: {
+                warehouseId_productVariantId: {
+                  warehouseId: fgWarehouse.id,
+                  productVariantId: item.productVariantId,
+                },
+              },
+              select: { unitCost: true },
+            });
+            unitCost = stock ? Number(stock.unitCost) : 0;
+          }
+          await this.inventoryService.receiveFinishedGood(
+            {
+              productVariantId: item.productVariantId,
+              warehouseId: fgWarehouse.id,
+              quantity: item.quantity,
+              unitCost,
+              reference: `VOID-${order.code}`,
+              notes: `إبطال أمر بيع ${order.code} — إعادة البضاعة للمخزون`,
+            },
+            userId,
+            tx,
+          );
+        }
+
+        // (5) CAS: قلب الحالة إلى CANCELLED مشروطًا ببقائها CONFIRMED.
+        const transition = await tx.salesOrder.updateMany({
+          where: { id: orderId, status: SalesOrderStatus.CONFIRMED },
+          data: { status: SalesOrderStatus.CANCELLED },
+        });
+        if (transition.count !== 1) {
+          throw new ConflictException('تم تغيير أمر البيع بالتزامن');
+        }
+
+        const voided = await tx.salesOrder.findUniqueOrThrow({
+          where: { id: orderId },
+          // SAL-5: إسقاط نحيف للبنود — نفس شكل القائمة.
+          include: {
+            customer: { select: { id: true, name: true, code: true } },
+            items: {
+              select: {
+                id: true,
+                quantity: true,
+                unitPrice: true,
+                totalPrice: true,
+                // ProductVariant بلا عمود code — المعرِّفات الفعلية:
+                // size/color (فريدان مع المنتج) وbarcode للقراءة السريعة.
+                variant: {
+                  select: { id: true, size: true, color: true, barcode: true },
+                },
+              },
+            },
+          },
+        });
+        // (6) سجل تدقيق داخل المعاملة بعد نجاح كل الآثار.
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: 'SALES_ORDER_VOIDED',
+            module: 'SALES',
+            details: {
+              salesOrderId: orderId,
+              code: order.code,
+              customerId: order.customerId,
+              paymentType: order.paymentType,
+              totalAmount: Number(order.totalAmount ?? 0),
+              paidAmount: Number(order.paidAmount ?? 0),
+              itemsCount: order.items.length,
+              reversedEntryCode: confirmEntry?.code ?? null,
+            },
+          },
+        });
+        await storeIdempotencyResponse(tx, idempotencyKey, voided);
+        return voided;
+      });
+    } catch (error) {
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          IDEMPOTENCY_SCOPE_SALES_ORDER_VOID,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
+  }
+
+  async getSalesOrders(query: SalesOrderQueryDto = new SalesOrderQueryDto()) {
+    const page = query.page || 1;
+    const limit = query.limit || 20;
+    // SAL-5 (P2 — GF-IMP-W3): فلاتر اختيارية — الحالة / العميل / نطاق تاريخ
+    // الإنشاء / بحث q في كود الأمر (contains غير حساس لحالة الأحرف).
+    // الشروط الغائبة لا تدخل where، والفهارس القائمة (status, createdAt)
+    // و(customerId) تغطي الاستعلام المرشّح. نطاق غير منطقي (from > to)
+    // يُرفض 400 عربية قبل أي استعلام.
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية فلاتر أوامر البيع لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
     const where: Prisma.SalesOrderWhereInput = {
       customer: { deletedAt: null },
     };
+    if (query.status) where.status = query.status;
+    if (query.customerId) where.customerId = query.customerId;
+    if (query.q) where.code = { contains: query.q, mode: 'insensitive' };
+    if (from || to) {
+      where.createdAt = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      };
+    }
     const [data, total] = await Promise.all([
       this.prisma.salesOrder.findMany({
         skip: (page - 1) * limit,
         take: limit,
         where,
+        // SAL-5: إسقاط نحيف — البنود ترجع quantity/unitPrice/totalPrice مع
+        // كود المتغير فقط بدل متغيرات ومنتجات كاملة (كان الحمل يشمل سلسلة
+        // product الكاملة لكل بند في كل صفحة قائمة).
         include: {
           customer: { select: { id: true, name: true, code: true } },
-          items: { include: { variant: { include: { product: true } } } },
+          items: {
+            select: {
+              id: true,
+              quantity: true,
+              unitPrice: true,
+              totalPrice: true,
+              // ProductVariant بلا عمود code — المعرِّفات الفعلية: size/color
+              // (فريدان مع المنتج) وbarcode للقراءة السريعة.
+              variant: {
+                select: { id: true, size: true, color: true, barcode: true },
+              },
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
       this.prisma.salesOrder.count({ where }),
     ]);
-    return new PaginatedResult(data, total, page, limit);
+    // SAL-5: عقد الاستجابة الكنوني (items/total/page/limit + توافق
+    // data/meta) — mobile الحالي يقرأ data فلا انكسار.
+    return new ListResponseDto(data, total, page, limit);
   }
 
   async createSalesOrder(

@@ -74,4 +74,38 @@ describe('QualityController — التفويض والصلاحيات (GF-0003)', 
       UserRole.GENERAL_MANAGER,
     ]);
   });
+
+  // QLT-6 (GF-IMP-W3): مسارات القراءة (KPIs + القائمة) قُيّدت بالأدوار —
+  // لا دور QUALITY مستقل في UserRole فيُفوَّض: إنتاج/إدارة عامة/سوبر أدمن.
+  it.each([
+    ['getKpis', 'مؤشرات الجودة'],
+    ['getChecks', 'قائمة الفحوصات'],
+  ] as const)(
+    'QLT-6: %s مقيّد بـ PRODUCTION_MANAGER/GENERAL_MANAGER/SUPER_ADMIN (%s)',
+    (method, _label) => {
+      const roles = getMethodMetadata<UserRole[]>(
+        ROLES_KEY,
+        QualityController.prototype,
+        method,
+      );
+      expect(roles).toEqual([
+        UserRole.PRODUCTION_MANAGER,
+        UserRole.GENERAL_MANAGER,
+        UserRole.SUPER_ADMIN,
+      ]);
+    },
+  );
+
+  // QLT-6: توثيق Swagger للمسارين لم يكن موجودًا — ApiOperation مطلوب.
+  it.each([
+    ['getKpis', 'مؤشرات الجودة'],
+    ['getChecks', 'قائمة الفحوصات'],
+  ] as const)('QLT-6: %s يحمل ApiOperation للوثائق (%s)', (method, _label) => {
+    const operation = getMethodMetadata<{ summary?: string } | undefined>(
+      'swagger/apiOperation',
+      QualityController.prototype,
+      method,
+    );
+    expect(operation?.summary).toBeTruthy();
+  });
 });

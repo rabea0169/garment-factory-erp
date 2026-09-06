@@ -112,3 +112,44 @@ ProductionStage? parseProductionStage(String? value) {
       throw FormatException('مرحلة الإنتاج غير معروفة: $value');
   }
 }
+
+/// MOB-3: ترميز أمر تشغيل لذاكرة Hive (شكل مسطح مستقل عن استجابة
+/// الخادم المتداخلة) — يستخدمه ProductionCubit لتخزين آخر حالة ناجحة.
+Map<String, dynamic> workOrderToCacheJson(WorkOrder order) => <String, dynamic>{
+      'id': order.id,
+      'code': order.code,
+      'quantity': order.quantity,
+      'status': order.status.apiValue,
+      'stage': order.currentStage?.apiValue,
+      'productName': order.productName,
+      'variantSize': order.variantSize,
+      'createdAt': order.createdAt.toIso8601String(),
+    };
+
+/// فك ترميز أمر تشغيل من ذاكرة Hive — يرمي FormatException عند أي حقل
+/// تالف (يُعامل كـ "لا كاش" ولا يكسر الشاشة).
+WorkOrder workOrderFromCacheJson(Map<String, dynamic> json) {
+  final stageRaw = json['stage'];
+  return WorkOrder(
+    id: _requiredCacheString(json, 'id'),
+    code: _requiredCacheString(json, 'code'),
+    quantity: _requiredCacheInt(json, 'quantity'),
+    status: parseWorkOrderStatus(_requiredCacheString(json, 'status')),
+    currentStage: parseProductionStage(stageRaw is String ? stageRaw : null),
+    productName: _requiredCacheString(json, 'productName'),
+    variantSize: _requiredCacheString(json, 'variantSize'),
+    createdAt: DateTime.parse(_requiredCacheString(json, 'createdAt')),
+  );
+}
+
+String _requiredCacheString(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is String && value.isNotEmpty) return value;
+  throw FormatException('الحقل $key مفقود من كاش أمر التشغيل');
+}
+
+int _requiredCacheInt(Map<String, dynamic> json, String key) {
+  final value = json[key];
+  if (value is num) return value.toInt();
+  throw FormatException('الحقل $key غير صالح في كاش أمر التشغيل');
+}

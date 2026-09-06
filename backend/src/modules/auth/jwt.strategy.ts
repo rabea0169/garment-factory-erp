@@ -49,11 +49,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       throw new UnauthorizedException('المستخدم غير مصرح له بالدخول');
     }
 
-    // SEC-F04: revoke-by-version — لو payload.v يختلف عن user.jwtVersion،
-    // فالـ access token قد بُطّل بعد logout. نرفض الطلب ونُجبر العميل على refresh.
+    // SEC-F04 + AUTH-6: revoke-by-version — payload.v يجب أن يكون رقمًا منتهيًا
+    // مطابقًا لـ user.jwtVersion. أي انحراف (اختلاف قيمة، غياب الحقل، أو قيمة
+    // غير رقمية/غير منتهية) يُعامل كعدم تطابق → 401.
+    // قبل AUTH-6 كان غياب v يتخطى الفحص كليًا فتبقى التوكنات الصادرة قبل
+    // آلية SEC-F04 صالحة إلى الأبد رغم logout (إبطال بلا تأثير عليها)؛
+    // بعد انتقال كل مسارات الإصدار (login/refresh) لضم v ورفع البذرة
+    // jwtVersion، غياب v لا يمكن أن يصدر إلا من توكن قديم/مزور → نرفضه.
     if (
-      typeof payload.v === 'number' &&
-      Number.isFinite(payload.v) &&
+      typeof payload.v !== 'number' ||
+      !Number.isFinite(payload.v) ||
       payload.v !== user.jwtVersion
     ) {
       throw new UnauthorizedException(

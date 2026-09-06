@@ -399,11 +399,29 @@ export class FinancialPostingService {
     // الملكية/الإيراد (دائن=زيادة) دون تمييز نوع الحساب، لأن القيد المزدوج
     // يفرض ذلك تلقائيًا عند التقييد الصحيح من العميل.
     // (deltaMap حُسب أعلاه قبل إنشاء القيد لأن ACC-2 يحتاجه للقطة metadata.)
-    for (const [accountId, delta] of deltaMap.entries()) {
-      await tx.account.update({
-        where: { id: accountId },
-        data: { balance: { increment: delta } },
-      });
+    //
+    // ACC-7 (P2 — GF-IMP-W3): دفعة خام واحدة بدل حلقة await متتابعة على
+    // خريطة الدلتا — القيد بـ k حسابات مختلفة كان يدفع k استعلامات
+    // تسلسلية داخل المعاملة (كل round-trip يطيل نافذة القفل). الآن بيان
+    // واحد (نص البند حرفيًا):
+    //   UPDATE accounts SET balance = balance + t.d
+    //   FROM (VALUES ...) AS t(id, d) WHERE accounts.id = t.id::text
+    // عمود accounts.id في القاعدة TEXT (UUID مخزّن نصًا — هجرة init)، لذا
+    // يُمرَّر المعرف بصراحة ::uuid داخل VALUES ثم يُحوَّل راجعًا t.id::text
+    // في شرط المطابقة — بدون التحويل الراجع يرمي PostgreSQL
+    // «operator does not exist: text = uuid» (تحقق فعلي على PostgreSQL 16).
+    // الزيادة/الخصم يبقيان ذريين داخل نفس المعاملة، والدلتات تُمرَّر
+    // Prisma.Decimal كمعاملات (لا تحلل عائم). الحسابات المشار إليها
+    // وُجدت جميعها في فحص (2) أعلاه فلا صف يفلت من المطابقة، والحساب
+    // المشترك بين بنود عدة يظهر مرة واحدة بدلتاه الصافية (deltaMap).
+    if (deltaMap.size > 0) {
+      const batchRows = [...deltaMap.entries()].map(
+        ([accountId, delta]) =>
+          Prisma.sql`(${accountId}::uuid, ${delta}::numeric)`,
+      );
+      await tx.$executeRaw(
+        Prisma.sql`UPDATE accounts SET balance = balance + t.d FROM (VALUES ${Prisma.join(batchRows)}) AS t(id, d) WHERE accounts.id = t.id::text`,
+      );
     }
 
     // A2: تحديث أرصدة الكيانات المرتبطة (treasury/customer/supplier).

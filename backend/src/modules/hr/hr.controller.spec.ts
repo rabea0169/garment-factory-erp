@@ -4,6 +4,7 @@ import { HrController } from './hr.controller';
 import { HrService } from './hr.service';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
+import { PayrollQueryDto } from './dto/payroll-query.dto';
 
 describe('HrController — التفويض والصلاحيات (GF-0003)', () => {
   let controller: HrController;
@@ -17,6 +18,10 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     createPayroll: jest.Mock;
     approvePayroll: jest.Mock;
     payPayroll: jest.Mock;
+    getPayrolls: jest.Mock;
+    cancelPayroll: jest.Mock;
+    getWorkerAdvances: jest.Mock;
+    getDailyProductionRecords: jest.Mock;
   };
 
   beforeEach(() => {
@@ -30,6 +35,12 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       createPayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
       approvePayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
       payPayroll: jest.fn().mockResolvedValue({ id: 'pay-1', isPaid: true }),
+      getPayrolls: jest.fn().mockResolvedValue({ data: [], meta: {} }),
+      cancelPayroll: jest.fn().mockResolvedValue({ id: 'pay-1' }),
+      getWorkerAdvances: jest.fn().mockResolvedValue({ data: [], meta: {} }),
+      getDailyProductionRecords: jest
+        .fn()
+        .mockResolvedValue({ data: [], meta: {} }),
     };
     controller = new HrController(service as unknown as HrService);
   });
@@ -38,7 +49,8 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     await controller.getWorkers();
     await controller.getWorkerDetails('w-1');
     expect(service.getAllWorkers).toHaveBeenCalledTimes(1);
-    expect(service.getWorkerDetails).toHaveBeenCalledWith('w-1');
+    // HR-8: دور الجلسة الاختاريي يمر كـ undefined عند غيابه.
+    expect(service.getWorkerDetails).toHaveBeenCalledWith('w-1', undefined);
   });
 
   it('إنشاء عامل يمرر تاريخ التعيين إلى الخدمة', async () => {
@@ -190,13 +202,18 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
     );
   });
 
-  it('دفع payroll محمي بدوري HR_MANAGER وGENERAL_MANAGER', () => {
+  it('دفع payroll محمي بدوري HR_MANAGER وGENERAL_MANAGER وACCOUNTANT وCASHIER (HR-5)', () => {
     const roles = getMethodMetadata<UserRole[]>(
       ROLES_KEY,
       HrController.prototype,
       'payPayroll',
     );
-    expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
+    expect(roles).toEqual([
+      UserRole.HR_MANAGER,
+      UserRole.GENERAL_MANAGER,
+      UserRole.ACCOUNTANT,
+      UserRole.CASHIER,
+    ]);
   });
 
   it('تسجيل سلفة مقيّد بـ HR_MANAGER فقط', () => {
@@ -206,5 +223,91 @@ describe('HrController — التفويض والصلاحيات (GF-0003)', () =>
       'recordAdvance',
     );
     expect(roles).toEqual([UserRole.HR_MANAGER]);
+  });
+
+  // ===================== GF-IMP-W3 / W3-A =====================
+
+  // HR-8 (ب): دور الجلسة يمرر إلى الخدمة ليقرر ظهور حقول الهوية (نمط INV-2).
+  it('قراءة العمال وتفاصيلهم تمرر دور الجلسة إلى الخدمة (HR-8)', async () => {
+    await controller.getWorkers(
+      { page: 1, limit: 20 },
+      UserRole.PRODUCTION_MANAGER,
+    );
+    await controller.getWorkerDetails('w-1', UserRole.HR_MANAGER);
+
+    expect(service.getAllWorkers).toHaveBeenCalledWith(
+      { page: 1, limit: 20 },
+      UserRole.PRODUCTION_MANAGER,
+    );
+    expect(service.getWorkerDetails).toHaveBeenCalledWith(
+      'w-1',
+      UserRole.HR_MANAGER,
+    );
+  });
+
+  // HR-6 (أ): قائمة الرواتب — ترقيم وفلاتر تمرر كما هي إلى الخدمة.
+  it('قائمة الرواتب تمرر فلاتر الاستعلام إلى الخدمة (HR-6)', async () => {
+    const query = {
+      page: 1,
+      limit: 20,
+      status: 'DRAFT',
+      workerId: '00000000-0000-0000-0000-000000000001',
+      from: '2026-08-01',
+      to: '2026-08-31',
+    } as unknown as PayrollQueryDto;
+    await controller.getPayrolls(query);
+    expect(service.getPayrolls).toHaveBeenCalledWith(query);
+  });
+
+  // HR-6 (ب): إبطال المسودة — أدوار HR_MANAGER وGENERAL_MANAGER فقط.
+  it('إبطال كشف راتب محمي بدوري HR_MANAGER وGENERAL_MANAGER (HR-6)', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      HrController.prototype,
+      'cancelPayroll',
+    );
+    expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
+  });
+
+  it('إبطال كشف راتب يمرر id وactor وIdempotency-Key (HR-6)', async () => {
+    await controller.cancelPayroll('pay-1', 'hr-1', 'cancel-key');
+    expect(service.cancelPayroll).toHaveBeenCalledWith(
+      'pay-1',
+      'hr-1',
+      'cancel-key',
+    );
+  });
+
+  // HR-6 (ج): قراءات الجوال — السلف والإنتاج اليومي مرقمان بفلاتر.
+  it('قائمة السلف والإنتاج تمرر الفلاتر إلى الخدمة (HR-6 ج)', async () => {
+    const query = {
+      page: 1,
+      limit: 20,
+      workerId: 'w-1',
+      from: '2026-08-01',
+      to: '2026-08-31',
+    };
+    await controller.getAdvances(query);
+    await controller.getProduction(query);
+
+    expect(service.getWorkerAdvances).toHaveBeenCalledWith(query);
+    expect(service.getDailyProductionRecords).toHaveBeenCalledWith(query);
+  });
+
+  // HR-6: أدوار القراءة الثلاثة (القائمة + السلف + الإنتاج) —
+  // HR_MANAGER وGENERAL_MANAGER (نص البند: «الأدوار: HR_MANAGER/GENERAL_MANAGER»).
+  it('قراءات HR-6 (الرواتب والسلف والإنتاج) محصورة بـ HR_MANAGER وGENERAL_MANAGER', () => {
+    for (const method of [
+      'getPayrolls',
+      'getAdvances',
+      'getProduction',
+    ] as const) {
+      const roles = getMethodMetadata<UserRole[]>(
+        ROLES_KEY,
+        HrController.prototype,
+        method,
+      );
+      expect(roles).toEqual([UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER]);
+    }
   });
 });

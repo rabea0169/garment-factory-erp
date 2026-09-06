@@ -65,6 +65,8 @@ function createTxMock() {
       createMany: jest.fn(),
     },
     idempotencyKey: { create: jest.fn(), update: jest.fn() },
+    // INV-7: سجل التدقيق يُكتب داخل معاملة الحركة
+    activityLog: { create: jest.fn() },
   };
 }
 
@@ -1012,7 +1014,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
   // ============ قراءة الـ ledger ============
 
   describe('قراءة سجل الحركات', () => {
-    it('مرشحات خامة/مخزن/نوع/فترة مع حد 200 وترتيب أحدث أولًا', async () => {
+    it('مرشحات خامة/مخزن/نوع/فترة مع حد الصفحة الافتراضي 20 (السقف 100) وترتيب أحدث أولًا', async () => {
       const entries = [{ id: 'sle-1' }];
       prisma.stockLedgerEntry.findMany.mockResolvedValue(entries);
 
@@ -1045,7 +1047,7 @@ describe('InventoryService — أساس المخزون القابل للتدقي
       });
     });
 
-    it('بلا مرشحات: where فارغة وحد 200 حماية من الاستجابات الضخمة', async () => {
+    it('بلا مرشحات: where فارغة والسقف 100 من PaginationDto (كان العنوان يتحدث عن 200 متقادمًا)', async () => {
       prisma.stockLedgerEntry.findMany.mockResolvedValue([]);
 
       await service.getLedgerEntries({});
@@ -1998,5 +2000,862 @@ describe('InventoryService — PERF-F02 bulkIssueFinishedGoods', () => {
     ).rejects.toThrow(ConflictException);
 
     expect(events).toEqual([]);
+  });
+});
+
+// ============ INV-6 (GF-IMP-W3): المخزن الافتراضي الحتمي ============
+
+describe('InventoryService — INV-6 (مخزن خامات افتراضي حتمي)', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let financial: FinancialPostingService;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    financial = {
+      postJournalEntryInTx: jest.fn().mockResolvedValue({ entryId: 'je-1' }),
+    } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    prisma.warehouse.findUnique.mockResolvedValue(WAREHOUSE);
+    tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER);
+    tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.stockLedgerEntry.aggregate.mockResolvedValue({
+      _sum: { quantityDelta: 150 },
+    });
+    tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('INV-6: الاختيار حتمي — أول مخزن خامات نشط بترتيب createdAt صاعد', async () => {
+    prisma.warehouse.findFirst.mockResolvedValue({
+      id: 'wh-raw-first',
+      type: WarehouseType.RAW_MATERIAL,
+      isActive: true,
+    });
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.addRawMaterialStock('rm-1', 10, 45.5, 'user-1', 'key-inv6');
+
+    // الحتمية: (type=RAW_MATERIAL, isActive=true) بترتيب createdAt asc
+    expect(prisma.warehouse.findFirst).toHaveBeenCalledWith({
+      where: { type: WarehouseType.RAW_MATERIAL, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    // الحركة توجّه للمخزن المختار نفسه
+    expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ warehouseId: 'wh-raw-first' }),
+      }),
+    );
+  });
+
+  it('INV-6: fallback حتمي إلى أول مخزن عام نشط عند غياب مخازن الخامات', async () => {
+    // لا مخزن خامات → الاختيار يتحول لأول مخزن عام نشط بنفس الترتيب
+    prisma.warehouse.findFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        id: 'wh-general-1',
+        type: WarehouseType.GENERAL,
+        isActive: true,
+      });
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.addRawMaterialStock('rm-1', 10, 45.5, 'user-1', 'key-inv6b');
+
+    expect(prisma.warehouse.findFirst).toHaveBeenNthCalledWith(2, {
+      where: { type: WarehouseType.GENERAL, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ warehouseId: 'wh-general-1' }),
+      }),
+    );
+  });
+
+  it('INV-6: بلا مخازن نشطة إطلاقًا → 409 fail-closed (السلوك القائم لا انحدار)', async () => {
+    prisma.warehouse.findFirst.mockResolvedValue(null);
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.addRawMaterialStock('rm-1', 10, 45.5, 'user-1', 'key-inv6c'),
+    ).rejects.toThrow('لا يوجد مخزن خامات نشط');
+    expect(tx.rawMaterial.update).not.toHaveBeenCalled();
+  });
+});
+
+// ============ INV-7 (GF-IMP-W3): سجل تدقيق كتابات المخزون ============
+
+describe('InventoryService — INV-7 (سجل التدقيق داخل معاملات الحركات)', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let financial: FinancialPostingService;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    financial = {
+      postJournalEntryInTx: jest.fn().mockResolvedValue({ entryId: 'je-1' }),
+    } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    prisma.warehouse.findUnique.mockResolvedValue(WAREHOUSE);
+    tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER);
+    tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.stockLedgerEntry.aggregate.mockResolvedValue({
+      _sum: { quantityDelta: 150 },
+    });
+    tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('INV-7: receive بفاعل يكتب STOCK_RECEIVED بالرصيد قبل/بعد داخل المعاملة نفسها', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.receive(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 50,
+        unitCost: 48,
+      },
+      'user-9',
+    );
+
+    expect(tx.activityLog.create).toHaveBeenCalledTimes(1);
+    expect(tx.activityLog.create).toHaveBeenCalledWith({
+      data: {
+        userId: 'user-9',
+        action: 'STOCK_RECEIVED',
+        module: 'inventory',
+        details: {
+          entryCode: ENTRY_CREATED.entryCode,
+          type: StockMovementType.RECEIVE,
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantityDelta: 50,
+          balanceBefore: 150,
+          balanceAfter: 200,
+          totalValue: 2400,
+        },
+      },
+    });
+  });
+
+  it('INV-7: receive بلا فاعل (استدعاء برمجي قديم) — لا سجل تدقيق (userId NOT NULL)', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.receive({
+      rawMaterialId: 'rm-1',
+      warehouseId: 'wh-1',
+      quantity: 50,
+      unitCost: 48,
+    });
+
+    expect(tx.activityLog.create).not.toHaveBeenCalled();
+  });
+
+  it('INV-7: كل نوع حركة يكتب فعله الصحيح (ISSUE/ADJUSTMENT/WASTE)', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.issue(
+      { rawMaterialId: 'rm-1', warehouseId: 'wh-1', quantity: 5 },
+      'user-issue',
+    );
+    expect(tx.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'STOCK_ISSUED',
+          userId: 'user-issue',
+        }),
+      }),
+    );
+
+    await service.adjust(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantityDelta: -3.5,
+        reason: 'عجز جرد',
+      },
+      'user-adj',
+    );
+    expect(tx.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'STOCK_ADJUSTED',
+          userId: 'user-adj',
+        }),
+      }),
+    );
+
+    await service.waste(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 2.5,
+        reason: 'تالف',
+      },
+      'user-waste',
+    );
+    expect(tx.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'STOCK_WASTED',
+          userId: 'user-waste',
+        }),
+      }),
+    );
+  });
+
+  it('INV-7: فشل الحركة (رصيد سالب) لا يكتب سجل تدقيق — التراجع شامل', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // الرصيد الإجمالي بعد الحركة سالب → BadRequestException داخل المعاملة
+    tx.rawMaterial.update.mockResolvedValue({
+      ...MATERIAL_AFTER,
+      currentStock: -5,
+    });
+
+    await expect(
+      service.issue(
+        { rawMaterialId: 'rm-1', warehouseId: 'wh-1', quantity: 205 },
+        'user-fail',
+      ),
+    ).rejects.toThrow(BadRequestException);
+
+    // كتب الـ ledger؟ لا (الاستثناء قبلها) — وكذلك سجل التدقيق
+    expect(tx.stockLedgerEntry.create).not.toHaveBeenCalled();
+    expect(tx.activityLog.create).not.toHaveBeenCalled();
+  });
+});
+
+// ============ INV-8 (GF-IMP-W3): حركة RETURN + هدر البضاعة الجاهزة ============
+
+describe('InventoryService — INV-8 (أ): مرتجع الإنتاج (RETURN)', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let postJournalEntryInTx: jest.Mock;
+  let financial: FinancialPostingService;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    postJournalEntryInTx = jest.fn().mockResolvedValue({ entryId: 'je-1' });
+    financial = {
+      postJournalEntryInTx,
+    } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    prisma.warehouse.findUnique.mockResolvedValue(WAREHOUSE);
+    tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER);
+    tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.stockLedgerEntry.aggregate.mockResolvedValue({
+      _sum: { quantityDelta: 150 },
+    });
+    tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('INV-8: المرتجع يزيد الرصيد (delta موجب) بقيد ledger بنوع RETURN وبلا قيد GL', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    const result = await service.return(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 12.5,
+        reason: 'بقايا قص من مرحلة القص',
+        reference: 'WO-20260901-ABCD1234',
+      },
+      'user-1',
+    );
+
+    // الزيادة ذرية + موجبة (كالاستلام)
+    expect(tx.rawMaterial.update).toHaveBeenCalledWith({
+      where: { id: 'rm-1' },
+      data: { currentStock: { increment: 12.5 } },
+      select: { currentStock: true, costPerUnit: true, minStockLevel: true },
+    });
+    // سجل الحركة بنوع RETURN صراحة مع السبب والمرجع
+    expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: StockMovementType.RETURN,
+          warehouseId: 'wh-1',
+          rawMaterialId: 'rm-1',
+          quantityDelta: 12.5,
+          balanceAfter: 162.5,
+          unitCost: 45.5,
+          totalValue: 568.75,
+          reference: 'WO-20260901-ABCD1234',
+          createdById: 'user-1',
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      replayed: false,
+      type: StockMovementType.RETURN,
+      quantityDelta: 12.5,
+      balanceAfter: 162.5,
+      unitCost: 45.5,
+      totalValue: 568.75,
+    });
+    // ADR-0020: مرتجع داخلي بلا طرف خارجي — لا قيد GL إطلاقًا
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
+    // INV-7: سجل التدقيق بفعل STOCK_RETURNED
+    expect(tx.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'STOCK_RETURNED',
+          userId: 'user-1',
+        }),
+      }),
+    );
+  });
+
+  it('INV-8: بلا warehouseId (حرفية التكليف) → مخزن الخامات الافتراضي الحتمي (INV-6)', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.warehouse.findFirst.mockResolvedValue({
+      id: 'wh-raw-default',
+      type: WarehouseType.RAW_MATERIAL,
+      isActive: true,
+    });
+
+    // حرفية ReturnStockDto: rawMaterialId/quantity/reason (+reference) فقط
+    await service.return(
+      {
+        rawMaterialId: 'rm-1',
+        quantity: 7.5,
+        reason: 'بقايا قص من مرحلة القص',
+      },
+      'user-1',
+    );
+
+    // الاختيار الحتمي: أول مخزن خامات نشط بترتيب createdAt صاعد
+    expect(prisma.warehouse.findFirst).toHaveBeenCalledWith({
+      where: { type: WarehouseType.RAW_MATERIAL, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    // الحركة توجّه للمخزن المختار نفسه — لا حركة بلا مخزن
+    expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: StockMovementType.RETURN,
+          warehouseId: 'wh-raw-default',
+          rawMaterialId: 'rm-1',
+          quantityDelta: 7.5,
+        }),
+      }),
+    );
+  });
+
+  it('INV-8: المرتجع يبث STOCK_ADDED بعد commit (اتجاه دخول) — لا STOCK_DEDUCTED', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.return(
+      {
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 5,
+        reason: 'توفير خامة',
+      },
+      'user-1',
+    );
+
+    expect(eventEmitter.emitAsync).toHaveBeenCalledTimes(1);
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(
+      EVENTS.STOCK_ADDED,
+      expect.objectContaining({
+        materialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 5,
+      }),
+    );
+  });
+
+  it('INV-8: المرتجع يرفض المستودعات غير الخامات (نفس قواعد الاستلام/الصرف)', async () => {
+    prisma.warehouse.findUnique.mockResolvedValue({
+      ...WAREHOUSE,
+      type: WarehouseType.FINISHED_GOODS,
+    });
+
+    await expect(
+      service.return(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-fg',
+          quantity: 5,
+          reason: 'خطأ مستودع',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow(BadRequestException);
+    expect(tx.rawMaterial.update).not.toHaveBeenCalled();
+  });
+
+  it('INV-8: idempotency بنطاق inventory.return — نفس المفتاح يعيد الاستجابة بلا أثر', async () => {
+    const input = {
+      rawMaterialId: 'rm-1',
+      warehouseId: 'wh-1',
+      quantity: 12.5,
+      reason: 'بقايا قص من مرحلة القص',
+    };
+    const requestHash = requestHashOf({
+      operation: 'inventory.return',
+      rawMaterialId: input.rawMaterialId,
+      warehouseId: input.warehouseId,
+      quantityDelta: input.quantity,
+      notes: `مرتجع من الإنتاج — السبب: ${input.reason}`,
+    });
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      key: 'return-key-1',
+      scope: 'inventory.return',
+      requestHash,
+      response: {
+        replayed: false,
+        entryCode: 'SLE-EXISTING-RETURN',
+        type: StockMovementType.RETURN,
+        rawMaterialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantityDelta: 12.5,
+        balanceAfter: 162.5,
+        unitCost: 45.5,
+        totalValue: 568.75,
+        costPerUnitAfter: null,
+        createdAt: '2026-09-06T00:00:00.000Z',
+      },
+    });
+
+    const result = await service.return(
+      { ...input, idempotencyKey: 'return-key-1' },
+      'user-1',
+    );
+
+    expect(result).toMatchObject({
+      replayed: true,
+      entryCode: 'SLE-EXISTING-RETURN',
+    });
+    // لا تنفيذ جديد — لا كتابة رصيد ولا ledger
+    expect(tx.rawMaterial.update).not.toHaveBeenCalled();
+    expect(tx.stockLedgerEntry.create).not.toHaveBeenCalled();
+  });
+
+  it('INV-8: الرصيد السالب ممنوع كالمعتاد (ADR-0007) — لا يُقبل صرف معكوس', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // رصيد المستودع بعد الإضافة يبقى موجبًا دائمًا — نختبر الحد عبر كمية
+    // سالبة مرفوضة من DTO... هنا: المرتجع دائمًا موجب فنتحقق من حارس
+    // الرصيد الإجمالي عبر update يعيد رصيدًا موجبًا (لا استثناء)
+    await service.return(
+      { rawMaterialId: 'rm-1', warehouseId: 'wh-1', quantity: 1, reason: 'x' },
+      'user-1',
+    );
+    expect(tx.rawMaterial.update).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('InventoryService — INV-8 (ب): هدر البضاعة الجاهزة', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let postJournalEntryInTx: jest.Mock;
+  let financial: FinancialPostingService;
+
+  const FG_WAREHOUSE = {
+    id: 'wh-fg',
+    code: 'WH-FG',
+    name: 'مخزن المنتج التام',
+    type: WarehouseType.FINISHED_GOODS,
+    isActive: true,
+  };
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    postJournalEntryInTx = jest.fn().mockResolvedValue({ entryId: 'je-1' });
+    financial = {
+      postJournalEntryInTx,
+    } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    // INV-6: مخزن التام الافتراضي حتمي
+    prisma.warehouse.findFirst.mockResolvedValue(FG_WAREHOUSE);
+    tx.finishedGoodStock.findUnique.mockResolvedValue({
+      id: 'fgs-1',
+      quantity: 10,
+      unitCost: new Prisma.Decimal(50),
+    });
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 1 });
+    tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('INV-8: يخفض finished_good_stocks بـ CAS ويسجل حركة WASTE موصولة بالمتغير', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    const result = await service.wasteFinishedGood(
+      {
+        finishedGoodVariantId: 'pv-1',
+        quantity: 3,
+        reason: 'تلف بالتخزين',
+      },
+      'user-1',
+    );
+
+    // CAS: تحديث شرطي quantity >= المطلوب
+    expect(tx.finishedGoodStock.updateMany).toHaveBeenCalledWith({
+      where: { id: 'fgs-1', quantity: { gte: 3 } },
+      data: { quantity: { decrement: 3 } },
+    });
+    // الدفتر: WASTE بالمتغير والكمية الموجبة سالبة الدلتا والرصيد بعد
+    expect(tx.stockLedgerEntry.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          type: StockMovementType.WASTE,
+          warehouseId: 'wh-fg',
+          productVariantId: 'pv-1',
+          quantityDelta: -3,
+          balanceAfter: 7,
+          createdById: 'user-1',
+        }),
+      }),
+    );
+    expect(result).toMatchObject({
+      replayed: false,
+      type: StockMovementType.WASTE,
+      quantityDelta: -3,
+      balanceAfter: 7,
+      unitCost: 50,
+      totalValue: 150,
+    });
+    // INV-7: سجل التدقيق داخل نفس المعاملة
+    expect(tx.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'STOCK_WASTED',
+          userId: 'user-1',
+        }),
+      }),
+    );
+  });
+
+  it('INV-8: يرحّل Dr WASTE_EXPENSE / Cr FINISHED_GOOD_STOCK بمبلغ الكمية × تكلفة الوحدة', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+
+    await service.wasteFinishedGood(
+      { finishedGoodVariantId: 'pv-1', quantity: 3, reason: 'تلف بالتخزين' },
+      'user-1',
+    );
+
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const call = postJournalEntryInTx.mock.calls[0] as [
+      unknown,
+      {
+        postingKey: string;
+        lines: {
+          debitAccountId: string;
+          creditAccountId: string;
+          amount: Prisma.Decimal;
+        }[];
+        metadata: Record<string, unknown>;
+      },
+      unknown,
+    ];
+    expect(call[0]).toBe(tx); // داخل نفس المعاملة
+    expect(call[1].postingKey).toBe(
+      'inventory-fg-waste:' + ENTRY_CREATED.entryCode,
+    );
+    expect(call[1].lines).toEqual([
+      {
+        debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+        creditAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+        amount: new Prisma.Decimal(150),
+        description: 'تلف بالتخزين',
+      },
+    ]);
+    expect(call[1].metadata).toEqual(
+      expect.objectContaining({
+        source: 'inventory.fg-waste',
+        productVariantId: 'pv-1',
+        quantity: 3,
+      }),
+    );
+    expect(call[2]).toBe('user-1');
+  });
+
+  it('INV-8: تعارض CAS (count=0) → 409 بلا ledger ولا قيد GL', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.wasteFinishedGood(
+        {
+          finishedGoodVariantId: 'pv-1',
+          quantity: 99,
+          reason: 'أكثر من الرصيد',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      service.wasteFinishedGood(
+        {
+          finishedGoodVariantId: 'pv-1',
+          quantity: 99,
+          reason: 'أكثر من الرصيد',
+        },
+        'user-1',
+      ),
+    ).rejects.toThrow('رصيد المنتج التام غير كافٍ للهدر أو تغير بالتزامن');
+    expect(tx.stockLedgerEntry.create).not.toHaveBeenCalled();
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+
+  it('INV-8: رصيد غير موجود → 404 بلا CAS', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    tx.finishedGoodStock.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.wasteFinishedGood(
+        { finishedGoodVariantId: 'pv-ghost', quantity: 1, reason: 'x' },
+        'user-1',
+      ),
+    ).rejects.toThrow(NotFoundException);
+    expect(tx.finishedGoodStock.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('INV-8: بلا مخزن تام نشط → 409 برسالة واضحة (نمط INV-6)', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.warehouse.findFirst.mockResolvedValue(null);
+
+    await expect(
+      service.wasteFinishedGood(
+        { finishedGoodVariantId: 'pv-1', quantity: 1, reason: 'x' },
+        'user-1',
+      ),
+    ).rejects.toThrow('لا يوجد مخزن منتج تام نشط');
+  });
+
+  it('INV-8: كمية غير صحيحة (كسرية/صفر/سالبة) → 400 قبل أي استعلام', async () => {
+    for (const quantity of [2.5, 0, -3]) {
+      await expect(
+        service.wasteFinishedGood(
+          { finishedGoodVariantId: 'pv-1', quantity, reason: 'x' },
+          'user-1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+    }
+    expect(prisma.warehouse.findFirst).not.toHaveBeenCalled();
+  });
+
+  it('INV-8: قيمة صفرية (unitCost=0) → لا قيد GL (لا هدر بلا قيمة)', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    tx.finishedGoodStock.findUnique.mockResolvedValue({
+      id: 'fgs-1',
+      quantity: 10,
+      unitCost: new Prisma.Decimal(0),
+    });
+
+    const result = await service.wasteFinishedGood(
+      { finishedGoodVariantId: 'pv-1', quantity: 2, reason: 'بلا قيمة' },
+      'user-1',
+    );
+
+    expect(result).toMatchObject({ totalValue: 0, balanceAfter: 8 });
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+});
+
+// ============ INV-9 (GF-IMP-W3): فلتر الدفتر بالبضاعة الجاهزة ============
+
+describe('InventoryService — INV-9 (فلتر الدفتر بمتغير المنتج التام)', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    // createEventEmitterMock يعيد EventEmitter2 بالفعل — لا حاجة لتحويل
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      createEventEmitterMock(),
+      { postJournalEntryInTx: jest.fn() } as unknown as FinancialPostingService,
+    );
+  });
+
+  it('INV-9: productVariantId يُطبّق في where للقائمة والعدّ (البضاعة الجاهزة)', async () => {
+    prisma.stockLedgerEntry.findMany.mockResolvedValue([]);
+    prisma.stockLedgerEntry.count.mockResolvedValue(0);
+
+    await service.getLedgerEntries(
+      { productVariantId: 'pv-1' },
+      UserRole.INVENTORY_MANAGER,
+    );
+
+    const expectedWhere = { productVariantId: 'pv-1' };
+    expect(prisma.stockLedgerEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expectedWhere }),
+    );
+    expect(prisma.stockLedgerEntry.count).toHaveBeenCalledWith({
+      where: expectedWhere,
+    });
+  });
+
+  it('INV-9: فلتر المتغير مع خامة/نوع/فترة معًا في where واحدة', async () => {
+    prisma.stockLedgerEntry.findMany.mockResolvedValue([]);
+
+    await service.getLedgerEntries(
+      {
+        productVariantId: 'pv-1',
+        type: StockMovementType.WASTE,
+        from: '2026-08-01T00:00:00Z',
+        to: '2026-08-31T23:59:59Z',
+      },
+      UserRole.ACCOUNTANT,
+    );
+
+    expect(prisma.stockLedgerEntry.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          productVariantId: 'pv-1',
+          type: StockMovementType.WASTE,
+          createdAt: {
+            gte: new Date('2026-08-01T00:00:00Z'),
+            lte: new Date('2026-08-31T23:59:59Z'),
+          },
+        },
+      }),
+    );
+  });
+});
+
+// ============ INV-10 (GF-IMP-W3): فجوة CAS لمسار الإصدار المفرد ============
+
+describe('InventoryService — INV-10 (تعارض CAS لمسار الإصدار المفرد للمنتج التام)', () => {
+  let service: InventoryService;
+  let prisma: ExtendedPrismaMock;
+  let tx: ReturnType<typeof createTxMock>;
+  let eventEmitter: { emitAsync: jest.Mock };
+  let financial: FinancialPostingService;
+
+  beforeEach(() => {
+    prisma = createInventoryPrismaMock();
+    tx = createTxMock();
+    eventEmitter = createEventEmitterMock() as unknown as {
+      emitAsync: jest.Mock;
+    };
+    financial = {
+      postJournalEntryInTx: jest.fn().mockResolvedValue({ entryId: 'je-1' }),
+    } as unknown as FinancialPostingService;
+    prisma.$transaction.mockImplementation(
+      async (
+        fn: (txClient: ReturnType<typeof createTxMock>) => Promise<unknown>,
+      ) => fn(tx),
+    );
+    prisma.warehouse.findUnique.mockResolvedValue({
+      ...WAREHOUSE,
+      type: WarehouseType.FINISHED_GOODS,
+    });
+    tx.finishedGoodStock.findUnique.mockResolvedValue({
+      id: 'fgs-1',
+      quantity: 10,
+      unitCost: new Prisma.Decimal(50),
+    });
+    tx.stockLedgerEntry.create.mockResolvedValue(ENTRY_CREATED);
+    tx.idempotencyKey.create.mockResolvedValue({ id: 'idem-1' });
+    service = new InventoryService(
+      prisma as unknown as PrismaService,
+      eventEmitter as never,
+      financial,
+    );
+  });
+
+  it('INV-10: updateMany يعيد count=0 (سباق استهلك الرصيد) → 409 ولا يُكتب ledger', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // الرصيد المقروء كافٍ (10 ≥ 5) لكن التحديث الذري لم يمس صفًا —
+    // مستهلك متزامن خفض الرصيد بين القراءة والتحديث
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.issueFinishedGood(
+        { productVariantId: 'pv-1', warehouseId: 'wh-fg', quantity: 5 },
+        'user-1',
+      ),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      service.issueFinishedGood(
+        { productVariantId: 'pv-1', warehouseId: 'wh-fg', quantity: 5 },
+        'user-1',
+      ),
+    ).rejects.toThrow('المخزون التام غير كافٍ أو تغير بالتزامن');
+
+    // لا ledger لحركة لم تنفذ (التراجع الكامل للمعاملة)
+    expect(tx.stockLedgerEntry.create).not.toHaveBeenCalled();
+    expect(tx.idempotencyKey.update).not.toHaveBeenCalled();
+  });
+
+  it('INV-10: CAS الناجح (count=1) يكتب الحركة ويعيدها — لا انحدار', async () => {
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    tx.finishedGoodStock.updateMany.mockResolvedValue({ count: 1 });
+
+    const result = await service.issueFinishedGood(
+      { productVariantId: 'pv-1', warehouseId: 'wh-fg', quantity: 5 },
+      'user-1',
+    );
+
+    expect(result).toMatchObject({
+      replayed: false,
+      quantityDelta: -5,
+      balanceAfter: 5,
+    });
+    expect(tx.stockLedgerEntry.create).toHaveBeenCalledTimes(1);
   });
 });

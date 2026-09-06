@@ -2,9 +2,15 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
-import { PayrollStatus, Prisma, WorkerSpecialty } from '@prisma/client';
+import {
+  PayrollStatus,
+  Prisma,
+  UserRole,
+  WorkerSpecialty,
+} from '@prisma/client';
 import {
   computeRequestHash,
   createIdempotencyKey,
@@ -14,6 +20,10 @@ import {
 } from '../../core/common/idempotency.util';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+// HR-6 (GF-IMP-W3): عقد الاستجابة الكنوني للقوائم — { items, total,
+// page, limit } (نص التكليف حرفيًا — وكيل الجوال يبني عليه) عبر
+// ListResponseDto المشترك مع حقلي توافق انتقاليين (data/meta).
+import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
   FinancialPostingService,
@@ -24,6 +34,8 @@ import {
   DocumentCodePrefix,
   generateDocumentCode,
 } from '../../core/common/codes.util';
+import { PayrollQueryDto } from './dto/payroll-query.dto';
+import { WorkerPeriodQueryDto } from './dto/worker-period-query.dto';
 type CreateWorkerInput = {
   name: string;
   phone?: string;
@@ -41,7 +53,10 @@ export interface PayrollInput {
 }
 
 export interface PayrollPaymentInput {
-  treasuryId: string;
+  // HR-4 (P2 — GF-IMP-W3): الخزينة اختيارية لمسار التسوية بلا نقد —
+  // عندما netAmount = 0 (السلف غطت الإجمالي) لا حركة خزينة أصلًا فلا
+  // معنى لاشتراط خزينة نشطة. الصافي الموجب يظل يتطلب خزينة (تحقق 400).
+  treasuryId?: string;
   paymentDate?: Date;
   notes?: string;
 }
@@ -83,18 +98,57 @@ function isPayrollPeriodUniqueViolation(error: unknown): boolean {
   );
 }
 
+/**
+ * HR-8 (P2 — GF-IMP-W3): الأدوار التي تُعامل كأدوار HR لحقول الهوية
+ * (nationalId وphone) في قراءات العامل — نمط INV-2 المطبق في المخزون:
+ * select مختلف حسب دور المستدعي، والدور غير المعروف (استدعاء برمجي
+ * بلا دور) يُعامل غير HR — fail-closed على بيانات الهوية.
+ */
+const HR_IDENTITY_ROLES: ReadonlySet<UserRole> = new Set([
+  UserRole.HR_MANAGER,
+  UserRole.GENERAL_MANAGER,
+  UserRole.SUPER_ADMIN,
+]);
+
+function isHrIdentityRole(viewerRole?: UserRole): boolean {
+  return viewerRole !== undefined && HR_IDENTITY_ROLES.has(viewerRole);
+}
+
 @Injectable()
 export class HrService {
+  private readonly logger = new Logger(HrService.name);
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly financial: FinancialPostingService,
   ) {}
 
-  async getAllWorkers(pagination: PaginationDto = new PaginationDto()) {
+  async getAllWorkers(
+    pagination: PaginationDto = new PaginationDto(),
+    viewerRole?: UserRole,
+  ) {
     const page = pagination.page ?? 1;
     const pageSize = pagination.limit ?? 20;
     const skip = (page - 1) * pageSize;
+    // HR-8 (ب): قائمة العمال لأدوار HR تعاد بحقول الهوية (nationalId/
+    // phone)؛ لغيرها (وللاستدعاء بلا دور) استعلام بselect صريح بلا الحقلين
+    // الحساسين — لا يُنقلان من القاعدة أصلًا (نمط INV-2 fail-closed).
+    const identityVisible = isHrIdentityRole(viewerRole);
     const options = {
+      ...(identityVisible
+        ? {}
+        : {
+            select: {
+              id: true,
+              code: true,
+              name: true,
+              specialty: true,
+              pieceRate: true,
+              isActive: true,
+              hireDate: true,
+              createdAt: true,
+            },
+          }),
       orderBy: { createdAt: 'desc' } as const,
       skip,
       take: pageSize,
@@ -158,20 +212,47 @@ export class HrService {
     }
   }
 
-  async getWorkerDetails(id: string) {
-    const worker = await this.prisma.worker.findUnique({
-      where: { id },
-      include: {
-        dailyProduction: {
-          take: 10,
-          orderBy: { date: 'desc' },
-        },
-        advances: {
-          take: 5,
-          orderBy: { date: 'desc' },
-        },
-      },
-    });
+  async getWorkerDetails(id: string, viewerRole?: UserRole) {
+    // HR-8 (ب): تفاصيل العامل — حقول الهوية (nationalId/phone) لأدوار HR
+    // فقط (select صريح لغيرها — نمط INV-2). العلاقات (آخر إنتاج/سلف)
+    // متاحة للجميع كما كانت.
+    const identityVisible = isHrIdentityRole(viewerRole);
+    const args: Prisma.WorkerFindUniqueArgs = identityVisible
+      ? {
+          where: { id },
+          include: {
+            dailyProduction: {
+              take: 10,
+              orderBy: { date: 'desc' },
+            },
+            advances: {
+              take: 5,
+              orderBy: { date: 'desc' },
+            },
+          },
+        }
+      : {
+          where: { id },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            specialty: true,
+            pieceRate: true,
+            isActive: true,
+            hireDate: true,
+            createdAt: true,
+            dailyProduction: {
+              take: 10,
+              orderBy: { date: 'desc' },
+            },
+            advances: {
+              take: 5,
+              orderBy: { date: 'desc' },
+            },
+          },
+        };
+    const worker = await this.prisma.worker.findUnique(args);
     if (!worker) throw new NotFoundException('العامل غير موجود');
     return worker;
   }
@@ -271,7 +352,33 @@ export class HrService {
       });
       if (!worker) throw new NotFoundException('العامل غير موجود');
 
-      const totalAmount = data.piecesCount * Number(worker.pieceRate);
+      // HR-8 (أ) (GF-IMP-W3): تحقق ناعم من الحضور — إذا لم يوجد أي سجل
+      // حضور أو إنتاج سابق للعامل في نفس اليوم نُحذّر عبر Logger.warning
+      // ولا نرفض (سياسة الربط الإلزامي معلقة — ADR-15). البحث داخل نفس
+      // المعاملة على نفس اللقطة، والحذير تشغيلي بحت (لا أثر على البيانات).
+      const [sameDayAttendance, sameDayProduction] = await Promise.all([
+        tx.attendance.findFirst({
+          where: { workerId: data.workerId, date: data.date },
+          select: { id: true },
+        }),
+        tx.dailyProduction.findFirst({
+          where: { workerId: data.workerId, date: data.date },
+          select: { id: true },
+        }),
+      ]);
+      if (!sameDayAttendance && !sameDayProduction) {
+        this.logger.warn(
+          `تسجيل إنتاج للعامل ${data.workerId} بتاريخ ${data.date.toISOString().slice(0, 10)} بلا سجل حضور أو إنتاج سابق في نفس اليوم — تحقق ناعم (ADR-15: سياسة الربط معلقة)`,
+        );
+      }
+
+      // HR-7 (GF-IMP-W3): الضرب على Prisma.Decimal — العامل بالقطعة عائم
+      // ثنائي في JS (0.1 × 3 = 0.30000000000000004) فيتسرب الفرق الفلسي
+      // إلى totalAmount المخزّن. Decimal يضرب بدقة كاملة، والتقريب إلى
+      // منزلتين يجري عند التخزين فقط (مطابقة Decimal(10,2) في العمود).
+      const totalAmount = new Prisma.Decimal(data.piecesCount)
+        .mul(worker.pieceRate)
+        .toDecimalPlaces(2);
       const created = await tx.dailyProduction.create({
         data: {
           workerId: data.workerId,
@@ -707,7 +814,7 @@ export class HrService {
 
     const requestHash = computeRequestHash({
       payrollId,
-      treasuryId: input.treasuryId,
+      treasuryId: input.treasuryId ?? null,
       paymentDate: paymentDate.toISOString(),
       notes: input.notes ?? null,
       actorId,
@@ -737,9 +844,26 @@ export class HrService {
           throw new ConflictException('كشف الراتب مدفوع بالفعل');
         }
 
+        // HR-5 (P2 — GF-IMP-W3): فصل الواجبات على الدفع — نفس نمط SoD
+        // القائم في الاعتماد (COMM-F02): من اعتمد كشف الراتب لا يدفعه
+        // بنفسه. مع إضافة ACCOUNTANT وCASHIER لأدوار الدفع (في المتحكم)
+        // صار هذا الفحص ضروريًا لئلا يجمع محاسب واحد الاعتماد والصرف.
+        // الفحص داخل المعاملة بعد مسار الـ replay (إعادة تشغيل استجابة
+        // سبق فحصها لا يُعاد فحصها) — نفس ترتيب approvePayroll.
+        if (payroll.approvedById && payroll.approvedById === actorId) {
+          throw new ConflictException(
+            'لا يمكن لمعتمد كشف الراتب دفعه بنفسه (فصل الواجبات)',
+          );
+        }
+
         // HR-1 (P0 — GF-IMP-W1): صافٍ = صفر حالة مشروعة (كل الإجمالي سلف
         // استُرد بالخصومات) — يُسمح بالدفع ويُرحَّل قيد الخصومات فقط. المرفوض
         // هو الصافي السالب فقط.
+        //
+        // HR-4 (P2 — GF-IMP-W3): مسار التسوية بلا نقد — الخزينة مطلوبة
+        // (ونشطة) فقط عند صافٍ موجب فعليًا يخرج نقدًا. عند صافٍ = صفر
+        // (السلف غطت الإجمالي) لا حركة خزينة أصلًا، فلا نشترط خزينة ولا
+        // نبحث عنها — الدفع بلا treasuryId ينجح كتسوية خصومات صرفة.
         const net = payroll.netAmount.toNumber();
         // إجمالي الخصومات (سلف + غياب) = الجزء المدين من SALARIES_PAYABLE
         // الذي لا يخرج نقدًا بل يُسترد من أصل سلف العامل.
@@ -754,13 +878,20 @@ export class HrService {
         ) {
           throw new BadRequestException('لا يمكن دفع كشف راتب بصافي مبلغ سالب');
         }
+        if (net > 0 && !input.treasuryId) {
+          throw new BadRequestException(
+            'الخزينة مطلوبة لدفع كشف راتب بصافٍ أكبر من صفر',
+          );
+        }
 
-        const treasury = await tx.treasury.findUnique({
-          where: { id: input.treasuryId },
-          select: { id: true, isActive: true },
-        });
-        if (!treasury || !treasury.isActive) {
-          throw new NotFoundException('الخزينة غير موجودة أو غير نشطة');
+        if (net > 0) {
+          const treasury = await tx.treasury.findUnique({
+            where: { id: input.treasuryId },
+            select: { id: true, isActive: true },
+          });
+          if (!treasury || !treasury.isActive) {
+            throw new NotFoundException('الخزينة غير موجودة أو غير نشطة');
+          }
         }
 
         await createIdempotencyKey(tx, idempotencyKey, scope, requestHash);
@@ -843,14 +974,14 @@ export class HrService {
               isAuto: true,
               lines: paymentLines,
               treasuryUpdates:
-                net > 0
+                net > 0 && input.treasuryId
                   ? [{ treasuryId: input.treasuryId, delta: -net }]
                   : undefined,
               metadata: {
                 source: 'HR_PAYROLL_PAYMENT',
                 payrollId,
                 workerId: payroll.workerId,
-                treasuryId: input.treasuryId,
+                treasuryId: input.treasuryId ?? null,
                 paymentDate: paymentDate.toISOString(),
                 net,
                 deductions,
@@ -873,7 +1004,7 @@ export class HrService {
               payrollId,
               workerId: payroll.workerId,
               amount: net,
-              treasuryId: input.treasuryId,
+              treasuryId: input.treasuryId ?? null,
             },
           },
         });
@@ -892,6 +1023,283 @@ export class HrService {
       }
       throw error;
     }
+  }
+
+  // ===================== HR-6 (P2 — GF-IMP-W3): واجهة قراءة الرواتب =====================
+
+  /**
+   * HR-6 (أ): قائمة كشوف الرواتب — مرقمة بفلاتر (status وworkerId ونطاق
+   * فترة بالتقاطع: from → periodEnd ≥ from و to → periodStart ≤ to)،
+   * بإسقاط آمن صريح (select بلا أي حقول خارج القائمة — لا هاش ولا
+   * idempotencyKeyId) مع اسم العامل، والمبالغ أرقامًا JSON-friendly.
+   * عقد الاستجابة حرفيًا: { items, total, page, limit }.
+   */
+  async getPayrolls(query: PayrollQueryDto = new PayrollQueryDto()) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    // فترة التقاطع يجب أن تكون منطقية (from ≤ to) قبل أي استعلام.
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية فترة البحث لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+    const where: Prisma.PayrollWhereInput = {};
+    if (query.status) where.status = query.status;
+    if (query.workerId) where.workerId = query.workerId;
+    if (from) where.periodEnd = { gte: from };
+    if (to) where.periodStart = { lte: to };
+
+    const [rows, total] = await Promise.all([
+      this.prisma.payroll.findMany({
+        where,
+        select: {
+          id: true,
+          workerId: true,
+          periodStart: true,
+          periodEnd: true,
+          grossAmount: true,
+          advanceDeduct: true,
+          absenceDeduct: true,
+          netAmount: true,
+          status: true,
+          isPaid: true,
+          paidAt: true,
+          notes: true,
+          createdById: true,
+          approvedById: true,
+          approvedAt: true,
+          createdAt: true,
+          worker: { select: { id: true, name: true, code: true } },
+        },
+        orderBy: { periodStart: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.payroll.count({ where }),
+    ]);
+
+    const data = rows.map((row) => ({
+      ...this.toPayrollResponse(row),
+      createdAt: row.createdAt,
+      worker: row.worker,
+    }));
+    // HR-6: العقد الحرفي { items, total, page, limit } (حقلا data/meta
+    // توافق انتقالي لكل مستهلك قديم — القوائم الجديدة تعتمد items فقط).
+    return new ListResponseDto(data, total, page, pageSize);
+  }
+
+  /**
+   * HR-6 (ب): إبطال مسودة كشف راتب — مقصور على DRAFT (400 لغيرها) بـ CAS
+   * + ActivityLog + idempotency كامل النمط (scope: hr-payroll-cancel).
+   *
+   * ملاحظة تمثيلية موثقة: PayrollStatus (schema مجمّد — لا تغيير) لا يملك
+   * قيمة CANCELLED، والمسودة بلا أي أثر مالي أو مخزوني (لا قيد قبل
+   * الاعتماد، ولا FIFO، ولا خصم سلف فعلي). الإبطال إذن = إزالة صف
+   * المسودة بdeleteMany مشروط بحالة DRAFT (CAS) داخل المعاملة، مع لقطة
+   * كاملة في ActivityLog وفي الاستجابة المخزنة على مفتاح idempotency —
+   * الأثر التدقيقي محفوظ والفترة تتحرر لإنشاء كشف بديل.
+   */
+  async cancelPayroll(
+    payrollId: string,
+    actorId: string,
+    idempotencyKey?: string,
+  ): Promise<
+    | (PayrollResponse & { cancelled: true; cancelledAt?: Date })
+    | ({
+        replayed: true;
+      } & (PayrollResponse & { cancelled: true }))
+  > {
+    const requestHash = computeRequestHash({ payrollId, actorId });
+    const scope = 'hr-payroll-cancel';
+
+    return this.prisma.$transaction(async (tx) => {
+      const replay = await tryReplayIdempotencyKey(
+        tx,
+        idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay) {
+        return replay as PayrollResponse & { cancelled: true } & {
+          replayed: true;
+        };
+      }
+
+      const payroll = await tx.payroll.findUnique({
+        where: { id: payrollId },
+      });
+      if (!payroll) throw new NotFoundException('كشف الراتب غير موجود');
+      if (payroll.status !== PayrollStatus.DRAFT) {
+        throw new BadRequestException(
+          'لا يمكن إبطال إلا كشف راتب في حالة المسودة (DRAFT)',
+        );
+      }
+
+      // CAS: الإزالة مشروطة ببقاء الحالة DRAFT — أي تغيير متزامن (اعتماد
+      // أو دفع) يجعل count ≠ 1 ويُرفض بـ 409 بلا أثر.
+      const removed = await tx.payroll.deleteMany({
+        where: { id: payrollId, status: PayrollStatus.DRAFT },
+      });
+      if (removed.count !== 1) {
+        throw new ConflictException(
+          'تعذر إبطال كشف الراتب؛ حالته تغيرت بالتزامن',
+        );
+      }
+
+      const response = {
+        ...this.toPayrollResponse(payroll),
+        cancelled: true as const,
+        cancelledAt: new Date(),
+      };
+      // HR-6 (ب): سجل تدقيق داخل نفس المعاملة — لقطة المسودة الملغاة
+      // (المجاميع والحالة والعامل) تبقى قابلة للمراجعة بعد الإزالة.
+      await tx.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'PAYROLL_CANCELLED',
+          module: 'HR',
+          details: {
+            payrollId,
+            workerId: payroll.workerId,
+            periodStart: payroll.periodStart.toISOString(),
+            periodEnd: payroll.periodEnd.toISOString(),
+            grossAmount: payroll.grossAmount.toNumber(),
+            advanceDeduct: payroll.advanceDeduct.toNumber(),
+            absenceDeduct: payroll.absenceDeduct.toNumber(),
+            netAmount: payroll.netAmount.toNumber(),
+            reason: 'draft-cancelled',
+          },
+        },
+      });
+      await storeIdempotencyResponse(tx, idempotencyKey, response);
+      return response;
+    });
+  }
+
+  // ===================== HR-6 (ج): قراءات الجوال (سلف + إنتاج) =====================
+
+  /**
+   * HR-6 (ج): قائمة سلف العمال — مرقمة بفلاتر workerId/from/to، بإسقاط
+   * آمن صريح (لا حقول خارج القائمة) مع اسم العامل، والمبالغ أرقامًا.
+   */
+  async getWorkerAdvances(
+    query: WorkerPeriodQueryDto = new WorkerPeriodQueryDto(),
+  ) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية فترة البحث لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+    const where: Prisma.WorkerAdvanceWhereInput = {};
+    if (query.workerId) where.workerId = query.workerId;
+    if (from || to) {
+      where.date = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.workerAdvance.findMany({
+        where,
+        select: {
+          id: true,
+          workerId: true,
+          amount: true,
+          settledAmount: true,
+          date: true,
+          notes: true,
+          worker: { select: { id: true, name: true, code: true } },
+        },
+        orderBy: { date: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.workerAdvance.count({ where }),
+    ]);
+
+    const data = rows.map((row) => ({
+      id: row.id,
+      workerId: row.workerId,
+      amount: row.amount.toNumber(),
+      settledAmount: row.settledAmount.toNumber(),
+      date: row.date,
+      notes: row.notes,
+      worker: row.worker,
+    }));
+    // HR-6 (ج): العقد الحرفي { items, total, page, limit }.
+    return new ListResponseDto(data, total, page, pageSize);
+  }
+
+  /**
+   * HR-6 (ج): قائمة سجلات الإنتاج اليومي — مرقمة بفلاتر workerId/workOrderId/
+   * from/to، بإسقاط آمن صريح مع اسم العامل، والأسعار/الإجماليات أرقامًا.
+   */
+  async getDailyProductionRecords(
+    query: WorkerPeriodQueryDto = new WorkerPeriodQueryDto(),
+  ) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية فترة البحث لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+    const where: Prisma.DailyProductionWhereInput = {};
+    if (query.workerId) where.workerId = query.workerId;
+    if (query.workOrderId) where.workOrderId = query.workOrderId;
+    if (from || to) {
+      where.date = {
+        ...(from ? { gte: from } : {}),
+        ...(to ? { lte: to } : {}),
+      };
+    }
+
+    const [rows, total] = await Promise.all([
+      this.prisma.dailyProduction.findMany({
+        where,
+        select: {
+          id: true,
+          workerId: true,
+          workOrderId: true,
+          date: true,
+          piecesCount: true,
+          pieceRate: true,
+          totalAmount: true,
+          notes: true,
+          worker: { select: { id: true, name: true, code: true } },
+        },
+        orderBy: { date: 'desc' },
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.dailyProduction.count({ where }),
+    ]);
+
+    const data = rows.map((row) => ({
+      id: row.id,
+      workerId: row.workerId,
+      workOrderId: row.workOrderId,
+      date: row.date,
+      piecesCount: row.piecesCount,
+      pieceRate: row.pieceRate.toNumber(),
+      totalAmount: row.totalAmount.toNumber(),
+      notes: row.notes,
+      worker: row.worker,
+    }));
+    // HR-6 (ج): العقد الحرفي { items, total, page, limit }.
+    return new ListResponseDto(data, total, page, pageSize);
   }
 
   /**

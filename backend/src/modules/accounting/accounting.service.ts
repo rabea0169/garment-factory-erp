@@ -2,12 +2,16 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { randomBytes } from 'node:crypto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { AccountType, VoucherType } from '@prisma/client';
+import { Prisma, AccountType, VoucherType } from '@prisma/client';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import { VoucherQueryDto } from './dto/voucher-query.dto';
+import { JournalEntryQueryDto } from './dto/journal-entry-query.dto';
+import { AccountStatementQueryDto } from './dto/account-statement-query.dto';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import {
@@ -15,6 +19,7 @@ import {
   storeIdempotencyResponse,
   tryReplayIdempotencyKey,
 } from '../../core/common/idempotency.util';
+import { round2 } from '../../core/common/money.util';
 
 /**
  * ACC-1 (P0 — GF-IMP-W1): مصفوفة حساب الطرف المقابل في السندات — صريحة
@@ -117,11 +122,26 @@ export class AccountingService {
     return new PaginatedResult(data, total, page, pageSize);
   }
 
-  async getVouchers(pagination: PaginationDto = new PaginationDto()) {
-    const page = pagination.page ?? 1;
-    const pageSize = pagination.limit ?? 20;
+  async getVouchers(query: VoucherQueryDto = new VoucherQueryDto()) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
     const skip = (page - 1) * pageSize;
+    // ACC-6 (P2 — GF-IMP-W3): فلاتر اختيارية على قائمة السندات — النوع /
+    // الخزينة / الطرف المقابل / نطاق تاريخ السند. الشروط الغائبة لا تدخل
+    // where (لا undefined keys) والفهارس القائمة (type, date) و
+    // (counterpartyId) تغطي الاستعلام المرشّح.
+    const where: Prisma.VoucherWhereInput = {};
+    if (query.type) where.type = query.type;
+    if (query.treasuryId) where.treasuryId = query.treasuryId;
+    if (query.counterpartyId) where.counterpartyId = query.counterpartyId;
+    if (query.from || query.to) {
+      where.date = {
+        ...(query.from ? { gte: new Date(query.from) } : {}),
+        ...(query.to ? { lte: new Date(query.to) } : {}),
+      };
+    }
     const options = {
+      where,
       include: {
         createdBy: { select: { name: true } },
         journalEntry: { select: { code: true, id: true } },
@@ -134,7 +154,7 @@ export class AccountingService {
 
     const [data, total] = await Promise.all([
       this.prisma.voucher.findMany(options),
-      this.prisma.voucher.count(),
+      this.prisma.voucher.count({ where }),
     ]);
 
     return new PaginatedResult(data, total, page, pageSize);
@@ -162,15 +182,6 @@ export class AccountingService {
     ) {
       throw new BadRequestException('نطاق الفترة المالية غير صالح');
     }
-    const overlap = await this.prisma.fiscalPeriod.findFirst({
-      where: {
-        startDate: { lte: endDate },
-        endDate: { gte: startDate },
-      },
-    });
-    if (overlap) {
-      throw new ConflictException('الفترة المالية تتداخل مع فترة موجودة');
-    }
     return this.prisma.$transaction(async (tx) => {
       const replay = await tryReplayIdempotencyKey(
         tx,
@@ -182,6 +193,21 @@ export class AccountingService {
         return replay as Awaited<ReturnType<typeof tx.fiscalPeriod.create>> & {
           replayed: true;
         };
+      // ACC-4 (P2 — GF-IMP-W3): فحص التداخل داخل المعاملة نفسها — كان
+      // يجري قبل $transaction (TOCTOU) فكانت فترتان متزامنتان تجتازان
+      // الفحص على لقطة قاعدة قديمة ثم تلتزمان معًا متداخلتين. إعادته
+      // داخل المعاملة تجعل الفحص والإنشاء ذريين على نفس اللقطة (القراء
+      // المتزامنون على committed rows لا يزالون محكومين بترتيب الالتزام).
+      const overlap = await tx.fiscalPeriod.findFirst({
+        where: {
+          startDate: { lte: endDate },
+          endDate: { gte: startDate },
+        },
+        select: { id: true },
+      });
+      if (overlap) {
+        throw new ConflictException('الفترة المالية تتداخل مع فترة موجودة');
+      }
       const created = await tx.fiscalPeriod.create({
         data: { ...data, startDate, endDate, createdById },
       });
@@ -417,5 +443,206 @@ export class AccountingService {
       description,
       idempotencyKey,
     );
+  }
+
+  // ===================== ACC-8 (P2 — GF-IMP-W3): سطح القراءة المحاسبي =====================
+
+  /**
+   * ACC-8: قائمة قيود اليومية ببنودها — مرقمة بفلاتر (نطاق تاريخ القيد،
+   * حالة العكس، مرجع يحتوي نصًا). القراءة فقط من journal_entries/lines
+   * بلا أي أثر جانبي. الترتيب: الأحدث أولًا.
+   */
+  async getJournalEntries(
+    query: JournalEntryQueryDto = new JournalEntryQueryDto(),
+  ) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
+    const skip = (page - 1) * pageSize;
+    const where: Prisma.JournalEntryWhereInput = {};
+    if (query.from || query.to) {
+      where.date = {
+        ...(query.from ? { gte: new Date(query.from) } : {}),
+        ...(query.to ? { lte: new Date(query.to) } : {}),
+      };
+    }
+    if (query.isReversed !== undefined) {
+      where.isReversed = query.isReversed;
+    }
+    if (query.reference) {
+      where.reference = { contains: query.reference };
+    }
+    const [data, total] = await Promise.all([
+      this.prisma.journalEntry.findMany({
+        where,
+        include: {
+          lines: true,
+          createdBy: { select: { name: true } },
+        },
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+        skip,
+        take: pageSize,
+      }),
+      this.prisma.journalEntry.count({ where }),
+    ]);
+    return new PaginatedResult(data, total, page, pageSize);
+  }
+
+  /**
+   * ACC-8: كشف حساب — بنود القيود المفهرسة للحساب (مدين/دائن/الرصيد
+   * الجاري التراكمي) محسوبة من journal_lines مع فلتر تاريخ وترقيم.
+   *
+   * الدلالات:
+   *  - البنود ترتيبًا زمنيًا (تاريخ القيد، ثم وقت إنشائه، ثم معرف البند
+   *    كفاصل حتمي للترتيب).
+   *  - الرصيد الافتتاحي: عند توفير from يُحسب من مجموع حركات الحساب قبل
+   *    from (مدين − دائن)؛ بدونه يبدأ الكشف من الصفر (كشف كامل).
+   *  - الرصيد الجاري يتراكم على كامل مجموعة البنود المرشحة (لا على صفحة
+   *    العرض وحدها) — لذلك نُجلب البنود المرشحة كاملة ثم نرقّم في الذاكرة.
+   *    مقايضة موثقة: كشوف الحساب الشائعة قابلة لهذا الحجم بسهولة، وفي
+   *    المقابل تبقى أرقام الرصيد الجاري صحيحة عبر الصفحات.
+   */
+  async getAccountStatement(
+    accountId: string,
+    query: AccountStatementQueryDto = new AccountStatementQueryDto(),
+  ) {
+    const account = await this.prisma.account.findUnique({
+      where: { id: accountId },
+      select: { id: true, code: true, name: true },
+    });
+    if (!account) throw new NotFoundException('الحساب المحاسبي غير موجود');
+
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
+
+    const lineFilter: Prisma.JournalLineWhereInput = {
+      OR: [{ debitAccountId: accountId }, { creditAccountId: accountId }],
+    };
+    // فلتر تاريخ القيد (علاقة journalEntry) — DateTimeFilter وليس WhereInput.
+    const entryDateFilter: Prisma.DateTimeFilter<'JournalEntry'> = {};
+    if (query.from) entryDateFilter.gte = new Date(query.from);
+    if (query.to) entryDateFilter.lte = new Date(query.to);
+    if (query.from || query.to) {
+      lineFilter.journalEntry = { date: entryDateFilter };
+    }
+
+    // الرصيد الافتتاحي (قبل from) — حركتان مجمّعتان: مدين ثم دائن.
+    let openingBalance = 0;
+    if (query.from) {
+      const before: Prisma.DateTimeFilter<'JournalEntry'> = {
+        lt: new Date(query.from),
+      };
+      const [debitBefore, creditBefore] = await Promise.all([
+        this.prisma.journalLine.aggregate({
+          where: { debitAccountId: accountId, journalEntry: { date: before } },
+          _sum: { amount: true },
+        }),
+        this.prisma.journalLine.aggregate({
+          where: { creditAccountId: accountId, journalEntry: { date: before } },
+          _sum: { amount: true },
+        }),
+      ]);
+      openingBalance =
+        Number(debitBefore._sum.amount ?? 0) -
+        Number(creditBefore._sum.amount ?? 0);
+    }
+
+    // كامل البنود المرشحة — مطلوبة لحساب الرصيد الجاري الصحيح عبر الصفحات.
+    const allLines = await this.prisma.journalLine.findMany({
+      where: lineFilter,
+      include: {
+        journalEntry: { select: { id: true, code: true, date: true } },
+      },
+      orderBy: [
+        { journalEntry: { date: 'asc' } },
+        { journalEntry: { createdAt: 'asc' } },
+        { id: 'asc' },
+      ],
+    });
+
+    let running = openingBalance;
+    const rows = allLines.map((line) => {
+      const amount = Number(line.amount);
+      const debit = line.debitAccountId === accountId ? amount : 0;
+      const credit = line.creditAccountId === accountId ? amount : 0;
+      running += debit - credit;
+      return {
+        id: line.id,
+        entryId: line.journalEntry.id,
+        entryCode: line.journalEntry.code,
+        date: line.journalEntry.date,
+        description: line.description,
+        debit,
+        credit,
+        amount,
+        runningBalance: round2(running),
+      };
+    });
+
+    const total = rows.length;
+    const data = rows.slice(
+      (page - 1) * pageSize,
+      (page - 1) * pageSize + pageSize,
+    );
+    return {
+      account,
+      openingBalance: round2(openingBalance),
+      closingBalance: round2(running),
+      ...new PaginatedResult(data, total, page, pageSize),
+    };
+  }
+
+  /**
+   * ACC-8: ميزان المراجعة — لكل حساب نشط (ورقة) {code, name, totalDebit,
+   * totalCredit, balance} من تجميع journal_lines، مع تحقق التوازن
+   * الكلي (مجموع المدين = مجموع الدائن) في الاستجابة (balanced: true).
+   */
+  async getTrialBalance() {
+    const [debitGroups, creditGroups, accounts] = await Promise.all([
+      this.prisma.journalLine.groupBy({
+        by: ['debitAccountId'],
+        _sum: { amount: true },
+      }),
+      this.prisma.journalLine.groupBy({
+        by: ['creditAccountId'],
+        _sum: { amount: true },
+      }),
+      this.prisma.account.findMany({
+        where: { isActive: true, isGroup: false },
+        select: { id: true, code: true, name: true, type: true },
+        orderBy: { code: 'asc' },
+      }),
+    ]);
+
+    const debitByAccount = new Map(
+      debitGroups.map((g) => [g.debitAccountId, Number(g._sum.amount ?? 0)]),
+    );
+    const creditByAccount = new Map(
+      creditGroups.map((g) => [g.creditAccountId, Number(g._sum.amount ?? 0)]),
+    );
+
+    const data = accounts.map((account) => {
+      const totalDebit = debitByAccount.get(account.id) ?? 0;
+      const totalCredit = creditByAccount.get(account.id) ?? 0;
+      return {
+        code: account.code,
+        name: account.name,
+        totalDebit: round2(totalDebit),
+        totalCredit: round2(totalCredit),
+        balance: round2(totalDebit - totalCredit),
+      };
+    });
+
+    const totalDebit = round2(
+      data.reduce((sum, row) => sum + row.totalDebit, 0),
+    );
+    const totalCredit = round2(
+      data.reduce((sum, row) => sum + row.totalCredit, 0),
+    );
+    return {
+      data,
+      totalDebit,
+      totalCredit,
+      balanced: totalDebit === totalCredit,
+    };
   }
 }

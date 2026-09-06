@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/intl.dart';
 
 import '../constants/app_colors.dart';
 
@@ -183,6 +184,47 @@ Future<bool> confirmAppAction(
   return result ?? false;
 }
 
+/// MOB-3: شارة "بيانات مخزنة" — تظهر أعلى الشاشة عندما تكون القائمة
+/// المعروضة من ذاكرة Hive (لا اتصال) وليست من الشبكة مباشرة. تميّزها
+/// عن [AppOfflineView]: هنا توجد بيانات صالحة للعرض لكنها آخر حالة
+/// ناجحة قديمة، فالشاشة تبقى قابلة للعمل مع شارة وضوح فقط.
+class AppCachedDataBanner extends StatelessWidget {
+  const AppCachedDataBanner({required this.cachedAt, super.key});
+
+  /// لحظة تخزين آخر حالة ناجحة (تُعرض للمستخدم كوقت آخر تحديث).
+  final DateTime cachedAt;
+
+  @override
+  Widget build(BuildContext context) {
+    // بلا locale: أرقام لاتينية + استقلال عن تهيئة بيانات صيغ التاريخ
+    // في الاختبارات (initializeDateFormatting لا تُستدعى هناك).
+    final formatted = DateFormat('yyyy-MM-dd HH:mm').format(cachedAt);
+    return Material(
+      color: AppColors.warning.withValues(alpha: 0.14),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+        child: Row(
+          children: [
+            const Icon(Icons.history, size: 18, color: AppColors.warning),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'بيانات مخزنة من آخر اتصال ناجح — آخر تحديث: $formatted',
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontFamily: 'Cairo',
+                  color: AppColors.textSecondary,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
 /// GF-REMAINING-008: حالة "لا يوجد اتصال" — منفصلة عن [AppErrorView]
 /// لأن رسالتها وإجراءها مختلفان: الخطأ يحتاج "إعادة محاولة"، أما انقطاع
 /// الشبكة فيحتاج "إعادة المحاولة عند عودة الاتصال" مع تلميح واضح للسبب.
@@ -204,7 +246,8 @@ class AppOfflineView extends StatelessWidget {
             const Text(
               'لا يوجد اتصال بالإنترنت',
               textAlign: TextAlign.center,
-              style: TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+              style:
+                  TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 8),
             const Text(

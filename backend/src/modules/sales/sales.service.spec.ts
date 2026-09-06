@@ -3,7 +3,7 @@ import {
   ConflictException,
   NotFoundException,
 } from '@nestjs/common';
-import { PaymentType, SalesOrderStatus } from '@prisma/client';
+import { PaymentType, Prisma, SalesOrderStatus } from '@prisma/client';
 import { SalesService } from './sales.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
@@ -12,12 +12,32 @@ import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 import * as crypto from 'node:crypto';
 
+/**
+ * SAL-7/8 (GF-IMP-W3): امتداد محلي للـ mock الموحد — الإبطال يحتاج
+ * salesReturn.findFirst (فحص المرتجعات القائمة) وreverseJournalEntryInTx
+ * في الخدمة المالية (بنمط المواصفات الأخرى: لا نعدّل الـ helper المشترك).
+ */
+type SalesPrismaMock = ReturnType<typeof createPrismaMock> & {
+  salesReturn: { create: jest.Mock; findFirst: jest.Mock };
+};
+
+function createSalesPrismaMock(): SalesPrismaMock {
+  return {
+    ...createPrismaMock(),
+    salesReturn: {
+      create: jest.fn(),
+      findFirst: jest.fn().mockResolvedValue(null),
+    },
+  };
+}
+
 function makeService() {
-  const prisma = createPrismaMock();
+  const prisma = createSalesPrismaMock();
   const issueFinishedGood = jest.fn();
   const receiveFinishedGood = jest.fn();
   const bulkIssueFinishedGoods = jest.fn();
   const postJournalEntryInTx = jest.fn();
+  const reverseJournalEntryInTx = jest.fn();
   const inventory = {
     issueFinishedGood,
     receiveFinishedGood,
@@ -25,6 +45,7 @@ function makeService() {
   } as unknown as InventoryService;
   const financial = {
     postJournalEntryInTx,
+    reverseJournalEntryInTx,
   } as unknown as FinancialPostingService;
   return {
     prisma,
@@ -34,6 +55,7 @@ function makeService() {
     receiveFinishedGood,
     bulkIssueFinishedGoods,
     postJournalEntryInTx,
+    reverseJournalEntryInTx,
     service: new SalesService(
       prisma as unknown as PrismaService,
       inventory,
@@ -1280,5 +1302,620 @@ describe('SalesService — GF-IMP-W2: SAL-4 فصل الواجبات وسند ا�
     await service.confirmOrder('so-1', 'u-2', 'confirm-key');
 
     expect(prisma.customerPayment.create).not.toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// GF-IMP-W3 — W3-A: SAL-5/7/8 (اختبارات المواصفات)
+// ============================================================
+describe('SalesService — GF-IMP-W3: SAL-5 قائمة الأوامر بفلاتر وإسقاط نحيف', () => {
+  it('يبني where من status/customerId/from/to/q ويطبق إسقاط بنود نحيفًا', async () => {
+    const { prisma, service } = makeService();
+    prisma.salesOrder.findMany.mockResolvedValue([]);
+    prisma.salesOrder.count.mockResolvedValue(0);
+
+    await service.getSalesOrders({
+      page: 1,
+      limit: 20,
+      status: SalesOrderStatus.CONFIRMED,
+      customerId: 'customer-9',
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.000Z',
+      q: 'SO-26',
+    });
+
+    const expectedWhere = {
+      customer: { deletedAt: null },
+      status: SalesOrderStatus.CONFIRMED,
+      customerId: 'customer-9',
+      createdAt: {
+        gte: new Date('2026-08-01T00:00:00.000Z'),
+        lte: new Date('2026-08-31T23:59:59.000Z'),
+      },
+      code: { contains: 'SO-26', mode: 'insensitive' },
+    };
+    const findCalls = prisma.salesOrder.findMany.mock.calls as unknown as [
+      [{ where: unknown; include: Record<string, unknown> }],
+    ];
+    const findCall = findCalls[0][0];
+    expect(findCall.where).toEqual(expectedWhere);
+    expect(prisma.salesOrder.count).toHaveBeenCalledWith({
+      where: expectedWhere,
+    });
+    // SAL-5: إسقاط نحيف — البنود بلا متغيرات كاملة ولا منتجات.
+    const itemsInclude = findCall.include.items as Record<string, unknown>;
+    expect(findCall.include).toEqual({
+      customer: { select: { id: true, name: true, code: true } },
+      items: {
+        select: {
+          id: true,
+          quantity: true,
+          unitPrice: true,
+          totalPrice: true,
+          // ProductVariant بلا عمود code — المعرّفات: size/color/barcode.
+          variant: {
+            select: { id: true, size: true, color: true, barcode: true },
+          },
+        },
+      },
+    });
+    expect(itemsInclude.include).toBeUndefined();
+    expect(JSON.stringify(itemsInclude)).not.toContain('product');
+  });
+
+  it('بلا فلاتر: نفس الحد الأدنى القائم (عميل غير محذوف) والإسقاط النحيف', async () => {
+    const { prisma, service } = makeService();
+    prisma.salesOrder.findMany.mockResolvedValue([]);
+    prisma.salesOrder.count.mockResolvedValue(0);
+
+    await service.getSalesOrders();
+
+    const findCalls = prisma.salesOrder.findMany.mock.calls as unknown as [
+      [{ where: unknown; include: Record<string, unknown> }],
+    ];
+    const findCall = findCalls[0][0];
+    expect(findCall.where).toEqual({ customer: { deletedAt: null } });
+    const itemsSelect = (findCall.include.items as Record<string, unknown>)
+      .select as Record<string, unknown>;
+    expect(itemsSelect.quantity).toBe(true);
+  });
+
+  it('فلتر جزئي (q فقط) يبحث في الكود بلا شروط إضافية', async () => {
+    const { prisma, service } = makeService();
+    prisma.salesOrder.findMany.mockResolvedValue([]);
+    prisma.salesOrder.count.mockResolvedValue(0);
+
+    await service.getSalesOrders({ page: 2, limit: 10, q: 'INV' });
+
+    const findCalls = prisma.salesOrder.findMany.mock.calls as unknown as [
+      [
+        {
+          where: unknown;
+          include: Record<string, unknown>;
+          skip: number;
+          take: number;
+        },
+      ],
+    ];
+    const findCall = findCalls[0][0];
+    expect(findCall.where).toEqual({
+      customer: { deletedAt: null },
+      code: { contains: 'INV', mode: 'insensitive' },
+    });
+    expect(findCall.skip).toBe(10);
+    expect(findCall.take).toBe(10);
+  });
+
+  it('عقد الاستجابة الكنوني: items/total/page/limit + توافق data/meta (CC-6)', async () => {
+    const { prisma, service } = makeService();
+    const rows = [{ id: 'so-1', code: 'SO-1' }];
+    prisma.salesOrder.findMany.mockResolvedValue(rows);
+    prisma.salesOrder.count.mockResolvedValue(1);
+
+    const result = await service.getSalesOrders({ page: 1, limit: 20 });
+
+    // items هو مرجع data نفسه (لا نسخة) — العقد الكنوني للقوائم الجديدة.
+    expect(result.items).toBe(result.data);
+    expect(result.items).toEqual(rows);
+    expect(result.total).toBe(1);
+    expect(result.page).toBe(1);
+    expect(result.limit).toBe(20);
+    // حقل التوافق القديم يبقى لمستهلكي الجوال الحاليين.
+    expect(result.meta.total).toBe(1);
+  });
+
+  it('نطاق غير منطقي (from بعد to) → 400 عربية بلا استعلام قاعدة', async () => {
+    const { prisma, service } = makeService();
+
+    await expect(
+      service.getSalesOrders({
+        page: 1,
+        limit: 20,
+        from: '2026-09-01T00:00:00.000Z',
+        to: '2026-08-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow(
+      'تاريخ بداية فلاتر أوامر البيع لا يمكن أن يكون بعد تاريخ النهاية',
+    );
+    expect(prisma.salesOrder.findMany).not.toHaveBeenCalled();
+    expect(prisma.salesOrder.count).not.toHaveBeenCalled();
+  });
+});
+
+describe('SalesService — GF-IMP-W3: SAL-7 إبطال أمر بيع مؤكد (void)', () => {
+  const confirmedOrder = {
+    id: 'so-void-1',
+    code: 'SO-VOID-1',
+    customerId: 'customer-1',
+    paymentType: PaymentType.CREDIT,
+    status: SalesOrderStatus.CONFIRMED,
+    subtotal: new Prisma.Decimal(1000),
+    vatRate: new Prisma.Decimal(0.14),
+    vatAmount: new Prisma.Decimal(140),
+    totalAmount: new Prisma.Decimal(1140),
+    paidAmount: new Prisma.Decimal(0),
+    items: [
+      { id: 'item-1', productVariantId: 'variant-1', quantity: 10 },
+      { id: 'item-2', productVariantId: 'variant-2', quantity: 5 },
+    ],
+  };
+
+  function setupVoidSuccess() {
+    const ctx = makeService();
+    ctx.prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof ctx.prisma) => Promise<unknown>) =>
+        callback(ctx.prisma),
+    );
+    ctx.prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    ctx.prisma.salesOrder.findUnique.mockResolvedValue(confirmedOrder);
+    ctx.prisma.salesReturn.findFirst.mockResolvedValue(null);
+    ctx.prisma.journalEntry.findUnique.mockResolvedValue({
+      id: 'je-confirm-1',
+      code: 'JE-CONFIRM-1',
+      isReversed: false,
+      metadata: {
+        accountDeltas: {},
+        cogsLines: [
+          { variantId: 'variant-1', quantity: 10, costPerUnit: 30 },
+          { variantId: 'variant-2', quantity: 5, costPerUnit: 20 },
+        ],
+      },
+    });
+    ctx.reverseJournalEntryInTx.mockResolvedValue({
+      entryId: 'je-reverse-1',
+      entryCode: 'JE-REV-1',
+    });
+    ctx.prisma.warehouse.findFirst.mockResolvedValue({
+      id: 'wh-fg',
+      type: 'FINISHED_GOODS',
+      isActive: true,
+    });
+    ctx.receiveFinishedGood.mockResolvedValue({});
+    ctx.prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    ctx.prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
+      ...confirmedOrder,
+      status: SalesOrderStatus.CANCELLED,
+    });
+    return ctx;
+  }
+
+  it('يعكس قيد التأكيد ويعيد المخزون ويقلب الحالة إلى CANCELLED ويكتب تدقيقًا', async () => {
+    const { prisma, receiveFinishedGood, reverseJournalEntryInTx, service } =
+      setupVoidSuccess();
+
+    const result = await service.voidOrder('so-void-1', 'gm-1', 'void-key');
+
+    expect(result).toMatchObject({
+      id: 'so-void-1',
+      status: SalesOrderStatus.CANCELLED,
+    });
+    // عكس قيد sales-confirm عبر النسخة InTx داخل نفس المعاملة.
+    expect(reverseJournalEntryInTx).toHaveBeenCalledWith(
+      prisma,
+      'je-confirm-1',
+      'gm-1',
+      expect.stringContaining('SO-VOID-1'),
+    );
+    // المخزون يُستعاد لكل بند بالتكلفة الموثقة في metadata القيد.
+    expect(receiveFinishedGood).toHaveBeenCalledTimes(2);
+    expect(receiveFinishedGood).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        productVariantId: 'variant-1',
+        warehouseId: 'wh-fg',
+        quantity: 10,
+        unitCost: 30,
+      }),
+      'gm-1',
+      prisma,
+    );
+    expect(receiveFinishedGood).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        productVariantId: 'variant-2',
+        quantity: 5,
+        unitCost: 20,
+      }),
+      'gm-1',
+      prisma,
+    );
+    // CAS: قلب الحالة مشروط بـ CONFIRMED.
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith({
+      where: { id: 'so-void-1', status: SalesOrderStatus.CONFIRMED },
+      data: { status: SalesOrderStatus.CANCELLED },
+    });
+    // تدقيق + idempotency داخل المعاملة.
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          action: 'SALES_ORDER_VOIDED',
+          module: 'SALES',
+          userId: 'gm-1',
+        }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
+    );
+    expect(prisma.idempotencyKey.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { key: 'void-key' } }),
+    );
+  });
+
+  it('يرفض 400 أمرًا غير مؤكد (DRAFT/SHIPPED/CANCELLED)', async () => {
+    const { prisma, service } = setupVoidSuccess();
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      ...confirmedOrder,
+      status: SalesOrderStatus.DRAFT,
+    });
+
+    await expect(
+      service.voidOrder('so-void-1', 'gm-1', 'void-key'),
+    ).rejects.toThrow('لا يمكن إبطال إلا أمر بيع مؤكد');
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('يرفض 409 عند وجود مرتجعات قائمة للأمر', async () => {
+    const { prisma, service } = setupVoidSuccess();
+    prisma.salesReturn.findFirst.mockResolvedValue({
+      id: 'ret-1',
+      code: 'SRET-1',
+    });
+
+    await expect(
+      service.voidOrder('so-void-1', 'gm-1', 'void-key'),
+    ).rejects.toThrow(ConflictException);
+    await expect(
+      service.voidOrder('so-void-1', 'gm-1', 'void-key'),
+    ).rejects.toThrow('مرتجعات قائمة');
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('قيد تأكيد معكوس مسبقًا → 409 (حالة غير متسقة)', async () => {
+    const { prisma, service } = setupVoidSuccess();
+    prisma.journalEntry.findUnique.mockResolvedValue({
+      id: 'je-confirm-1',
+      code: 'JE-CONFIRM-1',
+      isReversed: true,
+      metadata: { accountDeltas: {} },
+    });
+
+    await expect(
+      service.voidOrder('so-void-1', 'gm-1', 'void-key'),
+    ).rejects.toThrow('معكوس بالفعل');
+  });
+
+  it('بلا قيد تأكيد (أمر تاريخي) — يستعيد المخزون بالتكلفة الحالية ويقلب الحالة', async () => {
+    const { prisma, receiveFinishedGood, service } = setupVoidSuccess();
+    prisma.journalEntry.findUnique.mockResolvedValue(null);
+    prisma.finishedGoodStock.findUnique.mockResolvedValue({
+      unitCost: 25,
+    });
+
+    await service.voidOrder('so-void-1', 'gm-1', 'void-key');
+
+    // التكلفة الحالية ملاذ عند غياب لقطة metadata.
+    expect(receiveFinishedGood).toHaveBeenCalledWith(
+      expect.objectContaining({ unitCost: 25 }),
+      'gm-1',
+      prisma,
+    );
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it('CAS فشل (تغيرت الحالة بالتزامن) → 409 وكل الأثر يرتد', async () => {
+    const { prisma, service } = setupVoidSuccess();
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      service.voidOrder('so-void-1', 'gm-1', 'void-key'),
+    ).rejects.toThrow(ConflictException);
+  });
+
+  it('replay لمفتاح الإبطال يعيد الاستجابة المخزنة بلا أثر ثانٍ', async () => {
+    const { prisma, service } = setupVoidSuccess();
+    const requestHash = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify({
+          operation: 'sales-order-void',
+          orderId: 'so-void-1',
+          userId: 'gm-1',
+        }),
+      )
+      .digest('hex');
+    prisma.idempotencyKey.findUnique.mockResolvedValue({
+      key: 'void-key',
+      scope: 'sales-order-void',
+      requestHash,
+      response: { id: 'so-void-1', status: SalesOrderStatus.CANCELLED },
+    });
+
+    const result = await service.voidOrder('so-void-1', 'gm-1', 'void-key');
+
+    expect(result).toMatchObject({
+      id: 'so-void-1',
+      status: SalesOrderStatus.CANCELLED,
+      replayed: true,
+    });
+    expect(prisma.salesOrder.updateMany).not.toHaveBeenCalled();
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+  });
+
+  it('أمر غير موجود → 404', async () => {
+    const { prisma, service } = setupVoidSuccess();
+    prisma.salesOrder.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.voidOrder('ghost', 'gm-1', 'void-key'),
+    ).rejects.toThrow(NotFoundException);
+  });
+});
+
+describe('SalesService — GF-IMP-W3: SAL-8 فجوات idempotency', () => {
+  it('replay الدفع (createCustomerPayment) يعيد نفس الاستجابة بلا أثر ثانٍ', async () => {
+    const { prisma, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    const input = {
+      customerId: 'customer-1',
+      amount: 100,
+      notes: 'تحصيل نقدي',
+      actorId: 'user-1',
+    };
+    const requestHash = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify({
+          operation: 'customer-payment-create',
+          customerId: 'customer-1',
+          salesOrderId: null,
+          amount: 100,
+          notes: 'تحصيل نقدي',
+          actorId: 'user-1',
+        }),
+      )
+      .digest('hex');
+
+    // أول استدعاء: لا مفتاح — ينفذ الدفع.
+    prisma.idempotencyKey.findUnique.mockResolvedValueOnce(null);
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'customer-1',
+      isActive: true,
+      deletedAt: null,
+      balance: 1000,
+    });
+    prisma.customerPayment.create.mockResolvedValue({
+      id: 'pay-1',
+      amount: 100,
+    });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+
+    const first = await service.createCustomerPayment(input, 'pay-key');
+    expect(first).toMatchObject({ id: 'pay-1' });
+    expect(prisma.customerPayment.create).toHaveBeenCalledTimes(1);
+
+    // ثاني استدعاء بنفس المفتاح: replay — لا دفع ثانٍ ولا قيد ثانٍ.
+    prisma.idempotencyKey.findUnique.mockResolvedValueOnce({
+      key: 'pay-key',
+      scope: 'customer-payment-create',
+      requestHash,
+      response: { id: 'pay-1', amount: 100 },
+    });
+
+    const replay = await service.createCustomerPayment(input, 'pay-key');
+    expect(replay).toMatchObject({ id: 'pay-1', replayed: true });
+    expect(prisma.customerPayment.create).toHaveBeenCalledTimes(1);
+    expect(prisma.activityLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('replay المرتجع (createSalesReturn) يعيد نفس الاستجابة بلا أثر ثانٍ', async () => {
+    const { prisma, service } = makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+
+    const orderId = 'so-1';
+    const input = {
+      items: [{ salesOrderItemId: 'item-1', quantity: 1 }],
+      reason: 'عيب تصنيع',
+      actorId: 'user-1',
+    };
+    const requestHash = crypto
+      .createHash('sha256')
+      .update(
+        JSON.stringify({
+          operation: 'sales-return-create',
+          orderId: 'so-1',
+          items: input.items,
+          reason: 'عيب تصنيع',
+          actorId: 'user-1',
+        }),
+      )
+      .digest('hex');
+
+    // الأول: ينفذ المرتجع كاملًا.
+    prisma.idempotencyKey.findUnique.mockResolvedValueOnce(null);
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-1',
+      code: 'SO-1',
+      customerId: 'customer-1',
+      status: SalesOrderStatus.CONFIRMED,
+      vatRate: 0,
+      subtotal: 100,
+      discount: 0,
+      paidAmount: 0,
+      customer: { id: 'customer-1' },
+      items: [
+        {
+          id: 'item-1',
+          productVariantId: 'variant-1',
+          quantity: 2,
+          unitPrice: 50,
+        },
+      ],
+    });
+    prisma.salesReturnItem.findMany.mockResolvedValue([]);
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.finishedGoodStock.findUnique.mockResolvedValue({ unitCost: 30 });
+    prisma.salesReturn.create.mockResolvedValue({
+      id: 'return-1',
+      code: 'SRET-1',
+      items: [],
+    });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+
+    const first = await service.createSalesReturn(orderId, input, 'ret-key');
+    expect(first).toMatchObject({ id: 'return-1' });
+    expect(prisma.salesReturn.create).toHaveBeenCalledTimes(1);
+
+    // الثاني بنفس المفتاح: replay — لا مرتجع ثانٍ.
+    prisma.idempotencyKey.findUnique.mockResolvedValueOnce({
+      key: 'ret-key',
+      scope: 'sales-return-create',
+      requestHash,
+      response: { id: 'return-1', code: 'SRET-1', items: [] },
+    });
+
+    const replay = await service.createSalesReturn(orderId, input, 'ret-key');
+    expect(replay).toMatchObject({ id: 'return-1', replayed: true });
+    expect(prisma.salesReturn.create).toHaveBeenCalledTimes(1);
+    expect(prisma.activityLog.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('تأكيد أمر CASH: paidAmount = الإجمالي وCustomerPayment موجود بالمبلغ الكامل', async () => {
+    const { prisma, bulkIssueFinishedGoods, postJournalEntryInTx, service } =
+      makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-cash',
+      code: 'SO-CASH',
+      customerId: 'customer-1',
+      userId: 'creator-1',
+      paymentType: PaymentType.CASH,
+      status: SalesOrderStatus.DRAFT,
+      subtotal: new Prisma.Decimal(100),
+      vatRate: 0,
+      vatAmount: 0,
+      discount: 0,
+      totalAmount: new Prisma.Decimal(100),
+      paidAmount: 0,
+      customer: { id: 'customer-1', creditLimit: null, balance: 0 },
+      items: [{ id: 'item-1', productVariantId: 'variant-1', quantity: 2 }],
+    });
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    bulkIssueFinishedGoods.mockResolvedValue({ totalValue: 60, events: [] });
+    prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
+      id: 'so-cash',
+      status: SalesOrderStatus.CONFIRMED,
+    });
+    prisma.customerPayment.create.mockResolvedValue({ id: 'cp-1' });
+    postJournalEntryInTx.mockResolvedValue({ entryId: 'je-1' });
+
+    await service.confirmOrder('so-cash', 'confirmer-1', 'confirm-key');
+
+    // SAL-8: paidAmount = total عند البيع الفوري (Decimal من الأمر).
+    const updateCalls = prisma.salesOrder.updateMany.mock.calls as unknown as [
+      [{ data: { status: string; paidAmount: unknown } }],
+    ];
+    const updateArg = updateCalls[0][0];
+    expect(updateArg.data.status).toBe('CONFIRMED');
+    expect(Number(updateArg.data.paidAmount)).toBe(100);
+    // SAL-8: سند القبض الآلي موجود بالمبلغ الكامل ومربوط بالأمر.
+    expect(prisma.customerPayment.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        customerId: 'customer-1',
+        salesOrderId: 'so-cash',
+        amount: 100,
+      }) as Record<string, unknown>,
+    });
+  });
+
+  it('رياضيات المرتجع: مرتجع جزئي على أمر مدفوع جزئيًا يخصم النقد المتحصل ويخفض الذمم بالباقي', async () => {
+    const { prisma, receiveFinishedGood, postJournalEntryInTx, service } =
+      makeService();
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // أمر مدفوع جزئيًا: إجمالي 228 (200 بضاعة + 28 ضريبة) ومدفوع 100.
+    prisma.salesOrder.findUnique.mockResolvedValue({
+      id: 'so-8',
+      code: 'SO-8',
+      customerId: 'customer-1',
+      status: SalesOrderStatus.CONFIRMED,
+      subtotal: new Prisma.Decimal(200),
+      vatRate: new Prisma.Decimal(0.14),
+      discount: new Prisma.Decimal(0),
+      paidAmount: new Prisma.Decimal(100),
+      customer: { id: 'customer-1' },
+      items: [
+        {
+          id: 'item-8',
+          productVariantId: 'variant-1',
+          quantity: 4,
+          unitPrice: 50,
+        },
+      ],
+    });
+    prisma.salesReturnItem.findMany.mockResolvedValue([]);
+    prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    prisma.finishedGoodStock.findUnique.mockResolvedValue({ unitCost: 30 });
+    prisma.salesReturn.create.mockImplementation(({ data }) =>
+      Promise.resolve({ id: 'return-8', code: 'SRET-8', ...data }),
+    );
+    prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
+    receiveFinishedGood.mockResolvedValue({});
+    postJournalEntryInTx.mockResolvedValue({ entryId: 'je-8' });
+
+    // مرتجع بند كامل: بضاعة 200 + ضريبة 28 = استرداد 228.
+    await service.createSalesReturn(
+      'so-8',
+      {
+        items: [{ salesOrderItemId: 'item-8', quantity: 4 }],
+        actorId: 'user-1',
+      },
+      'ret-8',
+    );
+
+    // النقد المسترد = min(100, 228) = 100 → paidAmount يهبط إلى صفر.
+    expect(prisma.salesOrder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          paidAmount: { decrement: 100 },
+        }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
+    );
+    // الباقي 128 يخفض الذمم (customerUpdates) لا النقد.
+    const postingCalls = postJournalEntryInTx.mock.calls as unknown as [
+      [unknown, { customerUpdates: unknown }],
+    ];
+    const posting = postingCalls[0][1];
+    expect(posting.customerUpdates).toEqual([
+      { customerId: 'customer-1', delta: -128 },
+    ]);
   });
 });

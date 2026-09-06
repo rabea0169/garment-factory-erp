@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Headers, Post, Query } from '@nestjs/common';
-import { ApiHeader, ApiTags } from '@nestjs/swagger';
+import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
@@ -14,13 +14,35 @@ export class QualityController {
   constructor(private readonly qualityService: QualityService) {}
 
   @Get('kpis')
+  // QLT-6 (P2 — GF-IMP-W3): قراءة KPI الجودة قيّمت بأدوار الإدارة/الإنتاج —
+  // لا دور QUALITY مستقل في UserRole فالتفويض: مدير الإنتاج + المدير العام
+  // (+SUPER_ADMIN يتجاوز في RolesGuard أصلًا — يُصرَّح به للوثائق). القراءة
+  // كانت مفتوحة لكل مصادق (بلا قيد أدوار) قبل هذا البند.
+  @Roles(
+    UserRole.PRODUCTION_MANAGER,
+    UserRole.GENERAL_MANAGER,
+    UserRole.SUPER_ADMIN,
+  )
+  @ApiOperation({
+    summary: 'مؤشرات الجودة (KPIs) من الفحوص المكتملة مع فلاتر فترة/أمر/مرحلة',
+  })
   async getKpis(@Query() query: QualityKpiQueryDto = new QualityKpiQueryDto()) {
     return this.qualityService.getQualityKpis(query);
   }
 
   @Get()
-  // QLT-3 (GF-IMP-W2): فلاتر اختيارية (stage/workOrderId/from/to) + ترقيم.
-  // الأدوار كما هي (قراءة مفتوحة للمصادقين) — بلا قيود جديدة.
+  // QLT-6 (P2 — GF-IMP-W3): نفس قيود الأدوار للقائمة — قراءة تدقيق الجودة
+  // ليست مفتوحة لكل مصادق (كان التعليق القديم يسمح بالقراءة المفتوحة؛ الآن
+  // موحّدة مع KPI: إنتاج/إدارة عامة/سوبر أدمن).
+  @Roles(
+    UserRole.PRODUCTION_MANAGER,
+    UserRole.GENERAL_MANAGER,
+    UserRole.SUPER_ADMIN,
+  )
+  @ApiOperation({
+    summary:
+      'قائمة فحوص الجودة بمرشحات stage/workOrderId/from/to مع ترقيم صفحات',
+  })
   async getChecks(
     @Query() query: QualityCheckQueryDto = new QualityCheckQueryDto(),
   ) {

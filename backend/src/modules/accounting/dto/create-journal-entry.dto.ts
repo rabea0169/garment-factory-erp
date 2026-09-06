@@ -1,6 +1,8 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { Type } from 'class-transformer';
 import {
+  ArrayMaxSize,
+  ArrayMinSize,
   IsArray,
   IsDateString,
   IsNumber,
@@ -51,8 +53,13 @@ export class CreateJournalEntryDto {
   @IsDateString()
   date?: string;
 
-  @ApiProperty({ type: [JournalLineDto] })
+  @ApiProperty({ type: [JournalLineDto], maxItems: 500, minItems: 1 })
+  // ACC-10 (P2 — GF-IMP-W3): سقف صريح لمصفوفة البنود — لا قيد فارغ (بند
+  // واحد على الأقل) ولا قيد عملاق يُرهق $transaction الواحدة (500 بندًا
+  // كحد أقصى). الرسائل عربية لتظهر كما هي في استجابة 400.
   @IsArray()
+  @ArrayMinSize(1, { message: 'القيد يجب أن يحتوي على بندًا واحدًا على الأقل' })
+  @ArrayMaxSize(500, { message: 'القيد لا يمكن أن يتجاوز 500 بند' })
   @ValidateNested({ each: true })
   @Type(() => JournalLineDto)
   lines: JournalLineDto[];

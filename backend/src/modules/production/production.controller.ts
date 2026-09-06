@@ -18,9 +18,9 @@ import {
 import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 import { CreateWorkOrderDto } from './dto/create-work-order.dto';
 import { UpdateWorkOrderStatusDto } from './dto/update-work-order-status.dto';
+import { WorkOrderQueryDto } from './dto/work-order-query.dto';
 import { ConsumeMaterialDto } from './dto/consume-material.dto';
 import { RecordStageOutputDto } from './dto/record-stage-output.dto';
 import { TransitionStageDto } from './dto/transition-stage.dto';
@@ -37,9 +37,15 @@ export class ProductionController {
   ) {}
 
   @Get('work-orders')
-  @ApiOperation({ summary: 'الحصول على جميع أوامر التشغيل' })
-  async getWorkOrders(@Query() pagination: PaginationDto) {
-    return this.productionService.getAllWorkOrders(pagination);
+  // PRD-7 (GF-IMP-W3): فلاتر اختيارية (status/currentStage/from/to) فوق
+  // الترقيم — WorkOrderQueryDto — واستجابة نحيفة (بلا stageUpdates/BOM).
+  @ApiOperation({
+    summary: 'قائمة أوامر التشغيل بمرشحات حالة/مرحلة/فترة واستجابة ملخص نحيفة',
+  })
+  async getWorkOrders(
+    @Query() query: WorkOrderQueryDto = new WorkOrderQueryDto(),
+  ) {
+    return this.productionService.getAllWorkOrders(query);
   }
 
   @Post('work-orders')

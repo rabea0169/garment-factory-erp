@@ -36,6 +36,17 @@ interface FailedLoginState {
   lockedUntil: number;
 }
 
+/**
+ * AUTH-7: تجزئة bcrypt وهمية ثابتة (كلفة 10 — نفس كلفة seed.ts).
+ * عند غياب المستخدم ننفّذ bcrypt.compare ضدها كي يدفع مسار «المستخدم غير
+ * موجود» كلفة bcrypt الكاملة نفسها التي يدفعها مسار «كلمة المرور الخاطئة»،
+ * فيتساوى زمن الاستجابة للذراعين فلا يستطيع مهاجم قياس الفارق الزمني
+ * لكشف وجود البريد في النظام رغم توحيد رسائل 401. قيمة التجزئة نفسها
+ * لا تكشف شيئًا (لا تطابق أي كلمة مرور مخزنة) — هي فقط جهد حسابي ثابت.
+ */
+const DUMMY_PASSWORD_HASH =
+  '$2b$10$bWLgpWEgHaqtKwCMLOfnP.mpqx20E1JauxQV6/kZpwfPQEPluMwp6';
+
 @Injectable()
 export class AuthService {
   /**
@@ -68,6 +79,11 @@ export class AuthService {
     });
 
     if (!user) {
+      // AUTH-7: تسوية القناة الزمنية — غياب المستخدم كان يرجع فورًا بينما
+      // كلمة المرور الخاطئة تدفع كلفة bcrypt كاملة؛ المقارنة هنا ضد تجزئة
+      // وهمية ثابتة تجعل زمن الذراعين متقاربًا فلا يكشف التوقيت وجود البريد.
+      // النتيجة تُهمل عمدًا (الرفض محسوم مسبقًا) — الهدف جهد الحساب فقط.
+      await bcrypt.compare(loginDto.password, DUMMY_PASSWORD_HASH);
       this.registerFailedLogin(emailKey);
       throw new UnauthorizedException(
         'البريد الإلكتروني أو كلمة المرور غير صحيحة',
@@ -235,7 +251,11 @@ export class AuthService {
    */
   async logout(refreshTokenValue: string) {
     if (!refreshTokenValue) {
-      // حتى لو لم يُمرر، نزيد jwtVersion لإبطال الجلسة الحالية
+      // AUTH-8: السلوك الفعلي الموثّق — لا توكن مُمرّر: نرجع { revoked: false,
+      // reason: 'no_token' } دون أي رفع لـ jwtVersion ودون أي إبطال (idempotent).
+      // الـ access token الحالي للجلسة يظل صالحًا حتى انتهاء عمره القصير
+      // (JWT_EXPIRES_IN، 30m افتراضيًا بعد AUTH-1)؛ الإبطال الفوري مسؤولية
+      // مسار logout مع توكن صالح (هو الذي يرفع jwtVersion ويُبطل العائلة).
       return { revoked: false, reason: 'no_token' };
     }
     const tokenHash = hashToken(refreshTokenValue);

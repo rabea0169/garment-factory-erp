@@ -869,7 +869,7 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
     await prisma.qualityCheck.create({
       data: {
         workOrderId: scenario.workOrderId,
-        stage: WorkOrderStatus.PACKAGING,
+        stage: ProductionStage.PACKING,
         checkedQty: 7,
         passedQty: 7,
         rejectedQty: 0,

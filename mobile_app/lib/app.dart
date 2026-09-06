@@ -19,10 +19,14 @@ class GarmentFactoryApp extends StatelessWidget {
         debugShowCheckedModeBanner: false,
         theme: AppTheme.lightTheme,
         routerConfig: AppRouter.router,
+        // MOB-6: اللغة المدعومة هي العربية فقط (ar_EG) — التطبيق كله
+        // نصوص عربية مباشرة بلا طبقة ترجمة، فلا معنى لإعلان en_US ضمن
+        // supportedLocales (كان يوحي بثنائية لغة غير موجودة).
+        // إضافة لغة لاحقًا تتطلب ARB + flutter gen-l10n (l10n.yaml)
+        // وترجمة كل النصوص الثابتة — قرار مؤجل عمدًا في هذه المرحلة.
         locale: const Locale('ar', 'EG'),
         supportedLocales: const [
           Locale('ar', 'EG'),
-          Locale('en', 'US'),
         ],
         localizationsDelegates: const [
           GlobalMaterialLocalizations.delegate,

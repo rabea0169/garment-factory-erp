@@ -24,6 +24,8 @@ interface TestUser {
   role: UserRole;
   isActive: boolean;
   password: string;
+  /** AUTH-6: رقم نسخة الجلسة — الاستراتيجية ترفض أي توكن بلا v أو v غير مطابق */
+  jwtVersion: number;
 }
 
 const users: TestUser[] = [
@@ -34,6 +36,7 @@ const users: TestUser[] = [
     role: UserRole.PRODUCTION_MANAGER,
     isActive: true,
     password: 'not-used',
+    jwtVersion: 0,
   },
   {
     id: 'gf0013-inventory-manager',
@@ -42,6 +45,7 @@ const users: TestUser[] = [
     role: UserRole.INVENTORY_MANAGER,
     isActive: true,
     password: 'not-used',
+    jwtVersion: 0,
   },
   {
     id: 'gf0013-viewer',
@@ -50,6 +54,7 @@ const users: TestUser[] = [
     role: UserRole.VIEWER,
     isActive: true,
     password: 'not-used',
+    jwtVersion: 0,
   },
 ];
 
@@ -136,8 +141,15 @@ describe('GF-0013 production workflow HTTP API (e2e)', () => {
     await app.close();
   });
 
+  // AUTH-6: التوكن يضم v = jwtVersion المستخدم — الاستراتيجية ترفض أي
+  // توكن بلا v (تُعامل كتوكن ما قبل SEC-F04 مزور/قديم).
   const tokenFor = (user: TestUser): string =>
-    jwtService.sign({ sub: user.id, email: user.email, role: user.role });
+    jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      v: user.jwtVersion,
+    });
   const productionToken = () => tokenFor(users[0]);
   const inventoryToken = () => tokenFor(users[1]);
   const viewerToken = () => tokenFor(users[2]);

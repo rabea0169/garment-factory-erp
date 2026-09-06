@@ -91,13 +91,15 @@ describe('OriginCheckGuard — SEC-F07 CSRF defense-in-depth', () => {
     expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
   });
 
-  it('في الإنتاج — يرفض غياب Origin و Referer بـ 403', () => {
+  it('INF-6: في الإنتاج — يسمح بغياب Origin و Referer (عميل غير متصفّحي: تطبيق الجوال)', () => {
     const guard = new OriginCheckGuard(
       new TestReflector(false) as unknown as Reflector,
       new TestConfigService('https://app.example.com') as unknown as never,
     );
     const ctx = makeContext({ method: 'POST', headers: {} });
-    expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
+    // غياب الأصل = عميل خارج المتصفح (Dio/curl) — الفحص دفاع ضد المتصفحات
+    // العابرة فقط؛ الرفض هنا كان سيكسر تطبيق الجوال بعد الوصل العالمي.
+    expect(guard.canActivate(ctx)).toBe(true);
   });
 
   it('يقبل Referer صحيح عندما لا يوجد Origin مباشر', () => {
@@ -159,15 +161,19 @@ describe('OriginCheckGuard — SEC-F07 CSRF defense-in-depth', () => {
     delete process.env.ORIGIN_CHECK_BYPASS;
   });
 
-  it('يتجاهل bypass secret قصيرة (<16)', () => {
+  it('يتجاهل bypass secret قصيرة (<16) — يبقى فحص الأصل نافذًا', () => {
     process.env.ORIGIN_CHECK_BYPASS = 'short';
     const guard = new OriginCheckGuard(
       new TestReflector(false) as unknown as Reflector,
       new TestConfigService('https://app.example.com') as unknown as never,
     );
+    // أصل مرفوض + bypass قصير → لا تخطٍّ: الفحص الأصلي يرفض الطلب
     const ctx = makeContext({
       method: 'POST',
-      headers: { 'x-origin-check-bypass': 'short' },
+      headers: {
+        'x-origin-check-bypass': 'short',
+        origin: 'https://evil.example.com',
+      },
     });
     expect(() => guard.canActivate(ctx)).toThrow(ForbiddenException);
     delete process.env.ORIGIN_CHECK_BYPASS;

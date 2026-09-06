@@ -12,11 +12,21 @@ class DashboardLoading extends DashboardState {
 }
 
 class DashboardLoaded extends DashboardState {
-  const DashboardLoaded(this.stats);
+  const DashboardLoaded(
+    this.stats, {
+    this.fromCache = false,
+    this.cachedAt,
+  });
 
   /// الـ payload الكامل من /dashboard/stats:
   /// { filters, generatedAt, sales[], production[], topWorkers[], inventory, definitions }.
   final Map<String, dynamic> stats;
+
+  /// MOB-3: هل البيانات من ذاكرة Hive (لا اتصال) لا من الشبكة مباشرة؟
+  final bool fromCache;
+
+  /// لحظة تخزين آخر حالة ناجحة — null عند الاتصال المباشر.
+  final DateTime? cachedAt;
 }
 
 class DashboardEmpty extends DashboardState {

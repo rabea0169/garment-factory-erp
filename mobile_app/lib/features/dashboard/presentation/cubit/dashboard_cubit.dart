@@ -1,5 +1,8 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:dio/dio.dart';
+
 import '../../../../core/network/api_client.dart';
+import '../../../../core/services/cache_service.dart';
 import 'dashboard_state.dart';
 
 /// Cubit لجلب مؤشرات لوحة التحكم من الـ backend.
@@ -7,12 +10,20 @@ import 'dashboard_state.dart';
 /// يستدعي `GET /dashboard/stats` (DashboardController على main) ويتحقق من شكل
 /// الاستجابة قبل عرضها. لا توجد أي بيانات hardcoded — كل KPIs والرسوم تأتي
 /// من الـ API. عند الفشل نُرجع رسالة عربية مفهومة عبر `messageFor`.
+///
+/// MOB-3: كل نجاح شبكة يُخزن write-through في ذاكرة Hive؛ عند انقطاع
+/// الاتصال تُعرض آخر حالة ناجحة مع شارة "بيانات مخزنة" (DashboardLoaded
+/// مع fromCache=true) بدل خطأ عام.
 class DashboardCubit extends Cubit<DashboardState> {
-  DashboardCubit({ApiClient? apiClient})
+  DashboardCubit({ApiClient? apiClient, CacheService? cache})
       : _apiClient = apiClient ?? ApiClient.instance,
+        _cache = cache ?? CacheService.instance,
         super(const DashboardInitial());
 
   final ApiClient _apiClient;
+  final CacheService _cache;
+
+  static const String _statsCacheKey = 'dashboard_stats';
 
   Future<void> fetchStats() async {
     emit(const DashboardLoading());
@@ -29,7 +40,8 @@ class DashboardCubit extends Cubit<DashboardState> {
           _isSeries(stats['topWorkers'], 'name', 'pieces') &&
           _isInventory(stats['inventory']);
       if (!valid) {
-        emit(const DashboardError('بيانات لوحة التحكم غير مكتملة أو غير متوافقة'));
+        emit(const DashboardError(
+            'بيانات لوحة التحكم غير مكتملة أو غير متوافقة'));
         return;
       }
 
@@ -38,7 +50,8 @@ class DashboardCubit extends Cubit<DashboardState> {
       final production = List<dynamic>.from(stats['production'] as List);
       final topWorkers = List<dynamic>.from(stats['topWorkers'] as List);
       final inventory = Map<String, dynamic>.from(stats['inventory'] as Map);
-      final totalMaterials = (inventory['totalMaterials'] as num?)?.toInt() ?? 0;
+      final totalMaterials =
+          (inventory['totalMaterials'] as num?)?.toInt() ?? 0;
       final lowStock = (inventory['lowStockMaterials'] as num?)?.toInt() ?? 0;
       final finishedGoods =
           (inventory['totalFinishedGoodsTypes'] as num?)?.toInt() ?? 0;
@@ -52,7 +65,31 @@ class DashboardCubit extends Cubit<DashboardState> {
         emit(const DashboardEmpty());
         return;
       }
+      // MOB-3: آخر حالة ناجحة تُخزن فورًا لتُستخدم عند فقد الاتصال.
+      await _cache.writeThrough(_statsCacheKey, stats);
       emit(DashboardLoaded(stats));
+    } on DioException catch (error) {
+      // MOB-3: انقطاع الشبكة → آخر حالة ناجحة من الكاش مع شارة، وإلا
+      // خطأ الشبكة المعتاد.
+      if (ApiClient.isNetworkError(error)) {
+        final snapshot = await _cache.read(_statsCacheKey);
+        final cached = snapshot?.data;
+        if (cached is Map) {
+          final stats = Map<String, dynamic>.from(cached);
+          if (_isSeries(stats['sales'], 'period', 'amount') &&
+              _isSeries(stats['production'], 'period', 'pieces') &&
+              _isSeries(stats['topWorkers'], 'name', 'pieces') &&
+              _isInventory(stats['inventory'])) {
+            emit(DashboardLoaded(
+              stats,
+              fromCache: true,
+              cachedAt: snapshot!.cachedAt,
+            ));
+            return;
+          }
+        }
+      }
+      emit(DashboardError(_apiClient.messageFor(error)));
     } catch (error) {
       emit(DashboardError(_apiClient.messageFor(error)));
     }

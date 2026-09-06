@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { PurchasingController } from './purchasing.controller';
 import { PurchasingService } from './purchasing.service';
-import { UserRole, PaymentType } from '@prisma/client';
+import { UserRole, PaymentType, PurchaseOrderStatus } from '@prisma/client';
 import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 import { ROLES_KEY } from '../auth/roles.guard';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
@@ -9,7 +9,9 @@ import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 describe('PurchasingController', () => {
   let controller: PurchasingController;
   let service: {
+    getPurchaseOrders: jest.Mock;
     createPurchaseOrder: jest.Mock;
+    createReceipt: jest.Mock;
     receiveOrder: jest.Mock;
     cancelPurchaseOrder: jest.Mock;
     approvePurchaseOrder: jest.Mock;
@@ -17,7 +19,11 @@ describe('PurchasingController', () => {
 
   beforeEach(() => {
     service = {
+      getPurchaseOrders: jest.fn().mockResolvedValue({ items: [] }),
       createPurchaseOrder: jest.fn().mockResolvedValue({ id: 'po-1' }),
+      // إنشاء إذن استلام جزء من واجهة الخدمة التي يستهلكها المتحكم —
+      // المحاكاة الكاملة تمنع TS2741 وتوثق المسار حتى لو لم يُستدعى هنا.
+      createReceipt: jest.fn().mockResolvedValue({ id: 'grn-1' }),
       receiveOrder: jest
         .fn()
         .mockResolvedValue({ id: 'po-1', status: 'RECEIVED' }),
@@ -31,6 +37,17 @@ describe('PurchasingController', () => {
     controller = new PurchasingController(
       service as unknown as PurchasingService,
     );
+  });
+
+  it('PUR-6: getPurchaseOrders يمرر كائن الاستعلام (فلاتر + ترقيم) إلى الخدمة', async () => {
+    const query = {
+      status: PurchaseOrderStatus.APPROVED,
+      supplierId: 's-1',
+      page: 1,
+      limit: 20,
+    };
+    await controller.getPurchaseOrders(query);
+    expect(service.getPurchaseOrders).toHaveBeenCalledWith(query);
   });
 
   it('create sets roles INVENTORY_MANAGER, GENERAL_MANAGER', () => {

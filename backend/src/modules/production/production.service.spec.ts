@@ -1,9 +1,10 @@
 import { ConflictException } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
-import { WorkOrderStatus } from '@prisma/client';
+import { ProductionStage, WorkOrderStatus } from '@prisma/client';
 import { ProductionService } from './production.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { WorkOrderQueryDto } from './dto/work-order-query.dto';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
@@ -62,11 +63,25 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     emitSpy.mockRestore();
   });
 
-  it('يجلب أوامر التشغيل مع المنتج وتحديثات المراحل', async () => {
+  it('يجلب أوامر التشغيل بـ select نحيف (PRD-7) — ملخص فقط بلا stageUpdates/BOM', async () => {
     const orders = [
-      { id: 'wo-1', variant: {}, bomVersion: {}, stageUpdates: [] },
+      {
+        id: 'wo-1',
+        code: 'WO-1',
+        status: WorkOrderStatus.IN_PROGRESS,
+        currentStage: ProductionStage.SEWING,
+        quantity: 100,
+        createdAt: new Date('2026-08-30T10:00:00.000Z'),
+        variant: {
+          id: 'v-1',
+          size: 'M',
+          color: 'أزرق',
+          product: { id: 'p-1', code: 'PRD-1', name: 'تيشيرت' },
+        },
+      },
     ];
     prisma.workOrder.findMany.mockResolvedValue(orders);
+    prisma.workOrder.count.mockResolvedValue(1);
 
     const result = await service.getAllWorkOrders({});
 
@@ -74,12 +89,132 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     expect(prisma.workOrder.findMany).toHaveBeenCalledWith({
       skip: 0,
       take: 20,
-      include: {
-        variant: { include: { product: true } },
-        bomVersion: true,
-        stageUpdates: true,
+      where: {},
+      select: {
+        id: true,
+        code: true,
+        status: true,
+        currentStage: true,
+        quantity: true,
+        createdAt: true,
+        variant: {
+          select: {
+            id: true,
+            size: true,
+            color: true,
+            product: { select: { id: true, code: true, name: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
+    });
+    // count بنفس where الفارغة
+    expect(prisma.workOrder.count).toHaveBeenCalledWith({ where: {} });
+  });
+
+  // ============ PRD-7: فلاتر القائمة ============
+
+  it('PRD-7: يطبّق status وcurrentStage وfrom/to في where نفسها للقائمة والعدّ', async () => {
+    prisma.workOrder.findMany.mockResolvedValue([]);
+    prisma.workOrder.count.mockResolvedValue(0);
+
+    const query: WorkOrderQueryDto = {
+      status: WorkOrderStatus.IN_PROGRESS,
+      currentStage: ProductionStage.SEWING,
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.999Z',
+      page: 1,
+      limit: 20,
+    };
+    await service.getAllWorkOrders(query);
+
+    const expectedWhere = {
+      status: WorkOrderStatus.IN_PROGRESS,
+      currentStage: ProductionStage.SEWING,
+      createdAt: {
+        gte: new Date(query.from as string),
+        lte: new Date(query.to as string),
+      },
+    };
+    expect(prisma.workOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expectedWhere, skip: 0, take: 20 }),
+    );
+    expect(prisma.workOrder.count).toHaveBeenCalledWith({
+      where: expectedWhere,
+    });
+  });
+
+  it('PRD-7: تاريخ بداية بعد النهاية → 400 قبل أي استعلام', async () => {
+    await expect(
+      service.getAllWorkOrders({
+        from: '2026-09-01T00:00:00.000Z',
+        to: '2026-08-01T00:00:00.000Z',
+      }),
+    ).rejects.toThrow('تاريخ بداية الفلاتر لا يمكن أن يكون بعد تاريخ النهاية');
+    expect(prisma.workOrder.findMany).not.toHaveBeenCalled();
+  });
+
+  it('PRD-7: from فقط بلا to → شرط gte وحده (فترة مفتوحة)', async () => {
+    prisma.workOrder.findMany.mockResolvedValue([]);
+    prisma.workOrder.count.mockResolvedValue(0);
+
+    await service.getAllWorkOrders({ from: '2026-08-01T00:00:00.000Z' });
+
+    expect(prisma.workOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { createdAt: { gte: new Date('2026-08-01T00:00:00.000Z') } },
+      }),
+    );
+  });
+
+  it('PRD-7: الاستدعاء بلا وسيطات يعمل (الافتراضي بلا فلاتر)', async () => {
+    prisma.workOrder.findMany.mockResolvedValue([]);
+    prisma.workOrder.count.mockResolvedValue(0);
+
+    await service.getAllWorkOrders();
+
+    expect(prisma.workOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: {}, skip: 0, take: 20 }),
+    );
+  });
+
+  // PRD-7/CC-6: قالب ListQueryDto المشترك — q يبحث في كود الأمر بcontains
+  // غير حساس (الحقل النصي المعرف الوحيد في WorkOrder)
+  it('PRD-7: q (قالب ListQueryDto) يبحث في كود الأمر بcontains غير حساس للقائمة والعدّ', async () => {
+    prisma.workOrder.findMany.mockResolvedValue([]);
+    prisma.workOrder.count.mockResolvedValue(0);
+
+    await service.getAllWorkOrders({ q: 'wo-2026' });
+
+    const expectedWhere = {
+      code: { contains: 'wo-2026', mode: 'insensitive' as const },
+    };
+    expect(prisma.workOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expectedWhere, skip: 0, take: 20 }),
+    );
+    expect(prisma.workOrder.count).toHaveBeenCalledWith({
+      where: expectedWhere,
+    });
+  });
+
+  it('PRD-7: q مع الفلاتر النوعية تتقاطع في where واحدة', async () => {
+    prisma.workOrder.findMany.mockResolvedValue([]);
+    prisma.workOrder.count.mockResolvedValue(0);
+
+    await service.getAllWorkOrders({
+      q: 'WO-9',
+      status: WorkOrderStatus.PLANNED,
+    });
+
+    const expectedWhere = {
+      status: WorkOrderStatus.PLANNED,
+      code: { contains: 'WO-9', mode: 'insensitive' as const },
+    };
+    expect(prisma.workOrder.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expectedWhere }),
+    );
+    expect(prisma.workOrder.count).toHaveBeenCalledWith({
+      where: expectedWhere,
     });
   });
 

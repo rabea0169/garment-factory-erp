@@ -14,10 +14,21 @@ final class ProductionLoading extends ProductionState {
 }
 
 final class ProductionLoaded extends ProductionState {
-  const ProductionLoaded({required this.workOrders, this.isRefreshing = false});
+  const ProductionLoaded({
+    required this.workOrders,
+    this.isRefreshing = false,
+    this.fromCache = false,
+    this.cachedAt,
+  });
 
   final List<WorkOrder> workOrders;
   final bool isRefreshing;
+
+  /// MOB-3: هل القائمة من ذاكرة Hive (لا اتصال) لا من الشبكة مباشرة؟
+  final bool fromCache;
+
+  /// لحظة تخزين آخر حالة ناجحة — null عند الاتصال المباشر.
+  final DateTime? cachedAt;
 }
 
 final class ProductionEmpty extends ProductionState {

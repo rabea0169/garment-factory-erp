@@ -86,6 +86,41 @@ export interface WasteStockInput {
   idempotencyKey?: string;
 }
 
+/**
+ * INV-8 (ب) (P2 — GF-IMP-W3): هدر البضاعة الجاهزة — الخامات فقط كانت تدعم
+ * الهدر (WasteStockInput يفرض rawMaterialId)؛ هذا المسار الموازي يخفض
+ * رصيد finished_good_stocks بـ CAS ويرحّل Dr WASTE_EXPENSE / Cr
+ * FINISHED_GOOD_STOCK بنمط هدر الخامات (WASTE/INVENTORY).
+ */
+export interface WasteFinishedGoodInput {
+  finishedGoodVariantId: string;
+  quantity: number;
+  /** إلزامي كالخامات — الهدر بلا سبب = ثغرة تدقيق. */
+  reason: string;
+  reference?: string;
+  idempotencyKey?: string;
+}
+
+/**
+ * INV-8 (أ) (P2 — GF-IMP-W3): حركة إرجاع خامات من الإنتاج — RETURN.
+ * الدلالة (ADR-0020): مرتجع داخلي من خط الإنتاج إلى المخزن بلا طرف خارجي
+ * ولا قيد GL — الاستهلاك الأصلي قيّد WIP من consumeMaterial، والإرجاع
+ * يزيد رصيد المخزون بقيمة التكلفة الحالية (لا يُعاد احتساب متوسط مرجح
+ * — راجع ADR-0020 للتفصيل والبدائل المرفوضة).
+ * warehouseId اختياري (نص التكليف يعدّد rawMaterialId/quantity/reason/
+ * reference وحدها): عند غيابه يُختار مخزن الخامات الافتراضي حتميًا
+ * (نمط INV-6 — أول مخزن خامات نشط بترتيب createdAt)؛ تحديده صراحةً
+ * يبقى متاحًا للمستدعى الذي يعرف مخزن الإرجاع الفعلي.
+ */
+export interface ReturnStockInput {
+  rawMaterialId: string;
+  warehouseId?: string;
+  quantity: number;
+  reason: string;
+  reference?: string;
+  idempotencyKey?: string;
+}
+
 export interface StockMovementResult {
   replayed: boolean;
   entryCode: string;
@@ -127,6 +162,8 @@ export interface StockEvent {
 
 export interface LedgerFilter {
   rawMaterialId?: string;
+  /** INV-9: تصفية البضاعة الجاهزة بالمتغير (الفهرس المركب قائم). */
+  productVariantId?: string;
   warehouseId?: string;
   type?: StockMovementType;
   from?: string;
@@ -139,8 +176,21 @@ const IDEMPOTENCY_SCOPES: Record<StockMovementType, string> = {
   [StockMovementType.ISSUE]: 'inventory.issue',
   [StockMovementType.ADJUSTMENT]: 'inventory.adjustment',
   [StockMovementType.WASTE]: 'inventory.waste',
-  // RETURN محجوز — يُفعّل مع مرتجعات المشتريات في GF-0009
+  // INV-8 (أ): مفعّل الآن مع مرتجعات الإنتاج (كان محجوزًا لمستقبل
+  // المشتريات — الدلالة الجديدة موثقة في ADR-0020).
   [StockMovementType.RETURN]: 'inventory.return',
+};
+
+/**
+ * INV-7 (P2 — GF-IMP-W3): أفعال سجل التدقيق لكل نوع حركة مخزون — تُكتب
+ * داخل نفس معاملة الحركة عند توفر الفاعل (userId) مع الرصيد قبل/بعد.
+ */
+const MOVEMENT_AUDIT_ACTIONS: Record<StockMovementType, string> = {
+  [StockMovementType.RECEIVE]: 'STOCK_RECEIVED',
+  [StockMovementType.ISSUE]: 'STOCK_ISSUED',
+  [StockMovementType.ADJUSTMENT]: 'STOCK_ADJUSTED',
+  [StockMovementType.WASTE]: 'STOCK_WASTED',
+  [StockMovementType.RETURN]: 'STOCK_RETURNED',
 };
 
 interface MovementExecutionInput {
@@ -413,6 +463,10 @@ export class InventoryService {
 
     const where: Prisma.StockLedgerEntryWhereInput = {};
     if (filter.rawMaterialId) where.rawMaterialId = filter.rawMaterialId;
+    // INV-9: تصفية البضاعة الجاهزة بالمتغير — يستفيد من الفهرس المركب
+    // (productVariantId, createdAt) القائم في المخطط.
+    if (filter.productVariantId)
+      where.productVariantId = filter.productVariantId;
     if (filter.warehouseId) where.warehouseId = filter.warehouseId;
     if (filter.type) where.type = filter.type;
     if (filter.from || filter.to) {
@@ -538,6 +592,235 @@ export class InventoryService {
       undefined,
       eventsCollector,
     );
+  }
+
+  /**
+   * INV-8 (أ) (P2 — GF-IMP-W3): إرجاع خامات من الإنتاج — يزيد الرصيد
+   * (كالاستلام) بقيده في الدفتر بنوع RETURN وبلا قيد GL (ADR-0020:
+   * مرتجع داخلي بلا طرف خارجي؛ الاستهلاك الأصلي هو الذي قيّد WIP).
+   * لا يُعاد احتساب متوسط التكلفة المرجح — الحركة تُقيَّم بتكلفة الخامة
+   * الحالية كما في الصرف (التفصيل والبدائل في ADR-0020).
+   * warehouseId اختياري: الغياب يُحلّ لمخزن الخامات الافتراضي الحتمي
+   * (INV-6) قبل تنفيذ الحركة — نفس المخزن دائمًا لنفس الحالة.
+   */
+  async return(
+    input: ReturnStockInput,
+    userId?: string,
+    tx?: TxClient,
+    eventsCollector?: StockEvent[],
+  ): Promise<StockMovementResult> {
+    // INV-8 (أ): مخزن الإرجاع — المحدد صراحةً أو الافتراضي الحتمي (INV-6).
+    // القرار قبل تنفيذ الحركة (لا داخلها): اختيار المخزن لا يعتمد على حالة
+    // تُكتب داخل المعاملة (نفس توثيق addRawMaterialStock/INV-6).
+    const warehouseId =
+      input.warehouseId ?? (await this.resolveDefaultMaterialWarehouse()).id;
+    await this.assertMaterialWarehouse(warehouseId);
+    return this.executeMovement(
+      {
+        type: StockMovementType.RETURN,
+        rawMaterialId: input.rawMaterialId,
+        warehouseId,
+        delta: input.quantity,
+        unsignedQuantity: input.quantity,
+        reference: input.reference,
+        notes: `مرتجع من الإنتاج — السبب: ${input.reason}`,
+        idempotencyKey: input.idempotencyKey,
+        userId,
+      },
+      tx,
+      eventsCollector,
+    );
+  }
+
+  /**
+   * INV-8 (ب) (P2 — GF-IMP-W3): هدر البضاعة الجاهزة — المسار الموازي
+   * لهدر الخامات: يخفض finished_good_stocks بـ CAS (تحديث شرطي
+   * quantity >= المطلوب)، يسجل حركة WASTE في الدفتر موصولة بالمتغير
+   * (productVariantId)، ويرحّل قيد GL: Dr WASTE_EXPENSE / Cr
+   * FINISHED_GOOD_STOCK بمبلغ quantity × unitCost الرصيد — نمط
+   * هدر الخامات (WASTE/INVENTORY) معبّرًا عن مخزون التام.
+   * المخزن: افتراضي حتمي (أول مخزن FINISHED_GOODS نشط بترتيب createdAt
+   * — نمط INV-6) لأن الهدر المكتشف في المستودع لا يحدد المستدعي مخزنه.
+   */
+  async wasteFinishedGood(
+    input: WasteFinishedGoodInput,
+    userId?: string,
+  ): Promise<StockMovementResult> {
+    if (!Number.isInteger(input.quantity) || input.quantity <= 0) {
+      throw new BadRequestException(
+        'كمية هدر المنتج التام يجب أن تكون عددًا صحيحًا موجبًا',
+      );
+    }
+
+    const warehouse = await this.resolveDefaultFinishedGoodsWarehouse();
+    const scope = 'inventory.finished_good_waste';
+    const requestHash = computeRequestHash({
+      operation: scope,
+      productVariantId: input.finishedGoodVariantId,
+      quantity: input.quantity,
+      reason: input.reason,
+      reference: input.reference ?? null,
+    });
+    if (input.idempotencyKey) {
+      const replay = await this.tryReplay(
+        input.idempotencyKey,
+        scope,
+        requestHash,
+      );
+      if (replay) return replay;
+    }
+
+    const execute = async (tx: TxClient): Promise<StockMovementResult> => {
+      let idempotencyKeyId: string | undefined;
+      if (input.idempotencyKey) {
+        idempotencyKeyId = (
+          await tx.idempotencyKey.create({
+            data: { key: input.idempotencyKey, scope, requestHash },
+            select: { id: true },
+          })
+        ).id;
+      }
+
+      const stock = await tx.finishedGoodStock.findUnique({
+        where: {
+          warehouseId_productVariantId: {
+            warehouseId: warehouse.id,
+            productVariantId: input.finishedGoodVariantId,
+          },
+        },
+        select: { id: true, quantity: true, unitCost: true },
+      });
+      if (!stock) {
+        throw new NotFoundException(
+          'رصيد المنتج التام غير موجود في مخزن المنتج التام الافتراضي',
+        );
+      }
+
+      // INV-8 (ب): CAS — تحديث شرطي واحد يمنع السباق والسالب
+      const updated = await tx.finishedGoodStock.updateMany({
+        where: { id: stock.id, quantity: { gte: input.quantity } },
+        data: { quantity: { decrement: input.quantity } },
+      });
+      if (updated.count !== 1) {
+        throw new ConflictException(
+          'رصيد المنتج التام غير كافٍ للهدر أو تغير بالتزامن',
+        );
+      }
+
+      const balanceAfter = Number(stock.quantity) - input.quantity;
+      const unitCost = stock.unitCost;
+      const totalValue = unitCost.mul(input.quantity).toDecimalPlaces(2);
+
+      const entry = await tx.stockLedgerEntry.create({
+        data: {
+          entryCode: generateEntryCode(),
+          type: StockMovementType.WASTE,
+          warehouseId: warehouse.id,
+          productVariantId: input.finishedGoodVariantId,
+          quantityDelta: -input.quantity,
+          balanceAfter,
+          unitCost,
+          totalValue,
+          reference: input.reference,
+          notes: `هدر بضاعة جاهزة — السبب: ${input.reason}`,
+          idempotencyKeyId,
+          createdById: userId,
+        },
+        select: { entryCode: true, createdAt: true },
+      });
+
+      // INV-8 (ب): قيد GL بنمط هدر الخامات — Dr WASTE_EXPENSE / Cr
+      // FINISHED_GOOD_STOCK (بلا إعادة تقييم للمتوسط — الهدر يخرج
+      // بتكلفة الرصيد الحالية).
+      if (totalValue.gt(0)) {
+        await this.financialPosting.postJournalEntryInTx(
+          tx,
+          {
+            description: `ترحيل هدر بضاعة جاهزة — ${
+              input.reference ?? entry.entryCode
+            }`,
+            reference: input.reference ?? entry.entryCode,
+            postingKey: 'inventory-fg-waste:' + entry.entryCode,
+            isAuto: true,
+            lines: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.WASTE_EXPENSE,
+                creditAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+                amount: totalValue,
+                description:
+                  input.reason ??
+                  `هدر بضاعة جاهزة — ${input.finishedGoodVariantId}`,
+              },
+            ],
+            userId,
+            metadata: {
+              source: 'inventory.fg-waste',
+              productVariantId: input.finishedGoodVariantId,
+              warehouseId: warehouse.id,
+              quantity: input.quantity,
+              unitCost: unitCost.toNumber(),
+              entryCode: entry.entryCode,
+            },
+          },
+          userId,
+        );
+      }
+
+      // INV-7: سجل التدقيق داخل نفس المعاملة عند توفر الفاعل
+      if (userId) {
+        await tx.activityLog.create({
+          data: {
+            userId,
+            action: MOVEMENT_AUDIT_ACTIONS[StockMovementType.WASTE],
+            module: 'inventory',
+            details: {
+              entryCode: entry.entryCode,
+              productVariantId: input.finishedGoodVariantId,
+              warehouseId: warehouse.id,
+              quantityDelta: -input.quantity,
+              balanceBefore: Number(stock.quantity),
+              balanceAfter,
+              reason: input.reason,
+            },
+          },
+        });
+      }
+
+      const response = {
+        replayed: false,
+        entryCode: entry.entryCode,
+        type: StockMovementType.WASTE,
+        rawMaterialId: '',
+        warehouseId: warehouse.id,
+        quantityDelta: -input.quantity,
+        balanceAfter,
+        unitCost: unitCost.toNumber(),
+        totalValue: totalValue.toNumber(),
+        costPerUnitAfter: null,
+        createdAt: entry.createdAt.toISOString(),
+      } satisfies StockMovementResult;
+      if (input.idempotencyKey) {
+        await tx.idempotencyKey.update({
+          where: { key: input.idempotencyKey },
+          data: { response },
+        });
+      }
+      return response;
+    };
+
+    try {
+      return await this.prisma.$transaction(execute);
+    } catch (error) {
+      if (input.idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replay = await this.tryReplay(
+          input.idempotencyKey,
+          scope,
+          requestHash,
+        );
+        if (replay) return replay;
+      }
+      throw error;
+    }
   }
 
   /**
@@ -1143,20 +1426,50 @@ export class InventoryService {
     }
   }
 
-  private async resolveDefaultMaterialWarehouse() {
-    const rawWarehouse = await this.prisma.warehouse.findFirst({
+  /**
+   * INV-6 (P2 — GF-IMP-W3): المخزن الافتراضي حتمي — أول مخزن خامات نشط
+   * بترتيب createdAt صاعد، فإن لم يوجد أول مخزن عام نشط بالترتيب نفسه.
+   * الحتمية (نفس المدخلات → نفس المخزن دائمًا) تمنع تشتت المخزون بين
+   * مستودعات متعددة حسب ترتيب الاستعلام العشوائي.
+   * معامل tx اختياري: المستدعى الخارجي الذي يملك معاملة يمكنه القراءة
+   * داخلها (بلا فتح اتصال جديد)؛ الاستدعاء الوحيد الحالي (addRawMaterialStock
+   * — مسار add-stock غير معاملاتي: الحركة نفسها تفتح معاملتها في receive)
+   * يقرأ خارج المعاملة عمدًا — توثيق القرار: القراءة قبل الحركة آمنة هنا
+   * لأن اختيار المخزن لا يعتمد على أي حالة تُكتب داخل المعاملة.
+   */
+  private async resolveDefaultMaterialWarehouse(tx?: TxClient) {
+    const db = tx ?? this.prisma;
+    const rawWarehouse = await db.warehouse.findFirst({
       where: { type: WarehouseType.RAW_MATERIAL, isActive: true },
       orderBy: { createdAt: 'asc' },
     });
     const warehouse =
       rawWarehouse ??
-      (await this.prisma.warehouse.findFirst({
+      (await db.warehouse.findFirst({
         where: { type: WarehouseType.GENERAL, isActive: true },
         orderBy: { createdAt: 'asc' },
       }));
     if (!warehouse) {
       throw new ConflictException(
         'لا يوجد مخزن خامات نشط — شغّل seed لإنشاء WH-RAW أو أنشئ مخزنًا أولًا',
+      );
+    }
+    return warehouse;
+  }
+
+  /**
+   * INV-8 (ب): المخزن الافتراضي للبضاعة الجاهزة — نفس نمط حتمية INV-6:
+   * أول مخزن FINISHED_GOODS نشط بترتيب createdAt صاعد (في القاعدة
+   * المزروعة: WH-FG).
+   */
+  private async resolveDefaultFinishedGoodsWarehouse() {
+    const warehouse = await this.prisma.warehouse.findFirst({
+      where: { type: WarehouseType.FINISHED_GOODS, isActive: true },
+      orderBy: { createdAt: 'asc' },
+    });
+    if (!warehouse) {
+      throw new ConflictException(
+        'لا يوجد مخزن منتج تام نشط — شغّل seed لإنشاء WH-FG أو أنشئ مخزنًا أولًا',
       );
     }
     return warehouse;
@@ -1393,6 +1706,34 @@ export class InventoryService {
           },
           input.userId,
         );
+      }
+
+      // INV-7 (P2 — GF-IMP-W3): سجل تدقيق الحركة داخل نفس المعاملة —
+      // الفاعل من الجلسة (userId من المدخلات) والقيم الجوهرية مع الرصيد
+      // قبل/بعد للمستودع (من حساب الدفتر أعلاه). userId إلزامي في
+      // ActivityLog ولا يوجد مستخدم نظام — غيابه (استدعاء برمجي قديم
+      // بلا جلسة) = لا سجل تدقيق هنا؛ الحركة نفسها تبقى موثقة بالكامل
+      // في StockLedgerEntry (createdById nullable) — القرار موثق أعلاه
+      // في PROD-6 بنفس النمط.
+      if (input.userId) {
+        await tx.activityLog.create({
+          data: {
+            userId: input.userId,
+            action: MOVEMENT_AUDIT_ACTIONS[input.type],
+            module: 'inventory',
+            details: {
+              entryCode: entry.entryCode,
+              type: input.type,
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.warehouseId,
+              quantityDelta: input.delta,
+              balanceBefore: warehouseBalanceBefore,
+              balanceAfter: warehouseBalanceAfter,
+              totalValue,
+              ...(input.reference ? { reference: input.reference } : {}),
+            },
+          },
+        });
       }
 
       const response: Omit<StockMovementResult, 'replayed'> = {

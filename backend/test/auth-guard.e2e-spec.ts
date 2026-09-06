@@ -28,6 +28,8 @@ interface TestUser {
   role: UserRole;
   isActive: boolean;
   password: string;
+  /** AUTH-6: رقم نسخة الجلسة — الاستراتيجية ترفض أي توكن بلا v أو v غير مطابق */
+  jwtVersion: number;
 }
 
 const users: TestUser[] = [
@@ -38,6 +40,7 @@ const users: TestUser[] = [
     role: 'SUPER_ADMIN',
     isActive: true,
     password: 'x',
+    jwtVersion: 0,
   },
   {
     id: 'e2e-viewer',
@@ -46,6 +49,7 @@ const users: TestUser[] = [
     role: 'VIEWER',
     isActive: true,
     password: 'x',
+    jwtVersion: 0,
   },
   {
     id: 'e2e-production-manager',
@@ -54,6 +58,7 @@ const users: TestUser[] = [
     role: 'PRODUCTION_MANAGER',
     isActive: true,
     password: 'x',
+    jwtVersion: 0,
   },
   {
     id: 'e2e-accountant',
@@ -62,6 +67,7 @@ const users: TestUser[] = [
     role: 'ACCOUNTANT',
     isActive: true,
     password: 'x',
+    jwtVersion: 0,
   },
   {
     id: 'e2e-cashier',
@@ -70,6 +76,7 @@ const users: TestUser[] = [
     role: 'CASHIER',
     isActive: true,
     password: 'x',
+    jwtVersion: 0,
   },
 ];
 
@@ -91,8 +98,17 @@ describe('Auth guard (e2e) — GF-0002', () => {
     product: { create: jest.fn(), findFirst: jest.fn() },
     productVariant: { create: jest.fn() },
     rawMaterial: { findFirst: jest.fn() },
-    bomVersion: { findFirst: jest.fn(), create: jest.fn() },
-    bomLine: { upsert: jest.fn(), delete: jest.fn(), findUnique: jest.fn() },
+    bomVersion: { findFirst: jest.fn(), create: jest.fn(), update: jest.fn() },
+    // GF-IMP-W3 / PROD-4: إضافة بند BOM تقرأ البند القائم (قرار الإصدار)
+    // وقد تنشئ إصدارًا جديدًا (create/createMany/update)
+    bomLine: {
+      upsert: jest.fn(),
+      delete: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      createMany: jest.fn(),
+    },
   };
 
   // A1/A2/A3: mock مبسّط لـ FinancialPostingService — لا يحتاج DB فعلي.
@@ -151,8 +167,15 @@ describe('Auth guard (e2e) — GF-0002', () => {
     jwtService = app.get(JwtService, { strict: false });
   });
 
+  // AUTH-6: التوكن يضم v = jwtVersion المستخدم — الاستراتيجية ترفض أي
+  // توكن بلا v (تُعامل كتوكن ما قبل SEC-F04 مزور/قديم).
   const tokenFor = (user: TestUser): string =>
-    jwtService.sign({ sub: user.id, email: user.email, role: user.role });
+    jwtService.sign({
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+      v: user.jwtVersion,
+    });
 
   const viewerToken = () => tokenFor(users[1]);
   const productionManagerToken = () => tokenFor(users[2]);
@@ -246,6 +269,7 @@ describe('Auth guard (e2e) — GF-0002', () => {
       sub: 'ghost-id',
       email: 'ghost@t.co',
       role: 'VIEWER',
+      v: 0,
     });
     return request(app.getHttpServer())
       .get('/sales/orders')
@@ -635,7 +659,14 @@ describe('Auth guard (e2e) — GF-0002', () => {
       prismaFns.bomLine.upsert.mockResolvedValue({ id: bomId });
       prismaFns.bomLine.delete.mockResolvedValue({ id: bomId });
       // GF-IMP-W1 / PROD-1: deleteBomItem يفحص الوجود أولًا (findUnique) قبل الحذف
-      prismaFns.bomLine.findUnique.mockResolvedValue({ id: bomId });
+      // GF-IMP-W3 / PROD-6: سجل التدقيق يقرأ quantity/unit — صف كامل في mock
+      prismaFns.bomLine.findUnique.mockResolvedValue({
+        id: bomId,
+        bomVersionId: 'bom-version-rbac-1',
+        rawMaterialId,
+        quantity: 1.25,
+        unit: 'METER',
+      });
     });
 
     it('POST /products بلا توكن → 401', () => {
@@ -701,6 +732,14 @@ describe('Auth guard (e2e) — GF-0002', () => {
         .set('Authorization', `Bearer ${productionManagerToken()}`)
         .send({ size: 'L', color: 'أزرق' })
         .expect(201);
+      // PROD-4: إضافة بند جديد — findUnique (البند القائم) يعيد null
+      // فيسلك مسار الإنشاء البسيط لا مسار الإصدار
+      prismaFns.bomLine.findUnique.mockResolvedValueOnce(null);
+      prismaFns.bomLine.create.mockResolvedValueOnce({
+        id: bomId,
+        quantity: 1.25,
+        unit: 'METER',
+      });
       await request(app.getHttpServer())
         .post(`/products/${productId}/bom`)
         .set('Authorization', `Bearer ${productionManagerToken()}`)

@@ -668,7 +668,10 @@ enum RejectionReason {
 model QualityCheck {
   id               String              @id @default(uuid())
   workOrderId      String
-  stage            WorkOrderStatus
+  // QLT-2 (GF-IMP-W3): النوع الدلالي الصحيح — كان WorkOrderStatus (قيمة
+  // تراثية تُترجم عبر خريطة LEGACY_STAGE) والآن ProductionStage مباشرة
+  // (الهجرة 20260906200000_wave3_qlt2_stage_type تترجم القيم القديمة).
+  stage            ProductionStage
   stageRunId       String?
   checkedQty       Int
   passedQty        Int

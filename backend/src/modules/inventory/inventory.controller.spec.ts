@@ -27,6 +27,8 @@ describe('InventoryController — التفويض وتمرير العمليات (
     issue: jest.Mock;
     adjust: jest.Mock;
     waste: jest.Mock;
+    return: jest.Mock;
+    wasteFinishedGood: jest.Mock;
   };
 
   beforeEach(() => {
@@ -42,6 +44,9 @@ describe('InventoryController — التفويض وتمرير العمليات (
       issue: jest.fn().mockResolvedValue({ replayed: false }),
       adjust: jest.fn().mockResolvedValue({ replayed: false }),
       waste: jest.fn().mockResolvedValue({ replayed: false }),
+      // INV-8: المرتجع من الإنتاج + هدر البضاعة الجاهزة
+      return: jest.fn().mockResolvedValue({ replayed: false }),
+      wasteFinishedGood: jest.fn().mockResolvedValue({ replayed: false }),
     };
     controller = new InventoryController(
       service as unknown as InventoryService,
@@ -164,6 +169,48 @@ describe('InventoryController — التفويض وتمرير العمليات (
     );
   });
 
+  // ============ INV-8 (GF-IMP-W3): المرتجع وهدر التام ============
+
+  it('INV-8: المرتجع يمرر body (حرفية التكليف: بلا warehouseId) + مفتاح idempotency من الترويسة + هوية الجلسة', async () => {
+    const body = {
+      rawMaterialId: 'rm-1',
+      quantity: 12.5,
+      reason: 'بقايا قص',
+    };
+    await controller.returnStock(body, 'user-1', 'key-ret-1');
+    expect(service.return).toHaveBeenCalledWith(
+      { ...body, idempotencyKey: 'key-ret-1' },
+      'user-1',
+    );
+  });
+
+  it('INV-8: المرتجع بـ warehouseId صريح يمرر كما هو (اختياري — يوجه لمخزن محدد)', async () => {
+    const body = {
+      rawMaterialId: 'rm-1',
+      warehouseId: 'wh-1',
+      quantity: 5,
+      reason: 'إرجاع لمخزن الخط',
+    };
+    await controller.returnStock(body, 'user-1', 'key-ret-2');
+    expect(service.return).toHaveBeenCalledWith(
+      { ...body, idempotencyKey: 'key-ret-2' },
+      'user-1',
+    );
+  });
+
+  it('INV-8: هدر البضاعة الجاهزة يمرر body + المفتاح + هوية الجلسة', async () => {
+    const body = {
+      finishedGoodVariantId: 'pv-1',
+      quantity: 3,
+      reason: 'تلف بالتخزين',
+    };
+    await controller.wasteFinishedGood(body, 'user-1', 'key-fgw-1');
+    expect(service.wasteFinishedGood).toHaveBeenCalledWith(
+      { ...body, idempotencyKey: 'key-fgw-1' },
+      'user-1',
+    );
+  });
+
   // ============ حماية الأدوار (انحدار GF-0003 + مسارات GF-0007) ============
 
   it('كل مسارات الكتابة مقيّدة بدور INVENTORY_MANAGER فقط', () => {
@@ -173,6 +220,9 @@ describe('InventoryController — التفويض وتمرير العمليات (
       ['issue', 'issue'],
       ['adjust', 'adjust'],
       ['waste', 'waste'],
+      // INV-8 (GF-IMP-W3): المرتجع + هدر التام — نفس قاعدة الكتابة
+      ['returnStock', 'returnStock'],
+      ['wasteFinishedGood', 'wasteFinishedGood'],
     ];
     for (const [method] of writeRoutes) {
       const roles = getMethodMetadata<UserRole[]>(

@@ -13,6 +13,7 @@ import { PurchasingService } from './purchasing.service';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
 import { ReturnToSupplierDto } from './dto/return-to-supplier.dto';
+import { PurchaseOrderQueryDto } from './dto/purchase-order-query.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RolesGuard, Roles } from '../auth/roles.guard';
@@ -23,7 +24,6 @@ import {
   ApiOperation,
   ApiHeader,
 } from '@nestjs/swagger';
-import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Purchasing')
 @ApiBearerAuth()
@@ -33,9 +33,14 @@ export class PurchasingController {
   constructor(private readonly purchasingService: PurchasingService) {}
 
   @Get('orders')
-  @ApiOperation({ summary: 'Get all purchase orders with pagination' })
-  async getPurchaseOrders(@Query() pagination: PaginationDto) {
-    return this.purchasingService.getPurchaseOrders(pagination);
+  @ApiOperation({
+    summary:
+      'PUR-6: أوامر الشراء بفلاتر status/supplierId/from/to/q وترقيم (CC-6)',
+  })
+  async getPurchaseOrders(
+    @Query() query: PurchaseOrderQueryDto = new PurchaseOrderQueryDto(),
+  ) {
+    return this.purchasingService.getPurchaseOrders(query);
   }
 
   @Post()

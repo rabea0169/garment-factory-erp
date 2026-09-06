@@ -6,6 +6,9 @@ import { PaginationDto } from '../../../common/dto/pagination.dto';
 /**
  * GF-0007: مرشحات قراءة سجل حركات المخزون — كلها اختيارية.
  * التواريخ ISO 8601 (مثل 2026-08-25T00:00:00Z).
+ * INV-9 (P2 — GF-IMP-W3): productVariantId اختياري — الدفتر كان يدعم
+ * تصفية الخامات فقط فلم يكن يمكن تتبع حركات البضاعة الجاهزة؛ الفهرس
+ * المركب (productVariantId, createdAt) موجود في المخطط.
  */
 export class LedgerQueryDto extends PaginationDto {
   @ApiProperty({
@@ -16,6 +19,15 @@ export class LedgerQueryDto extends PaginationDto {
   @IsOptional()
   @IsUUID(undefined, { message: 'معرف الخامة يجب أن يكون UUID صالحًا' })
   rawMaterialId?: string;
+
+  @ApiProperty({
+    example: 'uuid-of-product-variant',
+    description: 'تصفية بمتغير منتج تام محدد (INV-9)',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID(undefined, { message: 'معرف متغير المنتج يجب أن يكون UUID صالحًا' })
+  productVariantId?: string;
 
   @ApiProperty({
     example: 'uuid-of-warehouse',

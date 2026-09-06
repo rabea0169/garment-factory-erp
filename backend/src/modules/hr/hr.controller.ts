@@ -18,6 +18,8 @@ import { CreatePayrollDto } from './dto/create-payroll.dto';
 import { CreateWorkerDto } from './dto/create-worker.dto';
 import { PayPayrollDto } from './dto/pay-payroll.dto';
 import { RecordProductionDto } from './dto/record-production.dto';
+import { PayrollQueryDto } from './dto/payroll-query.dto';
+import { WorkerPeriodQueryDto } from './dto/worker-period-query.dto';
 import { HrService } from './hr.service';
 
 @ApiTags('HR (الموارد البشرية والعمال)')
@@ -27,8 +29,12 @@ export class HrController {
 
   @Get('workers')
   @ApiOperation({ summary: 'قائمة جميع العمال' })
-  async getWorkers(@Query() pagination: PaginationDto = new PaginationDto()) {
-    return this.hrService.getAllWorkers(pagination);
+  async getWorkers(
+    @Query() pagination: PaginationDto = new PaginationDto(),
+    // HR-8 (ب): دور الجلسة يقرر ظهور حقول الهوية (نمط INV-2).
+    @CurrentUser('role') viewerRole?: UserRole,
+  ) {
+    return this.hrService.getAllWorkers(pagination, viewerRole);
   }
 
   @Post('workers')
@@ -55,8 +61,12 @@ export class HrController {
 
   @Get('workers/:id')
   @ApiOperation({ summary: 'تفاصيل العامل مع إنتاجه وسلفه' })
-  async getWorkerDetails(@Param('id') id: string) {
-    return this.hrService.getWorkerDetails(id);
+  async getWorkerDetails(
+    @Param('id') id: string,
+    // HR-8 (ب): حقول الهوية (nationalId/phone) لأدوار HR فقط.
+    @CurrentUser('role') viewerRole?: UserRole,
+  ) {
+    return this.hrService.getWorkerDetails(id, viewerRole);
   }
 
   @Post('attendance')
@@ -159,13 +169,23 @@ export class HrController {
   }
 
   @Post('payrolls/:id/pay')
-  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  // HR-5 (P2 — GF-IMP-W3): المحاسب وأمين الصندوق يدفعان الرواتب إلى جانب
+  // HR والمدير العام — والخدمة تفرض فصل الواجبات (الدافع ≠ المعتمد).
+  @Roles(
+    UserRole.HR_MANAGER,
+    UserRole.GENERAL_MANAGER,
+    UserRole.ACCOUNTANT,
+    UserRole.CASHIER,
+  )
   @ApiHeader({
     name: 'Idempotency-Key',
     required: false,
     description: 'مفتاح إعادة المحاولة الآمنة لدفع كشف الراتب',
   })
-  @ApiOperation({ summary: 'دفع كشف راتب معتمد وترحيله إلى الخزينة' })
+  @ApiOperation({
+    summary:
+      'دفع كشف راتب معتمد وترحيله إلى الخزينة (الخزينة اختيارية عند صافٍ = صفر — HR-4)',
+  })
   async payPayroll(
     @Param('id') payrollId: string,
     @Body() body: PayPayrollDto,
@@ -182,5 +202,58 @@ export class HrController {
       actorId,
       idempotencyKey,
     );
+  }
+
+  // ===================== GF-IMP-W3 / W3-A: HR-6 =====================
+
+  // HR-6: أدوار القراءة HR_MANAGER وGENERAL_MANAGER (نص البند) —
+  // SUPER_ADMIN يتجاوز عبر RolesGuard كما في كل المسارات.
+  @Get('payrolls')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({
+    summary: 'HR-6: قائمة كشوف الرواتب (فلاتر status/workerId/نطاق فترة)',
+  })
+  async getPayrolls(@Query() query: PayrollQueryDto) {
+    return this.hrService.getPayrolls(query);
+  }
+
+  @Post('payrolls/:id/cancel')
+  // HR-6 (ب): الإبطال إجراء إداري مقصور على HR_MANAGER وGENERAL_MANAGER.
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'مفتاح إعادة المحاولة الآمنة لإبطال مسودة كشف الراتب',
+  })
+  @ApiOperation({
+    summary: 'HR-6: إبطال مسودة كشف راتب (DRAFT فقط) بـ CAS وتدقيق كامل',
+  })
+  async cancelPayroll(
+    @Param('id') payrollId: string,
+    @CurrentUser('id') actorId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ) {
+    return this.hrService.cancelPayroll(payrollId, actorId, idempotencyKey);
+  }
+
+  // HR-6 (ج): قراءات الجوال — السلف والإنتاج اليومي بنفس أدوار HR-6
+  // (HR_MANAGER وGENERAL_MANAGER — نص البند؛ الجوال HR هو مستهلكها).
+  @Get('advances')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({
+    summary: 'HR-6: قائمة سلف العمال (فلاتر workerId/from/to) — للجوال',
+  })
+  async getAdvances(@Query() query: WorkerPeriodQueryDto) {
+    return this.hrService.getWorkerAdvances(query);
+  }
+
+  @Get('production')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({
+    summary:
+      'HR-6: قائمة سجلات الإنتاج اليومي (فلاتر workerId/from/to) — للجوال',
+  })
+  async getProduction(@Query() query: WorkerPeriodQueryDto) {
+    return this.hrService.getDailyProductionRecords(query);
   }
 }
