@@ -3,8 +3,8 @@ import { Type } from 'class-transformer';
 import {
   ArrayNotEmpty,
   IsArray,
-  IsInt,
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
@@ -18,9 +18,18 @@ export class PurchaseReceiptItemDto {
   @IsUUID(undefined, { message: 'معرف بند أمر الشراء يجب أن يكون UUID صالحًا' })
   purchaseOrderItemId: string;
 
-  @ApiProperty({ example: 25 })
+  // PUR-2: الكميات الكسرية مسموحة حتى 4 منازل — عمود بند الشراء
+  // Decimal(10,4) فكان IsInt يجعل استلام الكميات الكسرية مستحيلًا.
+  // (سياسة الكميات في أمر الشراء نفسها صارت كسرية عبر PUR-1 فتتسق المساران.)
+  @ApiProperty({
+    example: 2.5,
+    description: 'كمية الاستلام — رقم موجب بحد أقصى 4 منازل عشرية',
+  })
   @Type(() => Number)
-  @IsInt({ message: 'كمية الاستلام يجب أن تكون عددًا صحيحًا' })
+  @IsNumber(
+    { maxDecimalPlaces: 4 },
+    { message: 'كمية الاستلام يجب أن تكون رقمًا بحد أقصى 4 منازل عشرية' },
+  )
   @IsPositive({ message: 'كمية الاستلام يجب أن تكون أكبر من صفر' })
   quantity: number;
 }

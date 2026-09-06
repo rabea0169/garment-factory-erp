@@ -25,6 +25,24 @@ import {
   tryReplayIdempotencyKey,
 } from '../../core/common/idempotency.util';
 
+/**
+ * PUR-1: تقريب المبالغ المالية لمنزلتين عشريتين مطابقة لأعمدة
+ * Decimal(10,2) في القاعدة — نفس النمط المعرف محليًا في sales/inventory.
+ * يمنع تسرب كسور الفاصلة العائمة إلى المجموع المحفوظ.
+ */
+function round2(value: number): number {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+/**
+ * PUR-2: تقريب الكميات لـ 4 منازل مطابقة لعمود Decimal(10,4) — يجعل
+ * مقارنات البواقي الكسرية (المستلم + الجديد مقابل المطلوب) محصنة ضد
+ * أخطاء تمثيل الفاصلة العائمة (مثل 0.1 + 0.2 > 0.3).
+ */
+function round4(value: number): number {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
 @Injectable()
 export class PurchasingService {
   constructor(
@@ -64,9 +82,10 @@ export class PurchasingService {
     });
     if (!supplier) throw new NotFoundException('المورد غير موجود أو غير نشط');
 
-    const totalAmount = dto.items.reduce(
-      (sum, item) => sum + item.quantity * item.unitCost,
-      0,
+    // PUR-1: المجموع مقرب لمنزلتين (كان يجمع كسور الفاصلة العائمة خامًا)
+    // — كذلك totalCost لكل بند.
+    const totalAmount = round2(
+      dto.items.reduce((sum, item) => sum + item.quantity * item.unitCost, 0),
     );
 
     return this.prisma.$transaction(async (tx) => {
@@ -85,7 +104,7 @@ export class PurchasingService {
               rawMaterialId: item.rawMaterialId,
               quantity: item.quantity,
               unitCost: item.unitCost,
-              totalCost: item.quantity * item.unitCost,
+              totalCost: round2(item.quantity * item.unitCost),
             })),
           },
         },
@@ -172,7 +191,11 @@ export class PurchasingService {
       const orderItem = orderItems.get(item.purchaseOrderItemId);
       if (!orderItem) throw new NotFoundException('Item not found in order');
       const alreadyReceived = receivedByItem.get(item.purchaseOrderItemId) ?? 0;
-      if (alreadyReceived + item.quantity > Number(orderItem.quantity)) {
+      // PUR-2: مقارنة مقربة لـ4 منازل — كميات كسرية بدون أخطاء فاصلة عائمة
+      if (
+        round4(alreadyReceived + item.quantity) >
+        round4(Number(orderItem.quantity))
+      ) {
         throw new BadRequestException(
           `كمية الاستلام تتجاوز المتبقي للبند ${item.purchaseOrderItemId}`,
         );
@@ -236,7 +259,11 @@ export class PurchasingService {
             }
             const alreadyReceived =
               currentReceivedByItem.get(item.purchaseOrderItemId) ?? 0;
-            if (alreadyReceived + item.quantity > Number(orderItem.quantity)) {
+            // PUR-2: مقارنة مقربة لـ4 منازل — كميات كسرية بدون أخطاء فاصلة عائمة
+            if (
+              round4(alreadyReceived + item.quantity) >
+              round4(Number(orderItem.quantity))
+            ) {
               throw new BadRequestException(
                 `كمية الاستلام تتجاوز المتبقي للبند ${item.purchaseOrderItemId}`,
               );
@@ -272,7 +299,10 @@ export class PurchasingService {
             if (!orderItem) {
               throw new NotFoundException('Item not found in order');
             }
-            receiptTotal += item.quantity * Number(orderItem.unitCost);
+            // PUR-1: مبلغ مالي مقرب لمنزلتين قبل ترحيله للقيد والدائن
+            receiptTotal = round2(
+              receiptTotal + item.quantity * Number(orderItem.unitCost),
+            );
             await this.inventoryService.receive(
               {
                 rawMaterialId: orderItem.rawMaterialId,
@@ -319,7 +349,8 @@ export class PurchasingService {
               dto.items.find(
                 (receiptItem) => receiptItem.purchaseOrderItemId === item.id,
               )?.quantity ?? 0;
-            return previous + current >= Number(item.quantity);
+            // PUR-2: مقارنة مقربة لـ4 منازل (مثل 0.1+0.2 مقابل 0.3)
+            return round4(previous + current) >= round4(Number(item.quantity));
           });
 
           // SEC-F02: audit trail for purchase receipt (financial impact).
@@ -404,7 +435,10 @@ export class PurchasingService {
     const itemsToReceive = order.items
       .map((item) => ({
         purchaseOrderItemId: item.id,
-        quantity: Number(item.quantity) - (receivedMap.get(item.id) ?? 0),
+        // PUR-2: الباقي مقرب لـ4 منازل — كميات كسرية بلا كسور فاصلة عائمة
+        quantity: round4(
+          Number(item.quantity) - (receivedMap.get(item.id) ?? 0),
+        ),
       }))
       .filter((item) => item.quantity > 0);
 
@@ -515,9 +549,11 @@ export class PurchasingService {
             Number(returns._sum.quantityDelta ?? 0),
           );
 
-          if (totalReturned + dto.quantity > totalReceived) {
+          // PUR-2: مقارنة مقربة لـ4 منازل — الاستلام صار كسريًا فيجب تحصين
+          // جمع المرتجعات والمستلم من أخطاء الفاصلة العائمة
+          if (round4(totalReturned + dto.quantity) > round4(totalReceived)) {
             throw new BadRequestException(
-              `الكمية المرتجعة (${totalReturned + dto.quantity}) تتجاوز الكمية المستلمة (${totalReceived})`,
+              `الكمية المرتجعة (${round4(totalReturned + dto.quantity)}) تتجاوز الكمية المستلمة (${round4(totalReceived)})`,
             );
           }
 

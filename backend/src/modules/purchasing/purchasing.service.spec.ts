@@ -59,6 +59,38 @@ describe('PurchasingService (GF-0009)', () => {
         }),
       );
     });
+
+    it('PUR-1: يقرب المجموع لمنزلتين عشريتين و totalCost لكل بند (لا كسور فاصلة عائمة خامّة)', async () => {
+      const dto = {
+        supplierId: 'sup-1',
+        paymentType: PaymentType.CASH,
+        items: [
+          // 10.555 × 3.33 = 35.14815 → 35.15
+          { rawMaterialId: 'rm-1', quantity: 10.555, unitCost: 3.33 },
+          // 2.5 × 4.44 = 11.1
+          { rawMaterialId: 'rm-2', quantity: 2.5, unitCost: 4.44 },
+        ],
+      };
+
+      prisma.purchaseOrder.create.mockResolvedValue({ id: 'po-1', ...dto });
+
+      await service.createPurchaseOrder(dto, 'user-1');
+
+      // المجموع الخام = 46.24815 → round2 = 46.25
+      expect(prisma.purchaseOrder.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            totalAmount: 46.25,
+            items: {
+              create: [
+                expect.objectContaining({ totalCost: 35.15 }),
+                expect.objectContaining({ totalCost: 11.1 }),
+              ],
+            },
+          }),
+        }),
+      );
+    });
   });
 
   describe('createReceipt', () => {
@@ -191,6 +223,81 @@ describe('PurchasingService (GF-0009)', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.purchaseReceipt.create).not.toHaveBeenCalled();
+    });
+
+    it('PUR-2: يقبل استلام 2.5 وحدة على بند أمر كمية 3 (كميات كسرية)', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.PENDING,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 3, unitCost: 5 },
+        ],
+      });
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+      prisma.purchaseReceipt.create.mockResolvedValue({
+        id: 'grn-frac',
+        code: 'GRN-200',
+        items: [{ purchaseOrderItemId: 'poi-1', quantity: 2.5 }],
+      });
+      prisma.purchaseOrder.update.mockResolvedValue({
+        status: PurchaseOrderStatus.PENDING,
+      });
+
+      const result = await service.createReceipt(
+        'po-1',
+        { items: [{ purchaseOrderItemId: 'poi-1', quantity: 2.5 }] },
+        'user-1',
+      );
+
+      expect((result as { id: string }).id).toBe('grn-frac');
+      // الكمية الكسرية تمر للمخزون كما هي
+      expect(inventoryService.receive).toHaveBeenCalledWith(
+        expect.objectContaining({ rawMaterialId: 'rm-1', quantity: 2.5 }),
+        'user-1',
+        prisma,
+      );
+    });
+
+    it('PUR-2: مقارنة البواقي الكسرية محصّنة من أخطاء الفاصلة العائمة (0.1+0.2 مقابل 0.3)', async () => {
+      prisma.purchaseOrder.findUnique.mockResolvedValue({
+        id: 'po-1',
+        code: 'PO-100',
+        status: PurchaseOrderStatus.PENDING,
+        items: [
+          { id: 'poi-1', rawMaterialId: 'rm-1', quantity: 0.3, unitCost: 10 },
+        ],
+      });
+      // مستلم مسبقًا 0.1 — استلام 0.2 يكمل الكمية تمامًا
+      // (المجموع الخام 0.3000000000000004 > 0.3 كان سيرفض خطأً)
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([
+        { purchaseOrderItemId: 'poi-1', quantity: 0.1 },
+      ]);
+      prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-raw' });
+      prisma.$transaction.mockImplementation(async (cb) => cb(prisma));
+      prisma.purchaseReceipt.create.mockResolvedValue({
+        id: 'grn-complete',
+        code: 'GRN-201',
+        items: [{ purchaseOrderItemId: 'poi-1', quantity: 0.2 }],
+      });
+      prisma.purchaseOrder.update.mockResolvedValue({
+        status: PurchaseOrderStatus.RECEIVED,
+      });
+
+      const result = await service.createReceipt(
+        'po-1',
+        { items: [{ purchaseOrderItemId: 'poi-1', quantity: 0.2 }] },
+        'user-1',
+      );
+
+      expect((result as { id: string }).id).toBe('grn-complete');
+      // اكتمال الكمية معترف به رغم كسر الفاصلة العائمة → الحالة RECEIVED
+      expect(prisma.purchaseOrder.update).toHaveBeenCalledWith({
+        where: { id: 'po-1' },
+        data: { status: PurchaseOrderStatus.RECEIVED },
+      });
     });
   });
 
