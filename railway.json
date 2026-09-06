@@ -6,7 +6,7 @@
   },
   "deploy": {
     "preDeployCommand": [
-      "cd backend && npx prisma migrate deploy"
+      "cd backend && npx prisma migrate deploy && npx prisma db seed"
     ],
     "startCommand": "npm start",
     "restartPolicyType": "ON_FAILURE",
