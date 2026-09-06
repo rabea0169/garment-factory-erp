@@ -6,6 +6,7 @@ import {
   HttpStatus,
   Logger,
 } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 
@@ -17,7 +18,58 @@ import { randomUUID } from 'node:crypto';
  * النمط: { requestId, statusCode, message, timestamp }. الـ request ID يُولَّد
  * عند الاستلام (RequestContext) ويُطبع في logs — فيمكن الـ ops تتبع الخطأ
  * بمعرف واحد عبر كل الطلبات المتتالية.
+ *
+ * PROD-1 (ب): حماية صافية تحوّل أخطاء Prisma المعروفة (P2025/P2003/P2002)
+ * إلى استجابات HTTP عربية موحدة قبل المعالجة العامة — تلتقط ما لم يعالجه
+ * الموديولات بنفسها (مسارات idempotency القائمة تلتقط P2002 قبل وصولها
+ * هنا فلا يوجد تعارض). أي شفرة أخرى تبقى على المسار العام (500).
  */
+
+/** شفرات Prisma المعروفة → استجابة HTTP موحدة برسالة عربية. */
+const PRISMA_ERROR_MAP: Record<
+  string,
+  { status: HttpStatus; message: string }
+> = {
+  // السجل المطلوب حذفه/تحديثه غير موجود
+  P2025: { status: HttpStatus.NOT_FOUND, message: 'السجل المطلوب غير موجود' },
+  // قيد مفتاح أجنبي فشل (سجل مرتبط غير موجود)
+  P2003: {
+    status: HttpStatus.BAD_REQUEST,
+    message: 'مفتاح أجنبي غير صالح — السجل المرتبط غير موجود',
+  },
+  // تعارض قيد فريد (قيمة مكررة)
+  P2002: {
+    status: HttpStatus.CONFLICT,
+    message: 'تعارض قيد فريد — القيمة مستخدمة مسبقًا',
+  },
+};
+
+/**
+ * قراءة شفرة خطأ Prisma المعروف إن وُجدت — instanceof أولًا، ثم duck-typing
+ * على خاصية code (نفس نهج inventory.service) لأن نسخ runtime متعددة تهزم
+ * instanceof؛ والقبول مشروط بمطابقة الشفرة لجدول التحويل كي لا نلتقط
+ * أخطاءً عادية تحمل خاصية code (مثل أكواد Node مثل ENOENT).
+ */
+function mapPrismaKnownError(
+  exception: unknown,
+): { status: HttpStatus; message: string; code: string } | null {
+  let code: string | undefined;
+  if (exception instanceof Prisma.PrismaClientKnownRequestError) {
+    code = exception.code;
+  } else if (typeof exception === 'object' && exception !== null) {
+    const candidate = (exception as { code?: unknown }).code;
+    if (
+      typeof candidate === 'string' &&
+      Object.prototype.hasOwnProperty.call(PRISMA_ERROR_MAP, candidate)
+    ) {
+      code = candidate;
+    }
+  }
+  if (!code) return null;
+  const mapped = PRISMA_ERROR_MAP[code];
+  return mapped ? { ...mapped, code } : null;
+}
+
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
   private readonly logger = new Logger(GlobalExceptionFilter.name);
@@ -31,6 +83,10 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     let status = HttpStatus.INTERNAL_SERVER_ERROR;
     let message = 'خطأ داخلي في الخادم';
     let detail: unknown = undefined;
+
+    // PROD-1 (ب): التحويل قبل المعالجة العامة — HttpException أولًا (سلوك
+    // الموديولات المدروس له الأولوية)، ثم شفرات Prisma المعروفة، ثم العام.
+    const prismaMapped = mapPrismaKnownError(exception);
 
     if (exception instanceof HttpException) {
       status = exception.getStatus();
@@ -47,6 +103,19 @@ export class GlobalExceptionFilter implements ExceptionFilter {
               : message;
         detail = r.error ?? r.detail;
       }
+    } else if (prismaMapped) {
+      status = prismaMapped.status;
+      message = prismaMapped.message;
+      // الشفرة وحدها آمنة للعميل (لا تكشف أعمدة أو قيمًا) — meta تُسجَّل فقط.
+      detail = { prismaCode: prismaMapped.code };
+      const meta =
+        exception instanceof Prisma.PrismaClientKnownRequestError
+          ? JSON.stringify(exception.meta ?? {})
+          : '';
+      this.logger.warn(
+        `Prisma known error [${requestId}] ${prismaMapped.code}${meta ? ` meta=${meta}` : ''}`,
+        exception instanceof Error ? exception.stack : undefined,
+      );
     } else if (exception instanceof Error) {
       // D8: في الإنتاج لا تُكشف message الـ Error الخام — قد تحوي أسرار.
       if (process.env.NODE_ENV !== 'production') {

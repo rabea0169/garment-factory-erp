@@ -92,7 +92,7 @@ describe('Auth guard (e2e) — GF-0002', () => {
     productVariant: { create: jest.fn() },
     rawMaterial: { findFirst: jest.fn() },
     bomVersion: { findFirst: jest.fn(), create: jest.fn() },
-    bomLine: { upsert: jest.fn(), delete: jest.fn() },
+    bomLine: { upsert: jest.fn(), delete: jest.fn(), findUnique: jest.fn() },
   };
 
   // A1/A2/A3: mock مبسّط لـ FinancialPostingService — لا يحتاج DB فعلي.
@@ -634,6 +634,8 @@ describe('Auth guard (e2e) — GF-0002', () => {
       });
       prismaFns.bomLine.upsert.mockResolvedValue({ id: bomId });
       prismaFns.bomLine.delete.mockResolvedValue({ id: bomId });
+      // GF-IMP-W1 / PROD-1: deleteBomItem يفحص الوجود أولًا (findUnique) قبل الحذف
+      prismaFns.bomLine.findUnique.mockResolvedValue({ id: bomId });
     });
 
     it('POST /products بلا توكن → 401', () => {

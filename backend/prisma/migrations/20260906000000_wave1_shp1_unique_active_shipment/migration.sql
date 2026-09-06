@@ -1,0 +1,34 @@
+-- GF-IMP-W1 / SHP-1 (P0): شحنة نشطة واحدة كحد أقصى لكل أمر بيع.
+--
+-- المشكلة (SHP-1): ShippingService.createShipment كان يفحص حالة أمر البيع
+-- (CONFIRMED) خارج المعاملة ولا يقلبها أبدًا إلى SHIPPED، كما لا يوجد أي قيد
+-- يمنع إنشاء شحنتين لنفس أمر البيع — فطلبان متزامنان (أو إعادة إرسال بلا
+-- Idempotency-Key) يُنشئان شحنتين نشطتين لنفس الأمر: خصم مخزون مزدوج محتمل،
+-- وقيود تكلفة شحن مزدوجة، وحالة أمر بيع لا تعكس الشحن.
+--
+-- الإصلاح على ثلاث طبقات:
+--   1. طبقة الخدمة: إعادة قراءة أمر البيع داخل $transaction تحت قفل صف
+--      (SELECT ... FOR UPDATE) + فحص وجود شحنة نشطة قبل الإنشاء + قلب الحالة
+--      إلى SHIPPED عبر updateMany مشروط بالحالة CONFIRMED.
+--   2. هذه الهجرة (طبقة القاعدة): فهرس فريد جزئي (Partial Unique Index) كخط
+--      دفاع أخير ضد أي سباق لم يلتقطه فحص الخدمة أو مسار يكتب مباشرة في
+--      shipments خارج الخدمة.
+--   3. ملاحظة توثيقية في schema.prisma قرب نموذج Shipment: هذا الفهرس يعيش
+--      هنا فقط ولا يُصرَّح في المخطط لأن فهارس SQL الجزئية غير قابلة
+--      للتعبير في Prisma schema.
+--
+-- "النشطة" = PREPARING أو IN_TRANSIT (قيم enum ShipmentStatus الحقيقية في
+-- المخطط). الحالات المنتهية (SHIPPED / DELIVERED / RETURNED) مستثناة عمدًا
+-- حتى يبقى سجل الشحنات الكامل للأمر متاحًا للمراجعة والتدقيق.
+--
+-- ملاحظة نشر: العبارة idempotent (IF NOT EXISTS). إن فشل التطبيق على قاعدة
+-- قديمة فيها بالفعل شحنتان نشطتان لنفس الأمر (ممكن قبل هذا الإصلاح) فهذا
+-- فشل مقصود يلزمه تدقيق يدوي — استعن بهذا الاستعلام لعرض التعارضات:
+--   SELECT "salesOrderId", COUNT(*)
+--   FROM "shipments"
+--   WHERE "status" IN ('PREPARING', 'IN_TRANSIT')
+--   GROUP BY "salesOrderId" HAVING COUNT(*) > 1;
+-- ثم أنهِ/ألغِ الشحنات المكررة يدويًا قبل إعادة تطبيق الهجرة.
+CREATE UNIQUE INDEX IF NOT EXISTS shipments_active_per_order_unique
+  ON "shipments" ("salesOrderId")
+  WHERE "status" IN ('PREPARING', 'IN_TRANSIT');

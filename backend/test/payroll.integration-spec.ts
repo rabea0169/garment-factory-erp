@@ -292,6 +292,48 @@ integrationDescribe('GF-0015 payroll integration', () => {
       where: { id: CHART_OF_ACCOUNTS.CASH },
     });
     expect(cash?.balance.toNumber()).toBe(590);
+    // HR-1 (P0 — GF-IMP-W1): قيد الدفع الحقيقي — Dr SALARIES_PAYABLE
+    // بالإجمالي (بندّين: صافٍ 410 نقدية + 250 استرداد سلف) يصفّي الالتزام
+    // بدل تسجيل المصروف مرة ثانية.
+    const paymentEntry = await prisma.journalEntry.findUnique({
+      where: { postingKey: `hr-payroll-pay:${payroll.id}` },
+      include: { lines: true },
+    });
+    expect(paymentEntry?.lines).toHaveLength(2);
+    expect(paymentEntry?.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+          creditAccountId: CHART_OF_ACCOUNTS.CASH,
+          amount: new Prisma.Decimal('410.00'),
+        }),
+        expect.objectContaining({
+          debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+          creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+          amount: new Prisma.Decimal('250.00'),
+        }),
+      ]),
+    );
+    // بوابة توازن الميزان المصغّرة: رصيد رواتب مستحقة صفر، المصروف مرة
+    // واحدة بالإجمالي، وسلف العمال انخفضت بقيمة الخصومات.
+    const salariesPayable = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.SALARIES_PAYABLE },
+    });
+    expect(salariesPayable?.balance.toNumber()).toBe(0);
+    const salariesExpense = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.SALARIES_EXPENSE },
+    });
+    expect(salariesExpense?.balance.toNumber()).toBe(660);
+    const workerAdvances = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.WORKER_ADVANCES },
+    });
+    // السلفة هنا سُجّلت صفًا مباشرًا بلا قيد GL — خصومات الدفع تُقيّد
+    // دائنًا على WORKER_ADVANCES فينخفض الرصيد بقيمة الخصومات (250-).
+    expect(workerAdvances?.balance.toNumber()).toBe(-250);
+    const generalExpense = await prisma.account.findUnique({
+      where: { id: CHART_OF_ACCOUNTS.GENERAL_EXPENSE },
+    });
+    expect(generalExpense?.balance.toNumber()).toBe(0);
   });
 
   it('does not allow concurrent requests to create two payrolls for one worker period', async () => {

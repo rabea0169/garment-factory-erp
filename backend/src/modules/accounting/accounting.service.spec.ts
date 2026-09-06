@@ -217,6 +217,121 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
     );
   });
 
+  // ACC-1 (P0 — GF-IMP-W1): مصفوفة توجيه الحساب المقابل لكل (نوع سند × طرف).
+  // الاتجاه ثابت: RECEIPT → Dr CASH / Cr مقابل، PAYMENT → Dr مقابل / Cr CASH.
+  // السند بلا طرف مقابل → GENERAL_EXPENSE (مصروف السندات النثرية).
+  describe('ACC-1 — توجيه الحساب المقابل في السندات', () => {
+    const cases: Array<{
+      label: string;
+      type: VoucherType;
+      counterpartyType?: 'CUSTOMER' | 'SUPPLIER' | 'WORKER';
+      counterpartyId?: string;
+      expectedDebit: string;
+      expectedCredit: string;
+    }> = [
+      {
+        label: 'RECEIPT×SUPPLIER → دائن ACCOUNTS_PAYABLE',
+        type: VoucherType.RECEIPT,
+        counterpartyType: 'SUPPLIER',
+        counterpartyId: 'sup-001',
+        expectedDebit: CHART_OF_ACCOUNTS.CASH,
+        expectedCredit: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+      },
+      {
+        label: 'RECEIPT×CUSTOMER → دائن ACCOUNTS_RECEIVABLE',
+        type: VoucherType.RECEIPT,
+        counterpartyType: 'CUSTOMER',
+        counterpartyId: 'cust-001',
+        expectedDebit: CHART_OF_ACCOUNTS.CASH,
+        expectedCredit: CHART_OF_ACCOUNTS.ACCOUNTS_RECEIVABLE,
+      },
+      {
+        label: 'RECEIPT×WORKER → دائن WORKER_ADVANCES (لا ACCOUNTS_RECEIVABLE)',
+        type: VoucherType.RECEIPT,
+        counterpartyType: 'WORKER',
+        counterpartyId: 'worker-001',
+        expectedDebit: CHART_OF_ACCOUNTS.CASH,
+        expectedCredit: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+      },
+      {
+        label: 'RECEIPT بلا طرف مقابل → دائن GENERAL_EXPENSE',
+        type: VoucherType.RECEIPT,
+        expectedDebit: CHART_OF_ACCOUNTS.CASH,
+        expectedCredit: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+      },
+      {
+        label: 'PAYMENT×SUPPLIER → مدين ACCOUNTS_PAYABLE',
+        type: VoucherType.PAYMENT,
+        counterpartyType: 'SUPPLIER',
+        counterpartyId: 'sup-001',
+        expectedDebit: CHART_OF_ACCOUNTS.ACCOUNTS_PAYABLE,
+        expectedCredit: CHART_OF_ACCOUNTS.CASH,
+      },
+      {
+        label: 'PAYMENT×WORKER → مدين WORKER_ADVANCES (لا ACCOUNTS_RECEIVABLE)',
+        type: VoucherType.PAYMENT,
+        counterpartyType: 'WORKER',
+        counterpartyId: 'worker-001',
+        expectedDebit: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+        expectedCredit: CHART_OF_ACCOUNTS.CASH,
+      },
+      {
+        label: 'PAYMENT بلا طرف مقابل → مدين GENERAL_EXPENSE',
+        type: VoucherType.PAYMENT,
+        expectedDebit: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+        expectedCredit: CHART_OF_ACCOUNTS.CASH,
+      },
+    ];
+
+    beforeEach(() => {
+      prisma.voucher.create.mockImplementation(({ data }) =>
+        Promise.resolve({ id: 'v-acc1', ...data }),
+      );
+    });
+
+    it.each(cases)(
+      '%s',
+      async ({
+        type,
+        counterpartyType,
+        counterpartyId,
+        expectedDebit,
+        expectedCredit,
+      }) => {
+        await service.createVoucher(
+          {
+            type,
+            amount: 150,
+            description: `سند مصفوفة ACC-1 ${type}`,
+            treasuryId: 'treasury-acc1',
+            ...(counterpartyType ? { counterpartyType } : {}),
+            ...(counterpartyId ? { counterpartyId } : {}),
+          },
+          'user-acc1',
+        );
+
+        expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+        const call = financial.postJournalEntryInTx.mock.calls[0] as [
+          unknown,
+          {
+            lines: {
+              debitAccountId: string;
+              creditAccountId: string;
+              amount: number;
+            }[];
+          },
+          unknown,
+        ];
+        expect(call[1].lines).toHaveLength(1);
+        expect(call[1].lines[0]).toMatchObject({
+          debitAccountId: expectedDebit,
+          creditAccountId: expectedCredit,
+          amount: 150,
+        });
+      },
+    );
+  });
+
   it('D10: كود السند بنمط VCH-YYYYMMDD-XXXXXXXX (لا Date.now)', async () => {
     prisma.voucher.create.mockImplementation(({ data }) =>
       Promise.resolve({ id: 'v-11', ...data }),

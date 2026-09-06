@@ -238,8 +238,17 @@ export class FinancialPostingService {
       }
     }
     if (input.customerUpdates?.length) {
+      const customerIds = input.customerUpdates.map((u) => u.customerId);
+      // SAL-1 (P0): قفل صفوف العملاء بـ SELECT ... FOR UPDATE قبل قراءتها —
+      // نفس نمط الخزائن/الموردين أعلاه. بدون هذا القفل يمكن لطلبي بيع آجل
+      // متزامنين لنفس العميل أن يجتازا فحص الحد الائتماني على نفس الرصيد
+      // القديم ثم يزيد كل منهما الرصيد → تجاوز الحد (race على customer.balance).
+      // توحيد القفل هنا يستفيد منه تأكيد البيع والمرتجعات والدفعات دفعة واحدة.
+      await tx.$queryRaw(
+        Prisma.sql`SELECT id FROM customers WHERE id IN (${Prisma.join(customerIds)}) FOR UPDATE`,
+      );
       const cs = await tx.customer.findMany({
-        where: { id: { in: input.customerUpdates.map((u) => u.customerId) } },
+        where: { id: { in: customerIds } },
         select: { id: true },
       });
       for (const u of input.customerUpdates) {

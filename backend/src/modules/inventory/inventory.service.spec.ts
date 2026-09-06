@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
-import { InventoryService } from './inventory.service';
+import { InventoryService, StockEvent } from './inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
@@ -425,6 +425,97 @@ describe('InventoryService — أساس المخزون القابل للتدقي
         warehouseId: 'wh-1',
         currentStock: 40,
         minStockLevel: 50,
+      });
+    });
+  });
+
+  // ============ INV-1: تأجيل الأحداث داخل معاملة خارجية ============
+
+  describe('INV-1: أحداث مؤجلة داخل معاملة خارجية (externalTx)', () => {
+    it('لا يستدعي emitAsync داخل المسار ويملأ المجمع بالأحداث الصحيحة', async () => {
+      tx.rawMaterial.update.mockResolvedValue({
+        currentStock: 40,
+        costPerUnit: 45.5,
+        minStockLevel: 50,
+      });
+      tx.stockLedgerEntry.aggregate.mockResolvedValue({
+        _sum: { quantityDelta: 50 },
+      });
+
+      const events: StockEvent[] = [];
+      const result = await service.issue(
+        { rawMaterialId: 'rm-1', warehouseId: 'wh-1', quantity: 10 },
+        'user-1',
+        tx as never,
+        events,
+      );
+
+      // INV-1: داخل معاملة خارجية لا بث قبل commit — المسار يجب ألا يلمس emitter
+      expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
+      // المعاملة يملكها المستدعي الأعلى — inventory لا يفتح معاملة خاصة به
+      expect(prisma.$transaction).not.toHaveBeenCalled();
+      // المجمع امتلأ بالأحداث الصحيحة: خصم + انخفاض لحد الطلب (40 ≤ 50)
+      expect(events).toEqual([
+        {
+          name: EVENTS.STOCK_DEDUCTED,
+          payload: {
+            materialId: 'rm-1',
+            warehouseId: 'wh-1',
+            quantity: 10,
+            newStock: 40,
+          },
+        },
+        {
+          name: EVENTS.STOCK_LOW,
+          payload: {
+            materialId: 'rm-1',
+            warehouseId: 'wh-1',
+            currentStock: 40,
+            minStockLevel: 50,
+          },
+        },
+      ]);
+      expect(result.replayed).toBe(false);
+      expect(result.balanceAfter).toBe(40);
+    });
+
+    it('externalTx بلا مجمع: لا بث قبل commit — الأحداث تُهمل بأمان', async () => {
+      tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER); // 200 > 50: لا STOCK_LOW
+
+      await service.receive(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantity: 50,
+          unitCost: 48,
+        },
+        'user-1',
+        tx as never,
+      );
+
+      // INV-1: بلا مجمع لا تُبث الأحداث إطلاقًا — إهمال إشعار أسلم من بثه
+      // وهميًا قبل commit (rollback المستدعي يجعل الحركة غير موجودة).
+      expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
+    });
+
+    it('المسار الداخلي (بلا externalTx) يبث بعد commit كما هو — لا انحدار', async () => {
+      tx.rawMaterial.update.mockResolvedValue(MATERIAL_AFTER);
+
+      await service.receive(
+        {
+          rawMaterialId: 'rm-1',
+          warehouseId: 'wh-1',
+          quantity: 50,
+          unitCost: 48,
+        },
+        'user-1',
+      );
+
+      expect(eventEmitter.emitAsync).toHaveBeenCalledWith(EVENTS.STOCK_ADDED, {
+        materialId: 'rm-1',
+        warehouseId: 'wh-1',
+        quantity: 50,
+        newStock: 200,
       });
     });
   });

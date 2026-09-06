@@ -8,6 +8,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
+import { Prisma } from '@prisma/client';
 
 /**
  * SEC-F04: مدة صلاحية الـ refresh token — 30 يومًا افتراضيًا،
@@ -62,7 +63,7 @@ export class AuthService {
     };
 
     const accessToken = this.jwtService.sign(payload);
-    const refreshToken = await this.issueRefreshToken(user.id, meta);
+    const { raw: refreshToken } = await this.issueRefreshToken(user.id, meta);
 
     const { password, ...result } = user;
 
@@ -74,11 +75,15 @@ export class AuthService {
   }
 
   /**
-   * SEC-F04: استبدال الـ refresh token بآخر جديد (rotation).
-   * - يتحقق أن الـ token الأصلي موجود، غير منتهي، وغير ملغى.
-   * - يصدر access_token + refresh_token جديدين.
-   * - يلغي الـ token القديم ويربطه بالجديد عبر replacedBy.
-   * - يرفض الـ token الملغى (كشف محاولة إعادة استخدامه) بـ 401 — إشارة لسرقة محتملة.
+   * SEC-F04 + AUTH-2: استبدال الـ refresh token بآخر جديد (rotation) داخل
+   * معاملة واحدة ذرية:
+   * - يتحقق أن الـ token الأصلي موجود، غير منتهي، والمستخدم نشط.
+   * - يصدر access_token + refresh_token جديدين، ويُنشأ التوكن الجديد داخل
+   *   المعاملة نفسها مع replacedById مضبوطًا عند الإنشاء مباشرة (لا تحديث لاحق).
+   * - إلغاء التوكن القديم يتم بتحديث شرطي ذري واحد
+   *   (UPDATE ... WHERE revoked_at IS NULL) فلا يمكن لطلبين متزامنين
+   *   بنفس التوكن النجاح مرتين (السباق يُحسم بعدد الصفوف المتأثرة).
+   * - إعادة استخدام token ملغى (صفر صفوف متأثرة) = مؤشر سرقة → 401.
    */
   async refresh(
     refreshTokenValue: string,
@@ -89,71 +94,65 @@ export class AuthService {
     }
     const tokenHash = hashToken(refreshTokenValue);
 
-    const existing = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash },
-      include: { user: true },
-    });
-
-    if (!existing) {
-      throw new UnauthorizedException('refresh_token غير صالح');
-    }
-
-    if (existing.revokedAt) {
-      // SEC-F04: إعادة استخدام token ملغى = مؤشر سرقة. نُلغي كل سلسلة الاستبدال.
-      // (نقوم بتحديث الـ token الملغى فعلاً — لا أثر، لكن نُسجّل محاولة في الـ logs).
-      throw new UnauthorizedException(
-        'refresh_token ملغى — قد تكون مسروقة. سجّل دخولك من جديد.',
-      );
-    }
-
-    if (existing.expiresAt.getTime() < Date.now()) {
-      throw new UnauthorizedException('انتهت صلاحية refresh_token');
-    }
-
-    if (!existing.user.isActive) {
-      throw new UnauthorizedException('هذا الحساب تم إيقافه');
-    }
-
-    // إصدار زوج جديد + ربط قديم → جديد
-    const newRefreshToken = await this.issueRefreshToken(
-      existing.user.id,
-      meta,
-    );
-
-    await this.prisma.refreshToken.update({
-      where: { id: existing.id },
-      data: {
-        revokedAt: new Date(),
-        // ربط الـ token القديم بالجديد (الأخير يحمل replacedById)
-      },
-    });
-
-    // ربط عكسي: الجديد يحفظ replacedById للقديم
-    const newHash = hashToken(newRefreshToken);
-    const newRow = await this.prisma.refreshToken.findUnique({
-      where: { tokenHash: newHash },
-    });
-    if (newRow) {
-      await this.prisma.refreshToken.update({
-        where: { id: newRow.id },
-        data: { replacedById: existing.id },
+    // AUTH-2: كل الكتابات (إنشاء الجديد + إلغاء القديم + الربط) داخل
+    // معاملة تفاعلية واحدة — أي فشل يتراجع بالكامل فلا يبقى توكن جديد
+    // بلا إلغاء القديم أو العكس.
+    return this.prisma.$transaction(async (tx) => {
+      const existing = await tx.refreshToken.findUnique({
+        where: { tokenHash },
+        include: { user: true },
       });
-    }
 
-    const accessToken = this.jwtService.sign({
-      sub: existing.user.id,
-      email: existing.user.email,
-      role: existing.user.role,
-      v: existing.user.jwtVersion,
+      if (!existing) {
+        throw new UnauthorizedException('refresh_token غير صالح');
+      }
+
+      if (existing.expiresAt.getTime() < Date.now()) {
+        throw new UnauthorizedException('انتهت صلاحية refresh_token');
+      }
+
+      if (!existing.user.isActive) {
+        throw new UnauthorizedException('هذا الحساب تم إيقافه');
+      }
+
+      // إنشاء الجديد داخل المعاملة مع ربط replacedById منذ الإنشاء مباشرة
+      const { raw: newRefreshToken, row: newRow } =
+        await this.issueRefreshToken(existing.user.id, meta, {
+          tx,
+          replacedById: existing.id,
+        });
+
+      // الإلغاء الشرطي الذري: القديم يُلغى ويُربط بالجديد في تحديث واحد.
+      // الصفوف المتأثرة = صفر ⇒ التوكن ملغى مسبقًا أو سباق استخدام متزامن
+      // → 401 (برسالة السرقة القائمة) وتراجع كامل للمعاملة (بما فيها
+      // إنشاء الجديد). أسماء الأعمدة snake_case مطابقة لهجرة SEC-F04 الفعلية.
+      const revokedRows = await tx.$executeRaw`
+        UPDATE refresh_tokens
+        SET revoked_at = now(), replaced_by_id = ${newRow.id}
+        WHERE id = ${existing.id} AND revoked_at IS NULL
+      `;
+      if (revokedRows === 0) {
+        // SEC-F04: إعادة استخدام token ملغى = مؤشر سرقة محتملة.
+        throw new UnauthorizedException(
+          'refresh_token ملغى — قد تكون مسروقة. سجّل دخولك من جديد.',
+        );
+      }
+
+      const accessToken = this.jwtService.sign({
+        sub: existing.user.id,
+        email: existing.user.email,
+        role: existing.user.role,
+        v: existing.user.jwtVersion,
+      });
+
+      const { password, ...userResult } = existing.user;
+
+      return {
+        access_token: accessToken,
+        refresh_token: newRefreshToken,
+        user: userResult,
+      };
     });
-
-    const { password, ...userResult } = existing.user;
-
-    return {
-      access_token: accessToken,
-      refresh_token: newRefreshToken,
-      user: userResult,
-    };
   }
 
   /**
@@ -199,11 +198,15 @@ export class AuthService {
   /**
    * SEC-F04: إصدار refresh_token خام جديد، تخزين hash، وإرجاع القيمة الأصلية
    * للعميل مرة واحدة فقط.
+   * AUTH-2: يقبل تمرير عميل معاملة (tx) لإنشاء التوكن داخل معاملة rotation،
+   * مع ربط replacedById بالتوكن القديم منذ الإنشاء مباشرة (لا تحديث لاحق).
+   * يرجع { raw, row } كي يستخدم المستدعي معرّف الصف الجديد في الربط الذري.
    */
   private async issueRefreshToken(
     userId: string,
     meta?: { userAgent?: string; ip?: string },
-  ): Promise<string> {
+    options?: { tx?: Prisma.TransactionClient; replacedById?: string },
+  ): Promise<{ raw: string; row: { id: string } }> {
     const raw = crypto.randomBytes(REFRESH_TOKEN_BYTES).toString('hex');
     const tokenHash = hashToken(raw);
     const expiresAt = new Date(
@@ -217,22 +220,26 @@ export class AuthService {
           1000,
     );
 
+    // AUTH-2: العملية تتم داخل المعاملة إن مُرّر عميلها، وإلا على الاتصال المباشر
+    const client: Prisma.TransactionClient = options?.tx ?? this.prisma;
+
     try {
-      await this.prisma.refreshToken.create({
+      const row = await client.refreshToken.create({
         data: {
           userId,
           tokenHash,
           expiresAt,
           userAgent: meta?.userAgent?.slice(0, 255),
           ipAddress: meta?.ip?.slice(0, 45),
+          replacedById: options?.replacedById,
         },
+        select: { id: true },
       });
+      return { raw, row };
     } catch {
       // P2002 (hash collision) — احتمال ضئيل لكن آمن إعادة المحاولة.
-      return this.issueRefreshToken(userId, meta);
+      return this.issueRefreshToken(userId, meta, options);
     }
-
-    return raw;
   }
 }
 

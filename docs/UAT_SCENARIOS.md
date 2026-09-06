@@ -444,7 +444,7 @@ curl -s -X POST "http://<STAGING_HOST>:<STAGING_PORT>/auth/login" \
 2. HR_MANAGER **نفسه** يحاول: `POST /hr/payrolls/<PAYROLL_ID>/approve` (Header: `Idempotency-Key: uat13-approve`).
 3. GENERAL_MANAGER: `POST /hr/payrolls/<PAYROLL_ID>/approve` (نفس المفتاح).
 4. GENERAL_MANAGER: `POST /hr/payrolls/<PAYROLL_ID>/pay` (Header: `Idempotency-Key: uat13-pay`) بـ `{"treasuryId":"<TREASURY_ID>","paymentDate":"<ISO_DATE>","notes":"دفع UAT"}`.
-5. `GET /accounting/treasuries` (ACCOUNTANT) + تحقق psql: قيد `Dr GENERAL_EXPENSE (5000) / Cr CASH (1100-01)` بمبلغ `netAmount`.
+5. `GET /accounting/treasuries` (ACCOUNTANT) + تحقق psql: قيد الدفع `Dr SALARIES_PAYABLE (2400) / Cr CASH (1100-01) / Cr WORKER_ADVANCES (1150)` بمبالغ `grossAmount` / `netAmount` / `advanceDeduct` على الترتيب (GF-IMP-W1 / HR-1).
 6. أعد طلب الدفع خطوة 4 حرفيًا (نفس المفتاح).
 
 **النتيجة المتوقعة بدقة:**
@@ -452,7 +452,7 @@ curl -s -X POST "http://<STAGING_HOST>:<STAGING_PORT>/auth/login" \
 - خطوة 2: **409** برسالة «لا يمكن لمنشئ كشف الراتب اعتماده بنفسه (فصل الواجبات)» — SoD مطبق داخل المعاملة.
 - خطوة 3: **200/201** — `APPROVED` مع `approvedById` (المدير العام) و`approvedAt`، دون دفع أو ترحيل.
 - خطوة 4: **200/201** — `PAID`؛ رصيد الخزينة نقص بـ `netAmount` (مثال: 550−200=350.00 لو طبقت السلفة).
-- خطوة 5: قيد مزدوج متوازن داخل معاملة واحدة مع الدفع.
+- خطوة 5: قيد الدفع متوازن داخل معاملة واحدة مع الدفع، وحساب `SALARIES_PAYABLE (2400)` يعود صفرًا بعد الدفع (خُصم بالإجمالي)، و`WORKER_ADVANCES (1150)` نقص بمقدار `advanceDeduct` (تصفية السلف)، والمصروف مسجل مرة واحدة فقط عند الاعتماد — GF-IMP-W1 / HR-1.
 - خطوة 6: نفس الاستجابة دون خصم ثانٍ ولا قيد ثانٍ (replay)؛ والدفع لكشف غير APPROVED يُرفض.
 
 **معيار النجاح:** **Pass** إذا رُفض اعتماد المنشئ بـ 409 واكتمل الدفع بالقيم المحسوبة خادميًا مع قيد متوازن وreplay بلا أثر. **Fail** إن اعتمد المنشئ كشفه أو دُفع مبلغ غير netAmount.

@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import {
   Prisma,
   ProductionCostStatus,
@@ -13,7 +14,7 @@ import {
   WorkOrderStatus,
 } from '@prisma/client';
 import { createHash, randomUUID } from 'node:crypto';
-import { InventoryService } from '../inventory/inventory.service';
+import { InventoryService, StockEvent } from '../inventory/inventory.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
@@ -117,6 +118,13 @@ export class ProductionWorkflowService {
     private readonly prisma: PrismaService,
     private readonly inventoryService: InventoryService,
     private readonly financialPosting: FinancialPostingService,
+    /**
+     * INV-1: يُحقن من EventEmitterModule (وحدة عامة في app.module) ويُستخدم
+     * لبث أحداث المخزون المجمّعة بعد نجاح معاملة consumeMaterial فقط.
+     * القيمة الافتراضية تحافظ على التوافق مع الاستدعاءات المباشرة بثلاث
+     * وسيطات (اختبارات التكامل) — لا مستمعين عليها في ذلك السياق.
+     */
+    private readonly eventEmitter: EventEmitter2 = new EventEmitter2(),
   ) {}
 
   async transitionStage(
@@ -643,8 +651,13 @@ export class ProductionWorkflowService {
     const replay = await this.findConsumptionReplay(input.idempotencyKey, hash);
     if (replay) return replay;
 
+    // INV-1: مجمع أحداث المخزون — يمتلئ داخل مسار inventory.issue بدل البث
+    // الفوري، ولا يُبث شيء إلا بعد نجاح $transaction (فشلها = لا أحداث وهمية
+    // لحركة رُجعت).
+    const stockEvents: StockEvent[] = [];
+
     try {
-      return await this.prisma.$transaction(async (tx) => {
+      const result = await this.prisma.$transaction(async (tx) => {
         const stageRun = await tx.productionStageRun.findUnique({
           where: { id: input.stageRunId },
         });
@@ -653,6 +666,28 @@ export class ProductionWorkflowService {
         }
         if (stageRun.status === ProductionStageRunStatus.CANCELLED) {
           throw new BadRequestException('Stage run is cancelled');
+        }
+
+        // PRD-1: حالة أمر العمل نفسها (لا حالة المرحلة فقط) — صرف المواد على
+        // أمر مكتمل يضيف تكلفة بعد ترحيل قيد الإكمال (production-completion)
+        // وتثبيت لقطة التكلفة FINALIZED، فتصبح تكاليف WIP خارج اللقطة والقيد.
+        // نفس نمط OPS-F03 المطبق في recordStageOutput.
+        const workOrder = await tx.workOrder.findUnique({
+          where: { id: input.workOrderId },
+          select: { status: true },
+        });
+        if (!workOrder) {
+          throw new NotFoundException('Work order not found');
+        }
+        if (
+          workOrder.status === WorkOrderStatus.COMPLETED ||
+          workOrder.status === WorkOrderStatus.CANCELLED
+        ) {
+          throw new BadRequestException(
+            'لا يمكن صرف المواد على أمر تشغيل بحالة ' +
+              workOrder.status +
+              ' — الصرف بعد الإكمال يضيف تكلفة بعد ترحيل قيد الإكمال ولقطة التكلفة',
+          );
         }
 
         let idempotencyKeyId: string | undefined;
@@ -682,6 +717,7 @@ export class ProductionWorkflowService {
           },
           actorId,
           tx,
+          stockEvents,
         );
 
         const ledgerEntry = await tx.stockLedgerEntry.findUnique({
@@ -736,6 +772,16 @@ export class ProductionWorkflowService {
           wasteCost: wasteCost.toNumber(),
         } satisfies MaterialConsumptionResult;
       });
+
+      // INV-1: البث بعد نجاح $transaction فقط — أي فشل داخل المعاملة يرمي
+      // قبل الوصول هنا فلا تُبث أحداث لحركة رُجعت. الأحداث إشعارات غير
+      // مالية (ADR-0003-ج): fire-and-forget كما في InventoryService حتى لا
+      // يفشل مستمعٌ عمليةً ملتزمة بالفعل.
+      for (const event of stockEvents) {
+        void this.eventEmitter.emitAsync(event.name, event.payload);
+      }
+
+      return result;
     } catch (error) {
       // Two identical requests can pass the pre-check concurrently. Once the
       // winner commits the unique idempotency key, return its committed result.

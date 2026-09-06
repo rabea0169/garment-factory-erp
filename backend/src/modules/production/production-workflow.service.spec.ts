@@ -1,4 +1,4 @@
-/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return, @typescript-eslint/no-unused-vars */
+/* eslint-disable @typescript-eslint/no-unsafe-member-access, @typescript-eslint/no-unsafe-assignment, @typescript-eslint/no-unsafe-return */
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import {
   Prisma,
@@ -17,6 +17,7 @@ import {
   createEventEmitterMock,
   createPrismaMock,
 } from '../../../test/helpers/prisma-mock';
+import { EVENTS } from '../../events/event-types';
 
 /**
  * ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05 — اختبارات سير الإنتاج.
@@ -26,16 +27,57 @@ import {
  * `$transaction` يُرجع نتيجة استدعاء الـ callback بنفس الـ prisma mock.
  */
 
-function createTxMock(prisma: ReturnType<typeof createPrismaMock>) {
+function createTxMock<T>(prisma: T): T {
   // نعيد استخدام نفس الـ mocks للقراءة والكتابة داخل الـ transaction.
   return prisma;
 }
 
+/**
+ * مواصفة موسّعة محليًا (نمط inventory.service.spec): consumeMaterial يقرأ
+ * stockLedgerEntry.findUnique وproductionMaterialConsumption (findUnique
+ * لإعادة التشغيل) — نضيفها فوق المصنع المشترك دون تعديله.
+ */
+type WorkflowPrismaMock = ReturnType<typeof createPrismaMock> & {
+  stockLedgerEntry: {
+    create: jest.Mock;
+    findMany: jest.Mock;
+    count: jest.Mock;
+    findUnique: jest.Mock;
+  };
+  productionMaterialConsumption: {
+    findMany: jest.Mock;
+    create: jest.Mock;
+    aggregate: jest.Mock;
+    findUnique: jest.Mock;
+  };
+};
+
+function createWorkflowPrismaMock(): WorkflowPrismaMock {
+  return {
+    ...createPrismaMock(),
+    stockLedgerEntry: {
+      create: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      findUnique: jest.fn(),
+    },
+    productionMaterialConsumption: {
+      findMany: jest.fn(),
+      create: jest.fn(),
+      aggregate: jest.fn(),
+      findUnique: jest.fn(),
+    },
+  };
+}
+
 function makeService() {
-  const prisma = createPrismaMock();
-  const eventEmitter = createEventEmitterMock();
+  const prisma = createWorkflowPrismaMock();
+  const eventEmitter = createEventEmitterMock() as unknown as {
+    emitAsync: jest.Mock;
+  };
+  const issue = jest.fn();
   const inventory = {
-    issue: jest.fn(),
+    issue,
     receiveFinishedGood: jest.fn(),
     issueFinishedGood: jest.fn(),
   } as unknown as InventoryService;
@@ -60,12 +102,15 @@ function makeService() {
     prisma as unknown as PrismaService,
     inventory,
     financial,
+    eventEmitter as never,
   );
 
   return {
     prisma: prisma,
     inventory,
+    issue,
     postJournalEntryInTx,
+    eventEmitter,
     service,
   };
 }
@@ -487,6 +532,184 @@ describe('ProductionWorkflowService — ACC-F01 / OPS-F01 / OPS-F03 / OPS-F05', 
       ConflictException,
     );
     expect(postJournalEntryInTx).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * PRD-1 / INV-1 — صرف المواد (consumeMaterial):
+ * - PRD-1: صرف على أمر مكتمل/ملغي مرفوض بـ 400 (يضيف تكلفة بعد قيد الإكمال).
+ * - INV-1: أحداث المخزون تُبث بعد نجاح المعاملة فقط (لا أحداث وهمية عند الفشل).
+ */
+describe('ProductionWorkflowService — PRD-1 / INV-1 (consumeMaterial)', () => {
+  const STAGE_RUN = {
+    id: 'srun-1',
+    workOrderId: 'wo-1',
+    stage: ProductionStage.CUTTING,
+    status: ProductionStageRunStatus.IN_PROGRESS,
+  };
+
+  const INVENTORY_ISSUE_RESULT = {
+    replayed: false,
+    entryCode: 'SLE-20260905-TEST0001',
+    type: 'ISSUE',
+    rawMaterialId: 'rm-1',
+    warehouseId: 'wh-1',
+    quantityDelta: -4,
+    balanceAfter: 96,
+    unitCost: 5,
+    totalValue: 20,
+    costPerUnitAfter: null,
+    createdAt: '2026-09-05T10:00:00.000Z',
+  };
+
+  const consumeInput = () => ({
+    workOrderId: 'wo-1',
+    stageRunId: 'srun-1',
+    rawMaterialId: 'rm-1',
+    warehouseId: 'wh-1',
+    plannedQuantity: 3,
+    actualQuantity: 4,
+    wasteQuantity: 1,
+    unit: 'METER',
+  });
+
+  /** يجهّز مسار النجاح الكامل للصرف (أمر IN_PROGRESS). */
+  function setupHappyPath(prisma: WorkflowPrismaMock, issue: jest.Mock) {
+    prisma.productionStageRun.findUnique.mockResolvedValue(STAGE_RUN);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      status: WorkOrderStatus.IN_PROGRESS,
+    });
+    prisma.stockLedgerEntry.findUnique.mockResolvedValue({ id: 'sle-1' });
+    prisma.productionMaterialConsumption.create.mockResolvedValue({
+      id: 'cons-1',
+      workOrderId: 'wo-1',
+      stageRunId: 'srun-1',
+    });
+    issue.mockResolvedValue(INVENTORY_ISSUE_RESULT);
+  }
+
+  it('PRD-1: يرفض صرف المواد على أمر تشغيل COMPLETED بـ 400', async () => {
+    const { prisma, issue, service } = makeService();
+    prisma.productionStageRun.findUnique.mockResolvedValue(STAGE_RUN);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      status: WorkOrderStatus.COMPLETED,
+    });
+
+    await expect(
+      service.consumeMaterial(consumeInput(), 'user-1'),
+    ).rejects.toThrow(BadRequestException);
+
+    // الرفض قبل أي أثر: لا صرف مخزون ولا سجل استهلاك
+    expect(issue).not.toHaveBeenCalled();
+    expect(prisma.productionMaterialConsumption.create).not.toHaveBeenCalled();
+  });
+
+  it('PRD-1: يرفض صرف المواد على أمر تشغيل CANCELLED بـ 400', async () => {
+    const { prisma, issue, service } = makeService();
+    prisma.productionStageRun.findUnique.mockResolvedValue(STAGE_RUN);
+    prisma.workOrder.findUnique.mockResolvedValue({
+      status: WorkOrderStatus.CANCELLED,
+    });
+
+    await expect(
+      service.consumeMaterial(consumeInput(), 'user-1'),
+    ).rejects.toThrow(BadRequestException);
+
+    expect(issue).not.toHaveBeenCalled();
+    expect(prisma.productionMaterialConsumption.create).not.toHaveBeenCalled();
+  });
+
+  it('PRD-1: الصرف على أمر IN_PROGRESS ينجح (السلوك القائم بلا انحدار)', async () => {
+    const { prisma, issue, service } = makeService();
+    setupHappyPath(prisma, issue);
+
+    const result = await service.consumeMaterial(consumeInput(), 'user-1');
+
+    expect(result.replayed).toBe(false);
+    expect(result.consumptionId).toBe('cons-1');
+    expect(result.stockLedgerEntryId).toBe('sle-1');
+    expect(result.actualQuantity).toBe(4);
+    expect(result.wasteQuantity).toBe(1);
+    expect(result.unitCost).toBe(5);
+    expect(result.totalCost).toBe(20);
+    expect(result.wasteCost).toBe(5);
+    expect(issue).toHaveBeenCalledTimes(1);
+    expect(prisma.workOrder.findUnique).toHaveBeenCalledWith({
+      where: { id: 'wo-1' },
+      select: { status: true },
+    });
+  });
+
+  it('INV-1: يبث أحداث المخزون بعد نجاح المعاملة فقط وبعد الصرف نفسه', async () => {
+    const { prisma, issue, service, eventEmitter } = makeService();
+    setupHappyPath(prisma, issue);
+    // inventory.issue يملأ المجمع (الوسيط الرابع) كما تفعل الخدمة الفعلية بعد INV-1
+    issue.mockImplementation(
+      (
+        _input: unknown,
+        _userId: unknown,
+        _tx: unknown,
+        eventsCollector: { push: (event: unknown) => void } | undefined,
+      ) => {
+        eventsCollector?.push({
+          name: EVENTS.STOCK_DEDUCTED,
+          payload: {
+            materialId: 'rm-1',
+            warehouseId: 'wh-1',
+            quantity: 4,
+            newStock: 96,
+          },
+        });
+        return INVENTORY_ISSUE_RESULT;
+      },
+    );
+
+    await service.consumeMaterial(consumeInput(), 'user-1');
+
+    expect(eventEmitter.emitAsync).toHaveBeenCalledTimes(1);
+    expect(eventEmitter.emitAsync).toHaveBeenCalledWith(EVENTS.STOCK_DEDUCTED, {
+      materialId: 'rm-1',
+      warehouseId: 'wh-1',
+      quantity: 4,
+      newStock: 96,
+    });
+    // الترتيب: الصرف داخل المعاملة يسبق البث — البث بعد commit لا قبله
+    const issueOrder = issue.mock.invocationCallOrder[0];
+    const emitOrder = eventEmitter.emitAsync.mock.invocationCallOrder[0];
+    expect(emitOrder).toBeGreaterThan(issueOrder);
+  });
+
+  it('INV-1: فشل المعاملة = لا بث لأي حدث مخزون', async () => {
+    const { prisma, issue, service, eventEmitter } = makeService();
+    setupHappyPath(prisma, issue);
+    issue.mockImplementation(
+      (
+        _input: unknown,
+        _userId: unknown,
+        _tx: unknown,
+        eventsCollector: { push: (event: unknown) => void } | undefined,
+      ) => {
+        eventsCollector?.push({
+          name: EVENTS.STOCK_DEDUCTED,
+          payload: {
+            materialId: 'rm-1',
+            warehouseId: 'wh-1',
+            quantity: 4,
+            newStock: 96,
+          },
+        });
+        return INVENTORY_ISSUE_RESULT;
+      },
+    );
+    // فشل داخل المعاملة بعد الصرف: ledger entry غير موجود
+    prisma.stockLedgerEntry.findUnique.mockResolvedValue(null);
+
+    await expect(
+      service.consumeMaterial(consumeInput(), 'user-1'),
+    ).rejects.toThrow(ConflictException);
+
+    // فشل المعاملة = لا أحداث وهمية لحركة رُجعت
+    expect(eventEmitter.emitAsync).not.toHaveBeenCalled();
   });
 });
 

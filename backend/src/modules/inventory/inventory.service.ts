@@ -10,7 +10,7 @@ import { Prisma, StockMovementType, WarehouseType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
-import { EVENTS } from '../../events/event-types';
+import { EVENTS, EventName } from '../../events/event-types';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 
@@ -34,7 +34,10 @@ import { PaginatedResult } from '../../common/dto/paginated-result.dto';
  *
  * الأحداث (STOCK_ADDED/STOCK_DEDUCTED/STOCK_LOW) إشعارات in-process غير مالية
  * تُطلق بعد نجاح الـ transaction فقط (وفق اتجاه ADR-0003-ج) — لا اعتماد
- * ذرّيًا عليها.
+ * ذرّيًا عليها. INV-1: عندما تُنفّذ الحركة داخل معاملة خارجية (externalTx
+ * يمرّره المستدعي الأعلى) لا تُبث الأحداث هنا إطلاقًا؛ بل تُجمع في
+ * eventsCollector يملؤه المستدعي ليبثها بعد نجاح معاملته هو — فشل المعاملة
+ * الخارجية = لا أحداث لحركة رُجعت (rollback).
  */
 
 export interface ReceiveStockInput {
@@ -90,6 +93,28 @@ export interface StockMovementResult {
   totalValue: number | null;
   costPerUnitAfter: number | null;
   createdAt: string;
+}
+
+/** سياق الحركة اللازم لبناء أحداث المخزون (INV-1). */
+interface StockEventContext {
+  materialId: string;
+  warehouseId: string;
+  quantity: number;
+  newBalance: number;
+  minStockLevel: number;
+}
+
+/**
+ * INV-1: حدث مخزون مؤجل البث. عندما يعمل مسار الحركة داخل معاملة خارجية
+ * (externalTx من المستدعي الأعلى مثل consumeMaterial في الإنتاج) تُجمع
+ * الأحداث هنا بدل بثها قبل commit — ثم يبثها مالك المعاملة بعد نجاحها
+ * فقط، فلا تظهر أحداث وهمية لحركة رُجعت (rollback).
+ */
+export interface StockEvent {
+  /** اسم الحدث من EVENTS (مثل inventory.stock.deducted). */
+  name: EventName;
+  /** حمولة الحدث كما تُمرّر لـ emitAsync. */
+  payload: Record<string, unknown>;
 }
 
 export interface LedgerFilter {
@@ -358,6 +383,7 @@ export class InventoryService {
     input: ReceiveStockInput,
     userId?: string,
     tx?: TxClient,
+    eventsCollector?: StockEvent[],
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
     return this.executeMovement(
@@ -374,6 +400,7 @@ export class InventoryService {
         userId,
       },
       tx,
+      eventsCollector,
     );
   }
 
@@ -381,6 +408,7 @@ export class InventoryService {
     input: IssueStockInput,
     userId?: string,
     tx?: TxClient,
+    eventsCollector?: StockEvent[],
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
     return this.executeMovement(
@@ -396,43 +424,54 @@ export class InventoryService {
         userId,
       },
       tx,
+      eventsCollector,
     );
   }
 
   async adjust(
     input: AdjustStockInput,
     userId?: string,
+    eventsCollector?: StockEvent[],
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
-    return this.executeMovement({
-      type: StockMovementType.ADJUSTMENT,
-      rawMaterialId: this.requireRawMaterialId(input.rawMaterialId),
-      warehouseId: input.warehouseId,
-      delta: input.quantityDelta,
-      unsignedQuantity: Math.abs(input.quantityDelta),
-      reference: input.reference,
-      notes: `تسوية جرد — السبب: ${input.reason}`,
-      idempotencyKey: input.idempotencyKey,
-      userId,
-    });
+    return this.executeMovement(
+      {
+        type: StockMovementType.ADJUSTMENT,
+        rawMaterialId: this.requireRawMaterialId(input.rawMaterialId),
+        warehouseId: input.warehouseId,
+        delta: input.quantityDelta,
+        unsignedQuantity: Math.abs(input.quantityDelta),
+        reference: input.reference,
+        notes: `تسوية جرد — السبب: ${input.reason}`,
+        idempotencyKey: input.idempotencyKey,
+        userId,
+      },
+      undefined,
+      eventsCollector,
+    );
   }
 
   async waste(
     input: WasteStockInput,
     userId?: string,
+    eventsCollector?: StockEvent[],
   ): Promise<StockMovementResult> {
     await this.assertMaterialWarehouse(input.warehouseId);
-    return this.executeMovement({
-      type: StockMovementType.WASTE,
-      rawMaterialId: input.rawMaterialId,
-      warehouseId: input.warehouseId,
-      delta: -input.quantity,
-      unsignedQuantity: input.quantity,
-      reference: input.reference,
-      notes: `هدر — السبب: ${input.reason}`,
-      idempotencyKey: input.idempotencyKey,
-      userId,
-    });
+    return this.executeMovement(
+      {
+        type: StockMovementType.WASTE,
+        rawMaterialId: input.rawMaterialId,
+        warehouseId: input.warehouseId,
+        delta: -input.quantity,
+        unsignedQuantity: input.quantity,
+        reference: input.reference,
+        notes: `هدر — السبب: ${input.reason}`,
+        idempotencyKey: input.idempotencyKey,
+        userId,
+      },
+      undefined,
+      eventsCollector,
+    );
   }
 
   /**
@@ -1021,6 +1060,7 @@ export class InventoryService {
   private async executeMovement(
     input: MovementExecutionInput,
     externalTx?: TxClient,
+    eventsCollector?: StockEvent[],
   ): Promise<StockMovementResult> {
     const scope = IDEMPOTENCY_SCOPES[input.type];
     const requestPayload: Record<string, unknown> = {
@@ -1045,15 +1085,7 @@ export class InventoryService {
     }
 
     // (2) التنفيذ الذري: كل الكتابات عبر tx فقط.
-    let eventContext:
-      | {
-          materialId: string;
-          warehouseId: string;
-          quantity: number;
-          newBalance: number;
-          minStockLevel: number;
-        }
-      | undefined;
+    let eventContext: StockEventContext | undefined;
 
     const executeLogic = async (tx: TxClient) => {
       let idempotencyKeyId: string | undefined;
@@ -1287,30 +1319,21 @@ export class InventoryService {
         ? await executeLogic(externalTx)
         : await this.prisma.$transaction(executeLogic);
 
-      // (3) إشعارات بعد نجاح الـ transaction فقط (غير مالية — ADR-0003-ج).
       if (eventContext) {
-        const isInbound =
-          input.type === StockMovementType.RECEIVE ||
-          input.type === StockMovementType.RETURN;
-        void this.eventEmitter.emitAsync(
-          isInbound ? EVENTS.STOCK_ADDED : EVENTS.STOCK_DEDUCTED,
-          {
-            materialId: eventContext.materialId,
-            warehouseId: eventContext.warehouseId,
-            quantity: eventContext.quantity,
-            newStock: eventContext.newBalance,
-          },
-        );
-        if (
-          eventContext.newBalance <= eventContext.minStockLevel &&
-          eventContext.minStockLevel > 0
-        ) {
-          void this.eventEmitter.emitAsync(EVENTS.STOCK_LOW, {
-            materialId: eventContext.materialId,
-            warehouseId: eventContext.warehouseId,
-            currentStock: eventContext.newBalance,
-            minStockLevel: eventContext.minStockLevel,
-          });
+        const events = this.buildStockEvents(input.type, eventContext);
+        if (externalTx) {
+          // INV-1: داخل معاملة خارجية ممنوع البث قبل commit — المستدعي الأعلى
+          // يملك القرار. نملأ المجمع ليبثه بعد نجاح معاملته هو؛ وبدون مجمع
+          // تُهمل الأحداث عمدًا (إشعارات غير مالية — إهمالها أسلم من بثها
+          // وهمية لحركة قد تُرجع بـ rollback).
+          if (eventsCollector) {
+            eventsCollector.push(...events);
+          }
+        } else {
+          // (3) إشعارات بعد نجاح الـ transaction فقط (غير مالية — ADR-0003-ج).
+          for (const event of events) {
+            void this.eventEmitter.emitAsync(event.name, event.payload);
+          }
         }
       }
 
@@ -1330,6 +1353,42 @@ export class InventoryService {
       }
       throw err;
     }
+  }
+
+  /**
+   * INV-1: بناء أحداث المخزون للحركة — STOCK_ADDED/STOCK_DEDUCTED حسب
+   * الاتجاه + STOCK_LOW عند الهبوط لحد الطلب. تُستخدم مرة واحدة بعد نجاح
+   * المسار: بثًا مباشرًا (معاملة داخلية) أو تعبئةً للمجمع (معاملة خارجية).
+   */
+  private buildStockEvents(
+    type: StockMovementType,
+    ctx: StockEventContext,
+  ): StockEvent[] {
+    const isInbound =
+      type === StockMovementType.RECEIVE || type === StockMovementType.RETURN;
+    const events: StockEvent[] = [
+      {
+        name: isInbound ? EVENTS.STOCK_ADDED : EVENTS.STOCK_DEDUCTED,
+        payload: {
+          materialId: ctx.materialId,
+          warehouseId: ctx.warehouseId,
+          quantity: ctx.quantity,
+          newStock: ctx.newBalance,
+        },
+      },
+    ];
+    if (ctx.newBalance <= ctx.minStockLevel && ctx.minStockLevel > 0) {
+      events.push({
+        name: EVENTS.STOCK_LOW,
+        payload: {
+          materialId: ctx.materialId,
+          warehouseId: ctx.warehouseId,
+          currentStock: ctx.newBalance,
+          minStockLevel: ctx.minStockLevel,
+        },
+      });
+    }
+    return events;
   }
 
   /** إعادة استجابة مخزنة لمفتاح مكتمل — أو رفض واضح عند تعارض المحتوى/النطاق. */

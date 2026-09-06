@@ -230,21 +230,210 @@ describe('HrService — GF-0015 payroll', () => {
         paidAt: paymentDate,
       },
     });
+    // HR-1 (P0 — GF-IMP-W1): قيد الدفع يصفّي SALARIES_PAYABLE بالإجمالي
+    // (صافٍ 410 + خصومات 250 = إجمالي 660) بدل تسجيل المصروف مرة ثانية:
+    //   Dr SALARIES_PAYABLE / Cr CASH بالصافّي
+    //   Dr SALARIES_PAYABLE / Cr WORKER_ADVANCES بالخصومات
     expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
       prisma,
       expect.objectContaining({
         reference: 'PAYROLL:pay-1',
+        postingKey: 'hr-payroll-pay:pay-1',
         lines: [
           expect.objectContaining({
-            debitAccountId: CHART_OF_ACCOUNTS.GENERAL_EXPENSE,
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
             creditAccountId: CHART_OF_ACCOUNTS.CASH,
             amount: 410,
+          }),
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+            creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+            amount: 250,
           }),
         ],
         treasuryUpdates: [{ treasuryId: 'treasury-1', delta: -410 }],
       }),
       'manager-1',
     );
+  });
+
+  // HR-1 (P0 — GF-IMP-W1): بوابة سلامة قيد الدفع — تصفية SALARIES_PAYABLE
+  // بالإجمالي، عدم لمس GENERAL_EXPENSE، وتقييد WORKER_ADVANCES بالخصومات.
+  describe('HR-1 — قيد دفع الرواتب (تصفية رواتب مستحقة)', () => {
+    const setupApprovedPayroll = (overrides: Record<string, unknown> = {}) => {
+      prisma.payroll.findUnique
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.APPROVED,
+            approvedById: 'manager-1',
+            ...overrides,
+          }),
+        )
+        .mockResolvedValueOnce(
+          payrollRow({
+            status: PayrollStatus.PAID,
+            isPaid: true,
+            approvedById: 'manager-1',
+            ...overrides,
+          }),
+        );
+      prisma.treasury.findUnique.mockResolvedValue({
+        id: 'treasury-1',
+        isActive: true,
+      });
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'pay-idem-1' });
+      prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+    };
+
+    it('قيد الدفع يخلي SALARIES_PAYABLE: مجموع المدين عليها = الإجمالي', async () => {
+      setupApprovedPayroll();
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        { lines: { debitAccountId: string; amount: number }[] },
+        unknown,
+      ];
+      const payableDebit = call[1].lines
+        .filter(
+          (line) => line.debitAccountId === CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+        )
+        .reduce((sum, line) => sum + line.amount, 0);
+      // الإجمالي 660 = صافٍ 410 + خصومات 250 — فيعود رصيد رواتب مستحقة صفرًا.
+      expect(payableDebit).toBe(660);
+    });
+
+    it('قيد الدفع لا يلمس GENERAL_EXPENSE إطلاقًا (لا ازدواج مصروف)', async () => {
+      setupApprovedPayroll();
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        {
+          lines: {
+            debitAccountId: string;
+            creditAccountId: string;
+          }[];
+        },
+        unknown,
+      ];
+      const accounts = call[1].lines.flatMap((line) => [
+        line.debitAccountId,
+        line.creditAccountId,
+      ]);
+      expect(accounts).not.toContain(CHART_OF_ACCOUNTS.GENERAL_EXPENSE);
+      expect(accounts).not.toContain(CHART_OF_ACCOUNTS.SALARIES_EXPENSE);
+    });
+
+    it('قيد الدفع يقيّد WORKER_ADVANCES بقيمة الخصومات (استرداد السلف)', async () => {
+      setupApprovedPayroll();
+
+      await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        {
+          lines: {
+            debitAccountId: string;
+            creditAccountId: string;
+            amount: number;
+          }[];
+        },
+        unknown,
+      ];
+      const advanceLine = call[1].lines.find(
+        (line) => line.creditAccountId === CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+      );
+      expect(advanceLine).toBeDefined();
+      expect(advanceLine?.amount).toBe(250);
+    });
+
+    it('صافٍ = صفر مع خصومات موجبة: قيد Dr SALARIES_PAYABLE / Cr WORKER_ADVANCES فقط بلا نقدية', async () => {
+      setupApprovedPayroll({
+        grossAmount: new Prisma.Decimal('660.00'),
+        advanceDeduct: new Prisma.Decimal('660.00'),
+        netAmount: new Prisma.Decimal('0.00'),
+      });
+
+      const result = await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      expect(result).toMatchObject({
+        status: PayrollStatus.PAID,
+        isPaid: true,
+      });
+      expect(financial.postJournalEntryInTx).toHaveBeenCalledTimes(1);
+      const call = financial.postJournalEntryInTx.mock.calls[0] as [
+        unknown,
+        {
+          lines: {
+            debitAccountId: string;
+            creditAccountId: string;
+            amount: number;
+          }[];
+          treasuryUpdates?: { delta: number }[];
+        },
+        unknown,
+      ];
+      expect(call[1].lines).toHaveLength(1);
+      expect(call[1].lines[0]).toMatchObject({
+        debitAccountId: CHART_OF_ACCOUNTS.SALARIES_PAYABLE,
+        creditAccountId: CHART_OF_ACCOUNTS.WORKER_ADVANCES,
+        amount: 660,
+      });
+      // لا نقدية تخرج من الخزينة عند صافٍ = صفر.
+      expect(call[1].treasuryUpdates).toBeUndefined();
+    });
+
+    it('إجمالي صفري (صافٍ = خصومات = 0): ينتقل إلى PAID دون أي قيد مالي', async () => {
+      setupApprovedPayroll({
+        grossAmount: new Prisma.Decimal('0.00'),
+        advanceDeduct: new Prisma.Decimal('0.00'),
+        absenceDeduct: new Prisma.Decimal('0.00'),
+        netAmount: new Prisma.Decimal('0.00'),
+      });
+
+      const result = await service.payPayroll(
+        'pay-1',
+        { treasuryId: 'treasury-1' },
+        'manager-1',
+      );
+
+      expect(result).toMatchObject({
+        status: PayrollStatus.PAID,
+        isPaid: true,
+      });
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+
+    it('يرفض الصافي السالب بـ 400 ولا يرحّل قيدًا', async () => {
+      setupApprovedPayroll({
+        netAmount: new Prisma.Decimal('-50.00'),
+      });
+
+      await expect(
+        service.payPayroll('pay-1', { treasuryId: 'treasury-1' }, 'manager-1'),
+      ).rejects.toThrow('لا يمكن دفع كشف راتب بصافي مبلغ سالب');
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
   });
 
   it('يرفض دفع كشف غير معتمد أو مدفوعًا مسبقًا', async () => {
