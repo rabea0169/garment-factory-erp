@@ -259,7 +259,7 @@ describe('HrService — GF-0015 payroll', () => {
         .mockResolvedValueOnce(
           payrollRow({
             status: PayrollStatus.APPROVED,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             grossAmount: new Prisma.Decimal('660.00'),
             advanceDeduct: new Prisma.Decimal('300.00'),
             netAmount: new Prisma.Decimal('360.00'),
@@ -270,7 +270,7 @@ describe('HrService — GF-0015 payroll', () => {
             status: PayrollStatus.PAID,
             isPaid: true,
             paidAt: paymentDate,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             grossAmount: new Prisma.Decimal('660.00'),
             advanceDeduct: new Prisma.Decimal('300.00'),
             netAmount: new Prisma.Decimal('360.00'),
@@ -322,7 +322,7 @@ describe('HrService — GF-0015 payroll', () => {
         .mockResolvedValueOnce(
           payrollRow({
             status: PayrollStatus.APPROVED,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             advanceDeduct: new Prisma.Decimal('300.00'),
             netAmount: new Prisma.Decimal('360.00'),
           }),
@@ -331,7 +331,7 @@ describe('HrService — GF-0015 payroll', () => {
           payrollRow({
             status: PayrollStatus.PAID,
             isPaid: true,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             advanceDeduct: new Prisma.Decimal('300.00'),
             netAmount: new Prisma.Decimal('360.00'),
           }),
@@ -380,7 +380,7 @@ describe('HrService — GF-0015 payroll', () => {
         .mockResolvedValueOnce(
           payrollRow({
             status: PayrollStatus.APPROVED,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             advanceDeduct: new Prisma.Decimal('0.00'),
             netAmount: new Prisma.Decimal('660.00'),
           }),
@@ -389,7 +389,7 @@ describe('HrService — GF-0015 payroll', () => {
           payrollRow({
             status: PayrollStatus.PAID,
             isPaid: true,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             advanceDeduct: new Prisma.Decimal('0.00'),
             netAmount: new Prisma.Decimal('660.00'),
           }),
@@ -510,7 +510,7 @@ describe('HrService — GF-0015 payroll', () => {
       .mockResolvedValueOnce(
         payrollRow({
           status: PayrollStatus.APPROVED,
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
           approvedAt: new Date('2026-08-31T12:00:00.000Z'),
         }),
       );
@@ -520,13 +520,15 @@ describe('HrService — GF-0015 payroll', () => {
 
     expect(result).toMatchObject({
       status: PayrollStatus.APPROVED,
-      approvedById: 'manager-1',
+      approvedById: 'approver-1',
       isPaid: false,
     });
     expect(prisma.payroll.updateMany).toHaveBeenCalledWith({
       where: { id: 'pay-1', status: PayrollStatus.DRAFT },
       data: expect.objectContaining({
         status: PayrollStatus.APPROVED,
+        // المعتمد الفعلي هو الممثّل (actorId من الاستدعاء) — السطر
+        // المرجعي أعلاه (approver-1) قيمة الصف بعد القراءة فقط.
         approvedById: 'manager-1',
       }) as Record<string, unknown>,
     });
@@ -538,7 +540,7 @@ describe('HrService — GF-0015 payroll', () => {
       .mockResolvedValueOnce(
         payrollRow({
           status: PayrollStatus.APPROVED,
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
         }),
       )
       .mockResolvedValueOnce(
@@ -547,7 +549,7 @@ describe('HrService — GF-0015 payroll', () => {
           status: PayrollStatus.PAID,
           isPaid: true,
           paidAt: paymentDate,
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
         }),
       );
     prisma.treasury.findUnique.mockResolvedValue({
@@ -606,12 +608,14 @@ describe('HrService — GF-0015 payroll', () => {
   // HR-1 (P0 — GF-IMP-W1): بوابة سلامة قيد الدفع — تصفية SALARIES_PAYABLE
   // بالإجمالي، عدم لمس GENERAL_EXPENSE، وتقييد WORKER_ADVANCES بالخصومات.
   describe('HR-1 — قيد دفع الرواتب (تصفية رواتب مستحقة)', () => {
+    // HR-5 (GF-IMP-W3): المعتمد 'approver-1' ≠ الدافع 'manager-1' — فصل
+    // الواجبات على الدفع (نفس نمط SoD القائم في الاعتماد).
     const setupApprovedPayroll = (overrides: Record<string, unknown> = {}) => {
       prisma.payroll.findUnique
         .mockResolvedValueOnce(
           payrollRow({
             status: PayrollStatus.APPROVED,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             ...overrides,
           }),
         )
@@ -619,7 +623,7 @@ describe('HrService — GF-0015 payroll', () => {
           payrollRow({
             status: PayrollStatus.PAID,
             isPaid: true,
-            approvedById: 'manager-1',
+            approvedById: 'approver-1',
             ...overrides,
           }),
         );
@@ -815,7 +819,7 @@ describe('HrService — GF-0015 payroll', () => {
       .mockResolvedValueOnce(
         payrollRow({
           status: PayrollStatus.APPROVED,
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
           approvedAt: new Date('2026-08-31T12:00:00.000Z'),
         }),
       );
@@ -866,7 +870,7 @@ describe('HrService — GF-0015 payroll', () => {
           advanceDeduct: new Prisma.Decimal('0.00'),
           absenceDeduct: new Prisma.Decimal('0.00'),
           netAmount: new Prisma.Decimal('0.00'),
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
         }),
       );
     prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
@@ -887,7 +891,7 @@ describe('HrService — GF-0015 payroll', () => {
         payrollRow({
           id: 'pay-77',
           status: PayrollStatus.APPROVED,
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
         }),
       );
     prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
@@ -910,7 +914,7 @@ describe('HrService — GF-0015 payroll', () => {
       .mockResolvedValueOnce(
         payrollRow({
           status: PayrollStatus.APPROVED,
-          approvedById: 'manager-1',
+          approvedById: 'approver-1',
         }),
       );
     prisma.payroll.updateMany.mockResolvedValue({ count: 1 });

@@ -9,7 +9,7 @@ import {
   Headers,
 } from '@nestjs/common';
 import { SalesService } from './sales.service';
-import { ApiTags, ApiOperation } from '@nestjs/swagger';
+import { ApiHeader, ApiTags, ApiOperation } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 import { Roles } from '../auth/roles.guard';
 import { CurrentUser } from '../auth/current-user.decorator';
@@ -21,6 +21,7 @@ import {
 import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
+import { SalesOrderQueryDto } from './dto/sales-order-query.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 
 @ApiTags('Sales (المبيعات والعملاء)')
@@ -80,9 +81,11 @@ export class SalesController {
   }
 
   @Get('orders')
-  @ApiOperation({ summary: 'قائمة أوامر البيع (الفواتير)' })
-  async getSalesOrders(@Query() pagination: PaginationDto) {
-    return this.salesService.getSalesOrders(pagination);
+  @ApiOperation({
+    summary: 'قائمة أوامر البيع (الفواتير) بفلاتر وإسقاط نحيف (SAL-5)',
+  })
+  async getSalesOrders(@Query() query: SalesOrderQueryDto) {
+    return this.salesService.getSalesOrders(query);
   }
 
   @Post('orders')
@@ -139,5 +142,26 @@ export class SalesController {
   ): Promise<unknown> {
     // A8: Idempotency-Key على التأكيد — يمنع صرفًا مزدوجًا عند إعادة المحاولة.
     return await this.salesService.confirmOrder(id, userId, idempotencyKey);
+  }
+
+  // SAL-7 (GF-IMP-W3): إبطال أمر بيع مؤكد — المدير العام فقط (إجراء
+  // امتيازي: يعكس قيد التأكيد ويعيد المخزون ويقلب الحالة إلى CANCELLED).
+  @Post('orders/:id/void')
+  @Roles(UserRole.GENERAL_MANAGER)
+  @ApiHeader({
+    name: 'Idempotency-Key',
+    required: false,
+    description: 'SAL-7: مفتاح إعادة المحاولة الآمنة لإبطال أمر مؤكد',
+  })
+  @ApiOperation({
+    summary:
+      'SAL-7: إبطال أمر بيع مؤكد (CONFIRMED بلا مرتجعات) — عكس القيد وإعادة المخزون',
+  })
+  async voidOrder(
+    @Param('id') id: string,
+    @CurrentUser('id') userId: string,
+    @Headers('idempotency-key') idempotencyKey?: string,
+  ): Promise<unknown> {
+    return await this.salesService.voidOrder(id, userId, idempotencyKey);
   }
 }

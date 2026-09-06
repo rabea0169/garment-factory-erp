@@ -16,6 +16,9 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
     createFiscalPeriod: jest.Mock;
     closeFiscalPeriod: jest.Mock;
     createJournalEntry: jest.Mock;
+    getJournalEntries: jest.Mock;
+    getAccountStatement: jest.Mock;
+    getTrialBalance: jest.Mock;
   };
 
   beforeEach(() => {
@@ -27,6 +30,11 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
       createFiscalPeriod: jest.fn().mockResolvedValue({ id: 'period-1' }),
       closeFiscalPeriod: jest.fn().mockResolvedValue({ id: 'period-1' }),
       createJournalEntry: jest.fn().mockResolvedValue({ entryId: 'je-1' }),
+      getJournalEntries: jest.fn().mockResolvedValue({ data: [], meta: {} }),
+      getAccountStatement: jest.fn().mockResolvedValue({ data: [], meta: {} }),
+      getTrialBalance: jest
+        .fn()
+        .mockResolvedValue({ data: [], balanced: true }),
     };
     controller = new AccountingController(
       service as unknown as AccountingService,
@@ -127,5 +135,82 @@ describe('AccountingController — هوية الجلسة والصلاحيات (G
       'createVoucher',
     );
     expect(roles).toEqual([UserRole.ACCOUNTANT, UserRole.CASHIER]);
+  });
+
+  // ACC-5 (P2 — GF-IMP-W3): أمين الصندوق ينشئ السندات — والقراءة آمنة،
+  // فقائمة السندات تُتاح له (كانت ACCOUNTANT وGENERAL_MANAGER فقط).
+  it('قراءة السندات تتاح لـ ACCOUNTANT وGENERAL_MANAGER وCASHIER (ACC-5)', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      AccountingController.prototype,
+      'getVouchers',
+    );
+    expect(roles).toEqual([
+      UserRole.ACCOUNTANT,
+      UserRole.GENERAL_MANAGER,
+      UserRole.CASHIER,
+    ]);
+  });
+
+  // ACC-6 (P2 — GF-IMP-W3): قائمة السندات تقبل VoucherQueryDto (فلاتر + ترقيم).
+  it('قراءة السندات تمرر فلاتر الاستعلام إلى الخدمة (ACC-6)', async () => {
+    const query = {
+      page: 1,
+      limit: 20,
+      type: VoucherType.PAYMENT,
+      treasuryId: '00000000-0000-0000-0000-000000000001',
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.000Z',
+    };
+    await controller.getVouchers(query);
+    expect(service.getVouchers).toHaveBeenCalledWith(query);
+  });
+
+  // ACC-8 (P2 — GF-IMP-W3): سطح القراءة المحاسبي — قيود/كشف حساب/ميزان مراجعة
+  // للأدوار المالية: ACCOUNTANT وGENERAL_MANAGER وSUPER_ADMIN.
+  it('نقاط القراءة المحاسبية الثلاث مقيّدة بالأدوار المالية (ACC-8)', () => {
+    const expectedFinancialRoles = [
+      UserRole.ACCOUNTANT,
+      UserRole.GENERAL_MANAGER,
+      UserRole.SUPER_ADMIN,
+    ];
+    for (const method of [
+      'getJournalEntries',
+      'getAccountStatement',
+      'getTrialBalance',
+    ] as const) {
+      const roles = getMethodMetadata<UserRole[]>(
+        ROLES_KEY,
+        AccountingController.prototype,
+        method,
+      );
+      expect(roles).toEqual(expectedFinancialRoles);
+    }
+  });
+
+  it('يحوّل قائمة القيود وكشف الحساب وميزان المراجعة إلى الخدمة (ACC-8)', async () => {
+    await controller.getJournalEntries({
+      page: 1,
+      limit: 20,
+      isReversed: false,
+    });
+    await controller.getAccountStatement('acc-1', {
+      page: 1,
+      limit: 20,
+      from: '2026-08-01T00:00:00.000Z',
+    });
+    await controller.getTrialBalance();
+
+    expect(service.getJournalEntries).toHaveBeenCalledWith({
+      page: 1,
+      limit: 20,
+      isReversed: false,
+    });
+    expect(service.getAccountStatement).toHaveBeenCalledWith('acc-1', {
+      page: 1,
+      limit: 20,
+      from: '2026-08-01T00:00:00.000Z',
+    });
+    expect(service.getTrialBalance).toHaveBeenCalledWith();
   });
 });

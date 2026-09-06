@@ -1,9 +1,56 @@
 import { AccountType, VoucherType } from '@prisma/client';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+
+/**
+ * ACC-8 (GF-IMP-W3): سطح القراءة المحاسبي يحتاج journalEntry.findMany
+ * وjournalLine.findMany/aggregate/groupBy — امتداد محلي للـ mock الموحد
+ * بنمط payroll.service.spec (لا نعدّل الـ helper المشترك الذي يملكه كل الوكلاء).
+ */
+type AccountingPrismaMock = ReturnType<typeof createPrismaMock> & {
+  journalEntry: {
+    findUnique: jest.Mock;
+    findFirst: jest.Mock;
+    findMany: jest.Mock;
+    create: jest.Mock;
+    update: jest.Mock;
+    updateMany: jest.Mock;
+    count: jest.Mock;
+  };
+  journalLine: {
+    create: jest.Mock;
+    findMany: jest.Mock;
+    count: jest.Mock;
+    aggregate: jest.Mock;
+    groupBy: jest.Mock;
+  };
+};
+
+function createAccountingPrismaMock(): AccountingPrismaMock {
+  return {
+    ...createPrismaMock(),
+    journalEntry: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      count: jest.fn().mockResolvedValue(0),
+    },
+    journalLine: {
+      create: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      count: jest.fn().mockResolvedValue(0),
+      aggregate: jest.fn(),
+      groupBy: jest.fn().mockResolvedValue([]),
+    },
+  };
+}
 
 describe('AccountingService — الحسابات والسندات (GF-0003 + audit v2 A1/A2/A3)', () => {
   let service: AccountingService;
@@ -461,5 +508,448 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       }),
       'user-1',
     );
+  });
+
+  // ACC-4 (P2 — GF-IMP-W3): فحص تداخل الفترات يجب أن يجري داخل $transaction
+  // نفسها — الفحص خارجها (TOCTOU) كان يسمح لفترتين متداخلتين متزامنتين
+  // باجتياز الفحص قبل أن يلتزم أي منهما.
+  describe('ACC-4 — فحص التداخل داخل المعاملة (TOCTOU)', () => {
+    it('يرفض 409 عند التداخل ولا ينشئ الفترة — والفحص يجري داخل $transaction', async () => {
+      prisma.fiscalPeriod.findFirst.mockResolvedValue({
+        id: 'period-existing',
+      });
+      prisma.fiscalPeriod.create.mockResolvedValue({ id: 'never' });
+
+      await expect(
+        service.createFiscalPeriod(
+          { name: '2026-09', startDate: '2026-09-01', endDate: '2026-09-30' },
+          'user-1',
+        ),
+      ).rejects.toThrow(ConflictException);
+
+      expect(prisma.fiscalPeriod.create).not.toHaveBeenCalled();
+      // الدليل على أن الفحص داخل المعاملة: $transaction استُدعي قبل الفحص.
+      const txOrder = prisma.$transaction.mock.invocationCallOrder[0];
+      const checkOrder =
+        prisma.fiscalPeriod.findFirst.mock.invocationCallOrder[0];
+      expect(checkOrder).toBeGreaterThan(txOrder);
+    });
+
+    it('فترة بلا تداخل تُنشأ بعد الفحص داخل المعاملة', async () => {
+      prisma.fiscalPeriod.findFirst.mockResolvedValue(null);
+      prisma.fiscalPeriod.create.mockResolvedValue({ id: 'period-ok' });
+
+      const result = await service.createFiscalPeriod(
+        { name: '2026-10', startDate: '2026-10-01', endDate: '2026-10-31' },
+        'user-2',
+      );
+
+      expect(result).toEqual({ id: 'period-ok' });
+      const txOrder = prisma.$transaction.mock.invocationCallOrder[0];
+      const checkOrder =
+        prisma.fiscalPeriod.findFirst.mock.invocationCallOrder[0];
+      expect(checkOrder).toBeGreaterThan(txOrder);
+    });
+  });
+
+  // ACC-6 (P2 — GF-IMP-W3): قائمة السندات بفلاتر اختيارية (نوع/خزينة/
+  // طرف مقابل/نطاق تاريخ) — الفهارس القائمة تكفي الاستعلام المرشّح.
+  describe('ACC-6 — فلاتر قائمة السندات', () => {
+    it('يبني where من type وtreasuryId وcounterpartyId وfrom/to ويطبقه على findMany وcount', async () => {
+      prisma.voucher.findMany.mockResolvedValue([]);
+      prisma.voucher.count.mockResolvedValue(0);
+
+      await service.getVouchers({
+        page: 1,
+        limit: 20,
+        type: VoucherType.PAYMENT,
+        treasuryId: 'treasury-7',
+        counterpartyId: 'cust-9',
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-08-31T23:59:59.000Z',
+      });
+
+      const expectedWhere = {
+        type: VoucherType.PAYMENT,
+        treasuryId: 'treasury-7',
+        counterpartyId: 'cust-9',
+        date: {
+          gte: new Date('2026-08-01T00:00:00.000Z'),
+          lte: new Date('2026-08-31T23:59:59.000Z'),
+        },
+      };
+      expect(prisma.voucher.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere, skip: 0, take: 20 }),
+      );
+      expect(prisma.voucher.count).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+    });
+
+    it('بلا فلاتر: where فارغ والحفاظ على include القائم', async () => {
+      prisma.voucher.findMany.mockResolvedValue([]);
+      prisma.voucher.count.mockResolvedValue(0);
+
+      await service.getVouchers();
+
+      expect(prisma.voucher.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {},
+          include: {
+            createdBy: { select: { name: true } },
+            journalEntry: { select: { code: true, id: true } },
+            treasury: { select: { id: true, name: true } },
+          },
+        }),
+      );
+      expect(prisma.voucher.count).toHaveBeenCalledWith({ where: {} });
+    });
+
+    it('فلتر جزئي (type فقط) لا يجرّ باقي الشروط إلى where', async () => {
+      prisma.voucher.findMany.mockResolvedValue([]);
+      prisma.voucher.count.mockResolvedValue(0);
+
+      await service.getVouchers({
+        page: 2,
+        limit: 10,
+        type: VoucherType.RECEIPT,
+      });
+
+      expect(prisma.voucher.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { type: VoucherType.RECEIPT },
+          skip: 10,
+          take: 10,
+        }),
+      );
+    });
+  });
+});
+
+// ACC-8 (P2 — GF-IMP-W3): سطح القراءة المحاسبي — قائمة القيود ببنودها،
+// كشف حساب برصيد جارٍ، وميزان مراجعة متوازن — كلها قراءة من journal_lines.
+describe('AccountingService — ACC-8 سطح القراءة المحاسبي', () => {
+  let service: AccountingService;
+  let prisma: AccountingPrismaMock;
+  let financial: { postJournalEntryInTx: jest.Mock };
+
+  beforeEach(() => {
+    prisma = createAccountingPrismaMock();
+    financial = { postJournalEntryInTx: jest.fn() };
+    prisma.$transaction.mockImplementation(
+      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+    );
+    prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    service = new AccountingService(
+      prisma as unknown as PrismaService,
+      financial as unknown as FinancialPostingService,
+    );
+  });
+
+  describe('ACC-8 — قائمة القيود (GET /accounting/journal-entries)', () => {
+    it('ترجع القيود ببنودها وترتيب أحدث أولًا مع الترقيم', async () => {
+      const entries = [
+        {
+          id: 'je-1',
+          code: 'JE-1',
+          description: 'قيد بيع',
+          lines: [
+            {
+              id: 'jl-1',
+              amount: 100,
+              debitAccountId: 'acc-cash',
+              creditAccountId: 'acc-rev',
+            },
+          ],
+        },
+      ];
+      prisma.journalEntry.findMany.mockResolvedValue(entries);
+      prisma.journalEntry.count.mockResolvedValue(1);
+
+      const result = await service.getJournalEntries({ page: 1, limit: 20 });
+
+      expect(result.data).toEqual(entries);
+      expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {},
+          include: {
+            lines: true,
+            createdBy: { select: { name: true } },
+          },
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }],
+          skip: 0,
+          take: 20,
+        }),
+      );
+      expect(prisma.journalEntry.count).toHaveBeenCalledWith({ where: {} });
+    });
+
+    it('تطبق فلاتر from/to وisReversed وreference يحتوي نصًا', async () => {
+      prisma.journalEntry.findMany.mockResolvedValue([]);
+      prisma.journalEntry.count.mockResolvedValue(0);
+
+      await service.getJournalEntries({
+        page: 1,
+        limit: 20,
+        from: '2026-08-01T00:00:00.000Z',
+        to: '2026-08-31T23:59:59.000Z',
+        isReversed: false,
+        reference: 'SO-1',
+      });
+
+      const expectedWhere = {
+        date: {
+          gte: new Date('2026-08-01T00:00:00.000Z'),
+          lte: new Date('2026-08-31T23:59:59.000Z'),
+        },
+        isReversed: false,
+        reference: { contains: 'SO-1' },
+      };
+      expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+      expect(prisma.journalEntry.count).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+    });
+
+    it('فلتر isReversed=true وحده يعمل دون شروط تاريخ', async () => {
+      prisma.journalEntry.findMany.mockResolvedValue([]);
+      prisma.journalEntry.count.mockResolvedValue(0);
+
+      await service.getJournalEntries({ page: 1, limit: 20, isReversed: true });
+
+      expect(prisma.journalEntry.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { isReversed: true } }),
+      );
+    });
+  });
+
+  describe('ACC-8 — كشف الحساب (GET /accounting/accounts/:id/statement)', () => {
+    const entryA = {
+      id: 'je-a',
+      code: 'JE-A',
+      date: new Date('2026-08-10T00:00:00.000Z'),
+      createdAt: new Date('2026-08-10T00:00:01.000Z'),
+    };
+    const entryB = {
+      id: 'je-b',
+      code: 'JE-B',
+      date: new Date('2026-08-20T00:00:00.000Z'),
+      createdAt: new Date('2026-08-20T00:00:01.000Z'),
+    };
+
+    function line(
+      id: string,
+      journalEntry: object,
+      debitAccountId: string | null,
+      creditAccountId: string | null,
+      amount: number,
+    ) {
+      return {
+        id,
+        journalEntry,
+        debitAccountId,
+        creditAccountId,
+        amount,
+        description: 'بند',
+      };
+    }
+
+    it('يرفض 404 لحساب غير موجود', async () => {
+      prisma.account.findUnique.mockResolvedValue(null);
+
+      await expect(
+        service.getAccountStatement('ghost-account', { page: 1, limit: 20 }),
+      ).rejects.toThrow(NotFoundException);
+      expect(prisma.journalLine.findMany).not.toHaveBeenCalled();
+    });
+
+    it('يحسب مدين/دائن/رصيدًا جاريًا تراكميًا مرتبًا بتاريخ القيد', async () => {
+      prisma.account.findUnique.mockResolvedValue({
+        id: 'acc-cash',
+        code: '1100',
+        name: 'الصندوق',
+      });
+      prisma.journalLine.findMany.mockResolvedValue([
+        line('jl-1', entryA, 'acc-cash', 'acc-rev', 100),
+        line('jl-2', entryA, 'acc-ap', 'acc-cash', 40),
+        line('jl-3', entryB, 'acc-cash', 'acc-rev', 60),
+      ]);
+
+      const result = await service.getAccountStatement('acc-cash', {
+        page: 1,
+        limit: 20,
+      });
+
+      // الرصيد الجاري: 100 → 60 → 120
+      expect(result.data.map((r) => r.runningBalance)).toEqual([100, 60, 120]);
+      expect(result.data.map((r) => r.debit)).toEqual([100, 0, 60]);
+      expect(result.data.map((r) => r.credit)).toEqual([0, 40, 0]);
+      expect(result.data[0]).toMatchObject({
+        entryCode: 'JE-A',
+        amount: 100,
+      });
+      expect(result.meta.total).toBe(3);
+      // بلا فلتر from: الرصيد الافتتاحي صفر (الكشف من نقطة الصفر).
+      expect(result.openingBalance).toBe(0);
+      expect(prisma.journalLine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: [
+              { debitAccountId: 'acc-cash' },
+              { creditAccountId: 'acc-cash' },
+            ],
+          },
+          orderBy: [
+            { journalEntry: { date: 'asc' } },
+            { journalEntry: { createdAt: 'asc' } },
+            { id: 'asc' },
+          ],
+        }),
+      );
+    });
+
+    it('يعيد الرصيد الافتتاحي من حركتين قبل from ويطبق فلتر التاريخ على البنود', async () => {
+      prisma.account.findUnique.mockResolvedValue({
+        id: 'acc-cash',
+        code: '1100',
+        name: 'الصندوق',
+      });
+      // رصيد ما قبل from: مدين 150 - دائن 50 = 100
+      prisma.journalLine.aggregate
+        .mockResolvedValueOnce({ _sum: { amount: 150 } })
+        .mockResolvedValueOnce({ _sum: { amount: 50 } });
+      prisma.journalLine.findMany.mockResolvedValue([
+        line('jl-3', entryB, 'acc-cash', 'acc-rev', 60),
+      ]);
+
+      const result = await service.getAccountStatement('acc-cash', {
+        page: 1,
+        limit: 20,
+        from: '2026-08-15T00:00:00.000Z',
+      });
+
+      expect(result.openingBalance).toBe(100);
+      // الرصيد الجاري يبدأ من الافتتاحي: 100 + 60 = 160
+      expect(result.data[0].runningBalance).toBe(160);
+      expect(prisma.journalLine.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: {
+            OR: [
+              { debitAccountId: 'acc-cash' },
+              { creditAccountId: 'acc-cash' },
+            ],
+            journalEntry: {
+              date: { gte: new Date('2026-08-15T00:00:00.000Z') },
+            },
+          },
+        }),
+      );
+    });
+
+    it('يرقّم الصفحات على مجموعة البنود المرشحة ويحسب الرصيد على كاملها', async () => {
+      prisma.account.findUnique.mockResolvedValue({ id: 'acc-cash' });
+      prisma.journalLine.findMany.mockResolvedValue([
+        line('jl-1', entryA, 'acc-cash', 'acc-rev', 100),
+        line('jl-2', entryA, 'acc-ap', 'acc-cash', 40),
+        line('jl-3', entryB, 'acc-cash', 'acc-rev', 60),
+      ]);
+
+      // الصفحة 2 بحجم 2: أول بندين يُتخطيان (رصيد 60) والثالث رصيده 120
+      const result = await service.getAccountStatement('acc-cash', {
+        page: 2,
+        limit: 2,
+      });
+
+      expect(result.data).toHaveLength(1);
+      expect(result.data[0].id).toBe('jl-3');
+      expect(result.data[0].runningBalance).toBe(120);
+      expect(result.meta).toMatchObject({ total: 3, page: 2, pageSize: 2 });
+    });
+  });
+
+  describe('ACC-8 — ميزان المراجعة (GET /accounting/trial-balance)', () => {
+    it('يجمع المدين والدائن لكل حساب نشط ويصحح balanced=true عند التوازن', async () => {
+      prisma.journalLine.groupBy
+        // تجميع المدين: cash 500، revenue 300 (مجموع 800)
+        .mockResolvedValueOnce([
+          { debitAccountId: 'acc-cash', _sum: { amount: 500 } },
+          { debitAccountId: 'acc-rev', _sum: { amount: 300 } },
+        ])
+        // تجميع الدائن: revenue 800 (مجموع 800)
+        .mockResolvedValueOnce([
+          { creditAccountId: 'acc-rev', _sum: { amount: 800 } },
+        ]);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'acc-cash', code: '1100', name: 'الصندوق', type: 'ASSET' },
+        { id: 'acc-rev', code: '4100', name: 'المبيعات', type: 'REVENUE' },
+      ]);
+
+      const result = await service.getTrialBalance();
+
+      expect(result.data).toEqual([
+        {
+          code: '1100',
+          name: 'الصندوق',
+          totalDebit: 500,
+          totalCredit: 0,
+          balance: 500,
+        },
+        {
+          code: '4100',
+          name: 'المبيعات',
+          totalDebit: 300,
+          totalCredit: 800,
+          balance: -500,
+        },
+      ]);
+      expect(result.balanced).toBe(true);
+      expect(result.totalDebit).toBe(800);
+      expect(result.totalCredit).toBe(800);
+      expect(prisma.journalLine.groupBy).toHaveBeenCalledWith({
+        by: ['debitAccountId'],
+        _sum: { amount: true },
+      });
+      expect(prisma.journalLine.groupBy).toHaveBeenCalledWith({
+        by: ['creditAccountId'],
+        _sum: { amount: true },
+      });
+    });
+
+    it('يصحح balanced=false عند اختلال التوازن (دفتر متلاعب به)', async () => {
+      prisma.journalLine.groupBy
+        .mockResolvedValueOnce([
+          { debitAccountId: 'acc-cash', _sum: { amount: 500 } },
+        ])
+        .mockResolvedValueOnce([
+          { creditAccountId: 'acc-rev', _sum: { amount: 499 } },
+        ]);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'acc-cash', code: '1100', name: 'الصندوق', type: 'ASSET' },
+        { id: 'acc-rev', code: '4100', name: 'المبيعات', type: 'REVENUE' },
+      ]);
+
+      const result = await service.getTrialBalance();
+
+      expect(result.balanced).toBe(false);
+      expect(result.totalDebit).toBe(500);
+      expect(result.totalCredit).toBe(499);
+    });
+
+    it('لا يشمل الحسابات المجموعة/غير النشطة — أوراق فقط', async () => {
+      prisma.journalLine.groupBy
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([]);
+      prisma.account.findMany.mockResolvedValue([]);
+
+      await service.getTrialBalance();
+
+      expect(prisma.account.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { isActive: true, isGroup: false },
+        }),
+      );
+    });
   });
 });

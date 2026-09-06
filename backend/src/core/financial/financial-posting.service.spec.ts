@@ -687,37 +687,141 @@ describe('FinancialPostingService', () => {
       expect(writtenAmount.eq(150.55)).toBe(true);
       expect(writtenAmount.toString()).toBe('150.55');
 
-      // زيادات أرصدة الحسابات Decimal — لا تحلل عائم في السلسلة
-      const accountUpdates = (
-        prisma.account.update.mock.calls as unknown as [
-          [
-            {
-              where: { id: string };
-              data: { balance: { increment: unknown } };
-            },
-          ],
-        ]
-      ).map((call) => call[0]);
-      expect(accountUpdates).toHaveLength(2);
-      for (const update of accountUpdates) {
-        expect(Prisma.Decimal.isDecimal(update.data.balance.increment)).toBe(
-          true,
-        );
-      }
-      const fgUpdate = accountUpdates.find((u) => u.where.id === 'fg-account');
-      const wipUpdate = accountUpdates.find(
-        (u) => u.where.id === 'wip-account',
+      // ACC-7 (GF-IMP-W3): أرصدة الحسابات تُحدَّث بدفعة خام واحدة
+      // (UPDATE ... FROM (VALUES ...)) — لا حلقة await متتابعة. الدلتات
+      // تصل معاملات Decimal كما هي (لا تحلل عائم في السلسلة).
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(prisma.account.update).not.toHaveBeenCalled();
+      const executeCalls = prisma.$executeRaw.mock.calls as unknown as [
+        [{ strings: string[]; values: unknown[] }],
+      ];
+      const batchSql = executeCalls[0][0];
+      // بيان واحد يجمع الحسابين: بنية UPDATE ... FROM (VALUES ...) AS t —
+      // والتحويل الراجع ::text إلزامي (accounts.id عمود TEXT بUUID نصي):
+      // بدونه يرمي PostgreSQL «operator does not exist: text = uuid».
+      expect(batchSql.strings.join('?')).toContain(
+        'UPDATE accounts SET balance = balance + t.d FROM (VALUES',
       );
-      expect(
-        (fgUpdate?.data.balance.increment as Prisma.Decimal).eq(150.55),
-      ).toBe(true);
-      expect(
-        (wipUpdate?.data.balance.increment as Prisma.Decimal).eq(-150.55),
-      ).toBe(true);
+      expect(batchSql.strings.join('?')).toContain(
+        'AS t(id, d) WHERE accounts.id = t.id::text',
+      );
+      // القيم: (id, delta) لكل حساب — Decimal كما حُسبت في deltaMap
+      expect(batchSql.values).toHaveLength(4);
+      expect(batchSql.values).toContain('fg-account');
+      expect(batchSql.values).toContain('wip-account');
+      const deltas = batchSql.values.filter((v) => Prisma.Decimal.isDecimal(v));
+      expect(deltas).toHaveLength(2);
+      expect(deltas.some((d) => d.eq(150.55))).toBe(true);
+      expect(deltas.some((d) => d.eq(-150.55))).toBe(true);
 
       // المجاميع في الاستجابة مطابقة للقيمة الدقيقة
       expect(result.totalDebit).toBe(150.55);
       expect(result.totalCredit).toBe(150.55);
+    });
+  });
+
+  // ACC-7 (P2 — GF-IMP-W3): تحديث أرصدة الحسابات كان حلقة await متتابعة
+  // (N round-trips داخل المعاملة لكل قيد) — قيد بـ k حسابات مختلفة يدفع
+  // k استعلامات تسلسلية. الآن: تنفيذ خام موحد واحد يحدّث كل الحسابات
+  // في بيان واحد ذري داخل نفس المعاملة (زيادة/خصم مضمونة بالدلتا).
+  describe('ACC-7 — دفعة تحديث أرصدة الحسابات', () => {
+    const arrangeTwoAccountEntry = () => {
+      const prisma = createPrismaMock();
+      const service = new FinancialPostingService(
+        prisma as unknown as PrismaService,
+      );
+      prisma.fiscalPeriod.findFirst.mockResolvedValue(openPeriod);
+      prisma.account.findMany.mockResolvedValue([
+        { id: 'cash-account', isActive: true, isGroup: false },
+        { id: 'revenue-account', isActive: true, isGroup: false },
+        { id: 'cogs-account', isActive: true, isGroup: false },
+      ]);
+      prisma.journalEntry.create.mockResolvedValue({
+        id: 'je-acc7',
+        code: 'JE-ACC7',
+        createdAt: new Date('2026-09-12T00:00:00.000Z'),
+      });
+      return { prisma, service };
+    };
+
+    it('قيد بحسابين يحدّثهما في $executeRaw واحد بلا تحديثات فردية', async () => {
+      const { prisma, service } = arrangeTwoAccountEntry();
+
+      await service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'بيع نقدي',
+          lines: [
+            {
+              debitAccountId: 'cash-account',
+              creditAccountId: 'revenue-account',
+              amount: 200,
+            },
+          ],
+        },
+        'user-acc7',
+      );
+
+      // بيان واحد للأرصدة (وليس بيانًا لكل حساب) وبلا account.update
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      expect(prisma.account.update).not.toHaveBeenCalled();
+      const batchSql = (
+        prisma.$executeRaw.mock.calls as unknown as [
+          [{ strings: string[]; values: unknown[] }],
+        ]
+      )[0][0];
+      // ACC-7: التحويل الراجع t.id::text في شرط المطابقة — عمود
+      // accounts.id في القاعدة TEXT (UUID نصي) فالمقارنة المباشرة
+      // بالـ uuid الممرر في VALUES ترمي خطأ عامل غير موجود.
+      expect(batchSql.strings.join('?')).toContain(
+        'WHERE accounts.id = t.id::text',
+      );
+      expect(batchSql.values).toContain('cash-account');
+      expect(batchSql.values).toContain('revenue-account');
+      expect(
+        batchSql.values.some((v) => Prisma.Decimal.isDecimal(v) && v.eq(200)),
+      ).toBe(true);
+      expect(
+        batchSql.values.some((v) => Prisma.Decimal.isDecimal(v) && v.eq(-200)),
+      ).toBe(true);
+    });
+
+    it('حساب مشترك بين عدة بنود يظهر مرة واحدة بدلتا مجمّعة', async () => {
+      const { prisma, service } = arrangeTwoAccountEntry();
+
+      // بندان يقيّدان cash مرتين (مدين 200 ثم دائن 50) — الدلتا الصافية 150
+      await service.postJournalEntryInTx(
+        prisma as never,
+        {
+          description: 'قيد ببندين على حساب مشترك',
+          lines: [
+            {
+              debitAccountId: 'cash-account',
+              creditAccountId: 'revenue-account',
+              amount: 200,
+            },
+            {
+              debitAccountId: 'cogs-account',
+              creditAccountId: 'cash-account',
+              amount: 50,
+            },
+          ],
+        },
+        'user-acc7',
+      );
+
+      expect(prisma.$executeRaw).toHaveBeenCalledTimes(1);
+      const batchSql = (
+        prisma.$executeRaw.mock.calls as unknown as [
+          [{ strings: string[]; values: unknown[] }],
+        ]
+      )[0][0];
+      // 3 حسابات × (id, delta) = 6 قيم فقط (cash مرة واحدة بدلتا 150)
+      expect(batchSql.values).toHaveLength(6);
+      const cashIndex = batchSql.values.indexOf('cash-account');
+      const cashDelta = batchSql.values[cashIndex + 1] as Prisma.Decimal;
+      expect(Prisma.Decimal.isDecimal(cashDelta)).toBe(true);
+      expect(cashDelta.eq(150)).toBe(true);
     });
   });
 });

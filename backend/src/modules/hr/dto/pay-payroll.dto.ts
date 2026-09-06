@@ -1,4 +1,4 @@
-import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import { ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsDateString,
   IsOptional,
@@ -8,12 +8,17 @@ import {
 } from 'class-validator';
 
 export class PayPayrollDto {
-  @ApiProperty({
+  @ApiPropertyOptional({
     example: '00000000-0000-0000-0000-000000000001',
-    description: 'معرف الخزينة التي سيُخصم منها مبلغ الراتب',
+    description:
+      'معرف الخزينة التي سيُخصم منها صافي الراتب — اختياري عند صافٍ = صفر (HR-4: تسوية السلف بلا نقد)',
   })
+  // HR-4 (P2 — GF-IMP-W3): الخزينة اختيارية — كشف بصافٍ صفر (السلف غطت
+  // الإجمالي) يُسوّى بلا أي حركة نقدية. الخدمة ترفض 400 عند صافٍ موجب
+  // بلا خزينة.
+  @IsOptional()
   @IsUUID(undefined, { message: 'معرف الخزينة يجب أن يكون UUID صالحًا' })
-  treasuryId: string;
+  treasuryId?: string;
 
   @ApiPropertyOptional({
     example: '2026-08-31',

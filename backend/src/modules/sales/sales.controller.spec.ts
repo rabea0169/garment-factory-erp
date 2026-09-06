@@ -7,6 +7,7 @@ import { getMethodMetadata } from '../../../test/helpers/method-metadata';
 import { CreateSalesOrderDto } from './dto/create-sales-order.dto';
 import { CreateCustomerPaymentDto } from './dto/create-customer-payment.dto';
 import { CreateSalesReturnDto } from './dto/create-sales-return.dto';
+import { SalesOrderQueryDto } from './dto/sales-order-query.dto';
 import {
   UpdateCustomerCreditDto,
   UpdateCustomerDto,
@@ -25,6 +26,7 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
     createSalesOrder: jest.Mock;
     confirmOrder: jest.Mock;
     cancelOrder: jest.Mock;
+    voidOrder: jest.Mock;
   };
 
   beforeEach(() => {
@@ -41,6 +43,9 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
         .fn()
         .mockResolvedValue({ id: 'so-1', status: 'CONFIRMED' }),
       cancelOrder: jest
+        .fn()
+        .mockResolvedValue({ id: 'so-1', status: 'CANCELLED' }),
+      voidOrder: jest
         .fn()
         .mockResolvedValue({ id: 'so-1', status: 'CANCELLED' }),
     };
@@ -192,5 +197,39 @@ describe('SalesController — هوية الجلسة والصلاحيات (GF-001
     );
     // Unprivileged roles (CASHIER) cannot adjust credit limits — only GM.
     expect(roles).toEqual([UserRole.GENERAL_MANAGER]);
+  });
+
+  // ===================== GF-IMP-W3 / W3-A =====================
+
+  it('قائمة أوامر البيع تمرر فلاتر الاستعلام إلى الخدمة (SAL-5)', async () => {
+    const query = {
+      page: 1,
+      limit: 20,
+      status: 'CONFIRMED',
+      customerId: '00000000-0000-0000-0000-000000000009',
+      from: '2026-08-01T00:00:00.000Z',
+      to: '2026-08-31T23:59:59.000Z',
+      q: 'SO-26',
+    } as unknown as SalesOrderQueryDto;
+    await controller.getSalesOrders(query);
+    expect(service.getSalesOrders).toHaveBeenCalledWith(query);
+  });
+
+  it('إبطال أمر مؤكد مقيّد بـ GENERAL_MANAGER فقط (SAL-7)', () => {
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      SalesController.prototype,
+      'voidOrder',
+    );
+    expect(roles).toEqual([UserRole.GENERAL_MANAGER]);
+  });
+
+  it('إبطال أمر مؤكد يمرر id وactor وIdempotency-Key (SAL-7)', async () => {
+    await controller.voidOrder('so-1', 'user-gm', 'void-key');
+    expect(service.voidOrder).toHaveBeenCalledWith(
+      'so-1',
+      'user-gm',
+      'void-key',
+    );
   });
 });

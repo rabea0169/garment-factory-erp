@@ -19,6 +19,9 @@ import { ReverseJournalEntryDto } from './dto/reverse-journal-entry.dto';
 import { PaginationDto } from '../../common/dto/pagination.dto';
 import { CreateFiscalPeriodDto } from './dto/create-fiscal-period.dto';
 import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
+import { VoucherQueryDto } from './dto/voucher-query.dto';
+import { JournalEntryQueryDto } from './dto/journal-entry-query.dto';
+import { AccountStatementQueryDto } from './dto/account-statement-query.dto';
 
 @ApiTags('Accounting (الحسابات والمالية)')
 @Controller('accounting')
@@ -105,10 +108,12 @@ export class AccountingController {
   }
 
   @Get('vouchers')
-  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
-  @ApiOperation({ summary: 'أوامر الصرف والقبض' })
-  async getVouchers(@Query() pagination: PaginationDto) {
-    return this.accountingService.getVouchers(pagination);
+  // ACC-5 (P2 — GF-IMP-W3): أمين الصندوق ينشئ السندات — والقراءة آمنة،
+  // فقائمة السندات تُتاح له (كانت محصورة بالمحاسب والمدير العام).
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.CASHIER)
+  @ApiOperation({ summary: 'أوامر الصرف والقبض (فلاتر اختيارية — ACC-6)' })
+  async getVouchers(@Query() query: VoucherQueryDto) {
+    return this.accountingService.getVouchers(query);
   }
 
   @Post('vouchers')
@@ -147,5 +152,42 @@ export class AccountingController {
       body.description,
       idempotencyKey,
     );
+  }
+
+  // ===================== ACC-8 (P2 — GF-IMP-W3): سطح القراءة المحاسبي =====================
+
+  @Get('journal-entries')
+  // الأدوار المالية: ACCOUNTANT / GENERAL_MANAGER (وSUPER_ADMIN يتجاوز
+  // في RolesGuard — لكن الخطة تنص على إدراجه صراحةً هنا للقراءة المالية).
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'ACC-8: قائمة قيود اليومية ببنودها (فلاتر: from/to وisReversed وreference)',
+  })
+  async getJournalEntries(@Query() query: JournalEntryQueryDto) {
+    return this.accountingService.getJournalEntries(query);
+  }
+
+  @Get('accounts/:id/statement')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'ACC-8: كشف حساب — بنود المفهرسة (مدين/دائن/رصيد جارٍ) من journal_lines',
+  })
+  async getAccountStatement(
+    @Param('id') id: string,
+    @Query() query: AccountStatementQueryDto,
+  ) {
+    return this.accountingService.getAccountStatement(id, query);
+  }
+
+  @Get('trial-balance')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'ACC-8: ميزان المراجعة — تجميع مدين/دائن لكل حساب نشط + تحقق التوازن',
+  })
+  async getTrialBalance() {
+    return this.accountingService.getTrialBalance();
   }
 }
