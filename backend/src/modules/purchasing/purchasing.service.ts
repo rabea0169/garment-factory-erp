@@ -11,10 +11,10 @@ import { randomUUID } from 'node:crypto';
 import { CreatePurchaseOrderDto } from './dto/create-purchase-order.dto';
 import { CreatePurchaseReceiptDto } from './dto/create-purchase-receipt.dto';
 import { ReturnToSupplierDto } from './dto/return-to-supplier.dto';
+import { PurchaseOrderQueryDto } from './dto/purchase-order-query.dto';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
-import { PaginationDto } from '../../common/dto/pagination.dto';
-import { PaginatedResult } from '../../common/dto/paginated-result.dto';
+import { ListResponseDto } from '../../common/dto/list-response.dto';
 import {
   generateDocumentCode,
   DocumentCodePrefix,
@@ -53,28 +53,83 @@ export class PurchasingService {
     private readonly financialPosting: FinancialPostingService,
   ) {}
 
-  async getPurchaseOrders(pagination: PaginationDto) {
-    const page = pagination.page || 1;
-    const limit = pagination.limit || 20;
+  async getPurchaseOrders(
+    query: PurchaseOrderQueryDto = new PurchaseOrderQueryDto(),
+  ) {
+    const page = query.page || 1;
+    const limit = query.limit || 20;
     const skip = (page - 1) * limit;
+
+    // PUR-6 (أ) (P2 — GF-IMP-W3): فلاتر اختيارية عبر PurchaseOrderQueryDto
+    // (قالب CC-6) — التواريخ ISO صالحة وfrom ≤ to، وإلا 400 قبل أي استعلام.
+    // كانت القائمة ترجع كل الأوامر بلا أي فلترة.
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (
+      (from && Number.isNaN(from.getTime())) ||
+      (to && Number.isNaN(to.getTime()))
+    ) {
+      throw new BadRequestException(
+        'فلاتر أوامر الشراء تتطلب تواريخ ISO صالحة',
+      );
+    }
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية فلاتر أوامر الشراء لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+
+    const where: Prisma.PurchaseOrderWhereInput = {
+      supplier: { deletedAt: null },
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.supplierId ? { supplierId: query.supplierId } : {}),
+      ...(from || to
+        ? {
+            createdAt: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {}),
+            },
+          }
+        : {}),
+      ...(query.q ? { code: { contains: query.q, mode: 'insensitive' } } : {}),
+    };
 
     const [data, total] = await Promise.all([
       this.prisma.purchaseOrder.findMany({
         skip,
         take: limit,
-        where: { supplier: { deletedAt: null } },
+        where,
+        // PUR-6 (أ): بنود نحيفة بدل include البنود كاملًا — الحقول الجوهرية
+        // للعرض (المادة بالكود والاسم/الكمية/تكلفة الوحدة/إجمالي البند) +
+        // معرّف البند الذي تحتاجه مسارات الاستلام/المرتجع
+        // (purchaseOrderItemId). ملاحظة مخطط: لا يوجد عمود materialCode في
+        // PurchaseOrderItem — كود المادة يجلب عبر علاقة rawMaterial
+        // (عمود RawMaterial.code الفريد) بنفس إسقاط SAL-5 للبنود
+        // (variant بselect نحيف)، فتلبية «materialCode» تتم بالوصل النحيف
+        // لا بعمود مكرر.
         include: {
           supplier: { select: { id: true, code: true, name: true } },
-          items: true,
+          items: {
+            select: {
+              id: true,
+              rawMaterialId: true,
+              rawMaterial: {
+                select: { id: true, code: true, name: true },
+              },
+              quantity: true,
+              unitCost: true,
+              totalCost: true,
+            },
+          },
         },
         orderBy: { createdAt: 'desc' },
       }),
-      this.prisma.purchaseOrder.count({
-        where: { supplier: { deletedAt: null } },
-      }),
+      this.prisma.purchaseOrder.count({ where }),
     ]);
 
-    return new PaginatedResult(data, total, page, limit);
+    // CC-6: قالب الاستجابة الموحد (items/total/page/limit + توافق
+    // data/meta الانتقالي للمستهلكين الحاليين).
+    return new ListResponseDto(data, total, page, limit);
   }
 
   async createPurchaseOrder(
@@ -82,6 +137,24 @@ export class PurchasingService {
     creatorId: string,
     idempotencyKey?: string,
   ) {
+    // PUR-8 (أ) (P1 مؤجل — GF-IMP-W3): حرس دفاعي على مستوى الخدمة لكمية/
+    // تكلفة سالبة أو غير رقمية. خط الدفاع الأول هو تحقق DTO (IsPositive
+    // بمنازل محدودة — PUR-1) عبر ValidationPipe (يرفض بـ 400 قبل الخدمة)،
+    // لكن الخدمة قابلة للاستدعاء مباشرة من موديولات أخرى بلا DTO، فالخطأ
+    // هنا يمنع تلوث totalAmount/القيد المالي قبل أي كتابة.
+    for (const item of dto.items) {
+      if (
+        !Number.isFinite(item.quantity) ||
+        item.quantity <= 0 ||
+        !Number.isFinite(item.unitCost) ||
+        item.unitCost <= 0
+      ) {
+        throw new BadRequestException(
+          'كمية البند وتكلفة الوحدة يجب أن تكونا رقمين موجبين (أكبر من صفر)',
+        );
+      }
+    }
+
     // PUR-3 (P1 — GF-IMP-W2): idempotency كامل النمط القياسي — نفس المفتاح
     // + نفس المحتوى = نفس الاستجابة بلا أمر ثانٍ؛ محتوى مختلف بنفس المفتاح
     // = 409؛ السباق (P2002) = محاولة replay. المفتاح يُنشأ داخل نفس المعاملة
@@ -431,6 +504,34 @@ export class PurchasingService {
             },
           });
 
+          // PUR-6 (ب) (P2 — GF-IMP-W3) — قرار النموذج الميت الموثق:
+          // نموذج SupplierPayment ميت بلا أي استخدام في الكود كله (لا
+          // seed ولا مسار API يكتبه)، وحقل PurchaseOrder.paidAmount كان
+          // يُكتب أبدًا فيبقى صفرًا للأوامر المستلمة كلها. بلا تغيير schema
+          // (مقرر في هذه الموجة) نفّذنا الأصح عمليًا: paidAmount يتتبع
+          // قيمة الاستلام التراكمية (Σ الكميات المستلمة × تكلفة وحدة
+          // البند) — وهي نفس القيمة المُرحّلة للدائن (Cr ACCOUNTS_PAYABLE)
+          // عند كل استلام، فتصبح مرآة صادقة لما «تحمّله» المورد على هذا
+          // الأمر. تحذير دلالي موثق: الاسم paidAmount لا يعني نقدًا مدفوعًا
+          // فعليًا للمورد — لا يوجد مسار دفع نقدي بعد؛ عند إضافة مسار دفع
+          // مورد مستقبلي يُفعَّل نموذج SupplierPayment (يوجد بكل علاقاته
+          // جاهزًا: supplier/purchaseOrderId/amount/date/notes) ويُعاد ضبط
+          // دلالة الحقل آنذاك (مدفوع فعليًا = Σ SupplierPayment.amount) مع
+          // هجرة تسوية للقيم القائمة — لا يحذف النموذج بلا schema change
+          // كما نص البند.
+          const previousReceivedValue = round2(
+            currentOrder.items.reduce(
+              (sum, item) =>
+                sum +
+                (currentReceivedByItem.get(item.id) ?? 0) *
+                  Number(item.unitCost),
+              0,
+            ),
+          );
+          const cumulativeReceivedValue = round2(
+            previousReceivedValue + receiptTotal,
+          );
+
           await tx.purchaseOrder.update({
             where: { id: orderId },
             data: {
@@ -441,6 +542,9 @@ export class PurchasingService {
               status: allReceived
                 ? PurchaseOrderStatus.RECEIVED
                 : PurchaseOrderStatus.APPROVED,
+              // PUR-6 (ب): قيمة الاستلام التراكمية داخل نفس المعاملة —
+              // أي فشل لاحق يرجع الكتابة كلها فلا ينفصل المبلغ عن الاستلام.
+              paidAmount: cumulativeReceivedValue,
             },
           });
 

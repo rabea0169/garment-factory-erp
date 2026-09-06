@@ -5,12 +5,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Prisma, SalesOrderStatus, ShipmentStatus } from '@prisma/client';
-import { PaginationDto } from '../../common/dto/pagination.dto';
+import { ListResponseDto } from '../../common/dto/list-response.dto';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
+import { ShipmentQueryDto } from './dto/shipment-query.dto';
 
-import { PaginatedResult } from '../../common/dto/paginated-result.dto';
 import {
   computeRequestHash,
   createIdempotencyKey,
@@ -30,23 +30,77 @@ export class ShippingService {
     private readonly financialPosting: FinancialPostingService,
   ) {}
 
-  async getShipments(pagination: PaginationDto = new PaginationDto()) {
-    const page = pagination.page ?? 1;
-    const pageSize = pagination.limit ?? 20;
+  async getShipments(query: ShipmentQueryDto = new ShipmentQueryDto()) {
+    const page = query.page ?? 1;
+    const pageSize = query.limit ?? 20;
     const skip = (page - 1) * pageSize;
+
+    // SHP-5 (P2 — GF-IMP-W3): فلاتر اختيارية عبر ShipmentQueryDto (قالب
+    // CC-6) — التواريخ ISO صالحة وfrom ≤ to، وإلا 400 قبل أي استعلام.
+    const from = query.from ? new Date(query.from) : undefined;
+    const to = query.to ? new Date(query.to) : undefined;
+    if (
+      (from && Number.isNaN(from.getTime())) ||
+      (to && Number.isNaN(to.getTime()))
+    ) {
+      throw new BadRequestException('فلاتر الشحنات تتطلب تواريخ ISO صالحة');
+    }
+    if (from && to && from > to) {
+      throw new BadRequestException(
+        'تاريخ بداية فلاتر الشحنات لا يمكن أن يكون بعد تاريخ النهاية',
+      );
+    }
+
+    const where: Prisma.ShipmentWhereInput = {
+      ...(query.status ? { status: query.status } : {}),
+      ...(from || to
+        ? {
+            createdAt: {
+              ...(from ? { gte: from } : {}),
+              ...(to ? { lte: to } : {}),
+            },
+          }
+        : {}),
+      ...(query.q
+        ? {
+            OR: [
+              { code: { contains: query.q, mode: 'insensitive' } },
+              { trackingNumber: { contains: query.q, mode: 'insensitive' } },
+            ],
+          }
+        : {}),
+    };
+
+    // SHP-5 (P2 — GF-IMP-W3): إسقاط انتقائي بدل include العميل كاملًا —
+    // كان `include: { salesOrder: { include: { customer: true } } }` يسرّب
+    // كائن العميل كاملًا (الرصيد balance، الهاتف، البريد، الملاحظات ...)
+    // إلى كل مستخدم يقرأ قائمة الشحنات. الإسقاط الآن: أمر البيع بمعرّفه
+    // وكوده فقط، والعميل بمعرّفه واسمه فقط — الحقول التي تعرضها القائمة
+    // فعليًا. أي حقل إضافي يحتاجه مستهلك لاحقًا يُضاف هنا صراحةً.
     const options = {
+      where,
       orderBy: { createdAt: 'desc' } as const,
       skip,
       take: pageSize,
-      include: { salesOrder: { include: { customer: true } } },
+      include: {
+        salesOrder: {
+          select: {
+            id: true,
+            code: true,
+            customer: { select: { id: true, name: true } },
+          },
+        },
+      },
     };
 
     const [data, total] = await Promise.all([
       this.prisma.shipment.findMany(options),
-      this.prisma.shipment.count(),
+      this.prisma.shipment.count({ where }),
     ]);
 
-    return new PaginatedResult(data, total, page, pageSize);
+    // CC-6: قالب الاستجابة الموحد (items/total/page/limit + توافق
+    // data/meta الانتقالي للمستهلكين الحاليين).
+    return new ListResponseDto(data, total, page, pageSize);
   }
 
   async createShipment(
@@ -321,7 +375,35 @@ export class ShippingService {
     status: ShipmentStatus,
     actorId: string,
     proofOfDelivery?: string,
+    idempotencyKey?: string,
   ) {
+    // SHP-6 (P2 — GF-IMP-W3): تحديث حالة الشحنة بلا idempotency كان يسمح
+    // لإعادة إرسال نفس الطلب (شبكة بطيئة + retry) بتكرار الأثر — لا مشكلة
+    // في الحالة نفسها (CAS يرفض الانتقال الثاني) لكن ActivityLog يتكرر
+    // والمستخدم يرى 409 «تغيّر بالتزامن» بدل استجابته الأصلية. القرار
+    // الموثق (ADR بديل — البران يقبل الخيارين): نفس نمط createShipment —
+    // نطاق مستقل shipping.status-update + بصمة تشمل الحالة الهدف
+    // وإثبات التسليم والفاعل؛ نفس المفتاح + نفس البصمة = نفس الاستجابة
+    // المخزنة (replayed)، وبصمة مختلفة = 409. المفتاح يُنشأ داخل المعاملة
+    // والاستجابة لا تُخزن إلا بعد نجاح كل آثار الانتقال (عكس القيد عند
+    // الإلغاء، RETURNED gate، ActivityLog) — فشل أي خطوة يرجع المعاملة
+    // كلها فلا يبقى مفتاح بلا استجابة.
+    const statusScope = 'shipping.status-update';
+    const requestHash = computeRequestHash({
+      operation: statusScope,
+      shipmentId: id,
+      status,
+      actorId,
+      proofOfDelivery: proofOfDelivery?.trim() ?? null,
+    });
+    const replay = await tryReplayIdempotencyKey(
+      this.prisma,
+      idempotencyKey,
+      statusScope,
+      requestHash,
+    );
+    if (replay) return replay;
+
     const shipment = await this.prisma.shipment.findUnique({
       where: { id },
       include: { salesOrder: { include: { items: true } } },
@@ -359,102 +441,144 @@ export class ShippingService {
       );
     }
 
-    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-      // SHP-3 (ب) (P1 — GF-IMP-W2): RETURNED لا يُقبل إلا بوجود مرتجع بيع
-      // مقترن بأمر البيع (SalesReturn بـ salesOrderId) — الدلالة الجديدة:
-      // البضاعة عادت فعليًا وأُثبت أثرها المالي عبر مرتجع البيع، فالشحنة
-      // لا «تُرجَع» تخطيطيًا قبل أن يُنشأ المرتجع (409 برسالة عربية).
-      if (status === ShipmentStatus.RETURNED) {
-        const linkedReturn = await tx.salesReturn.findFirst({
-          where: { salesOrderId: shipment.salesOrderId },
-          select: { id: true },
-        });
-        if (!linkedReturn) {
-          throw new ConflictException(
-            'لا يمكن تحويل الشحنة إلى RETURNED — أنشئ مرتجع البيع المقترن بالأمر أولًا',
-          );
-        }
-      }
-
-      // SHP-3 (أ): إلغاء شحنة PREPARING — عكس قيد تكلفة الشحن (نقد أو
-      // استحقاق) داخل نفس المعاملة عبر النسخة InTx، ثم إعادة أمر البيع
-      // إلى CONFIRMED بـ CAS حتى يمكن إنشاء شحنة بديلة. القيد يوجد بأحد
-      // مفتاحين ثابتين مشتقين من معرف الشحنة (كما في createShipment).
-      if (status === ShipmentStatus.CANCELLED) {
-        const costEntry = await tx.journalEntry.findFirst({
-          where: {
-            postingKey: {
-              in: [`shipping-cost-cash:${id}`, `shipping-cost-accrual:${id}`],
-            },
-          },
-          select: { id: true, isReversed: true, code: true },
-        });
-        if (costEntry) {
-          if (costEntry.isReversed) {
-            throw new ConflictException(
-              `قيد تكلفة الشحنة ${costEntry.code} معكوس بالفعل — حالة غير متسقة تتطلب مراجعة يدوية`,
-            );
-          }
-          await this.financialPosting.reverseJournalEntryInTx(
+    try {
+      return await this.prisma.$transaction(
+        async (tx: Prisma.TransactionClient) => {
+          // SHP-6: المفتاح يُنشأ أولًا داخل المعاملة — أي فشل لاحق
+          // (بوابة RETURNED، عكس القيد، CAS) يرجع المعاملة كلها فلا يبقى
+          // مفتاح بلا استجابة، وسباق مفتاحين متزامنين يلتقط P2002 في
+          // المعالج أدناه ويعيد التشغيل.
+          await createIdempotencyKey(
             tx,
-            costEntry.id,
-            actorId,
-            `عكس قيد تكلفة شحنة ملغاة ${shipment.code}`,
+            idempotencyKey,
+            statusScope,
+            requestHash,
           );
-        }
-        // قيد غائب = شحنة بلا تكلفة مرحّلة (تكلفة صفر) — لا شيء لعكسه.
 
-        const orderRevert = await tx.salesOrder.updateMany({
-          where: {
-            id: shipment.salesOrderId,
-            status: SalesOrderStatus.SHIPPED,
-          },
-          data: { status: SalesOrderStatus.CONFIRMED },
-        });
-        if (orderRevert.count !== 1) {
-          throw new ConflictException(
-            'تعذر إعادة أمر البيع إلى CONFIRMED — تغيّرت حالته بشكل متزامن؛ راجع الأمر قبل إعادة المحاولة',
-          );
-        }
-      }
-      const result = await tx.shipment.updateMany({
-        where: { id, status: shipment.status },
-        data: {
-          status,
-          shippedAt:
-            status === ShipmentStatus.SHIPPED ? new Date() : shipment.shippedAt,
-          deliveredAt:
-            status === ShipmentStatus.DELIVERED
-              ? new Date()
-              : shipment.deliveredAt,
-          proofOfDelivery:
-            status === ShipmentStatus.DELIVERED
-              ? proofOfDelivery?.trim()
-              : undefined,
-          deliveredById:
-            status === ShipmentStatus.DELIVERED ? actorId : undefined,
-        },
-      });
-      if (result.count !== 1) {
-        throw new ConflictException('Shipment status changed concurrently');
-      }
+          // SHP-3 (ب) (P1 — GF-IMP-W2): RETURNED لا يُقبل إلا بوجود مرتجع بيع
+          // مقترن بأمر البيع (SalesReturn بـ salesOrderId) — الدلالة الجديدة:
+          // البضاعة عادت فعليًا وأُثبت أثرها المالي عبر مرتجع البيع، فالشحنة
+          // لا «تُرجَع» تخطيطيًا قبل أن يُنشأ المرتجع (409 برسالة عربية).
+          if (status === ShipmentStatus.RETURNED) {
+            const linkedReturn = await tx.salesReturn.findFirst({
+              where: { salesOrderId: shipment.salesOrderId },
+              select: { id: true },
+            });
+            if (!linkedReturn) {
+              throw new ConflictException(
+                'لا يمكن تحويل الشحنة إلى RETURNED — أنشئ مرتجع البيع المقترن بالأمر أولًا',
+              );
+            }
+          }
 
-      const updated = await tx.shipment.findUnique({ where: { id } });
-      if (!updated) throw new NotFoundException('Shipment not found');
-      await tx.activityLog.create({
-        data: {
-          userId: actorId,
-          action: 'SHIPMENT_STATUS_CHANGED',
-          module: 'SHIPPING',
-          details: {
-            shipmentId: id,
-            from: shipment.status,
-            to: status,
-            proofOfDelivery: status === ShipmentStatus.DELIVERED,
-          },
+          // SHP-3 (أ): إلغاء شحنة PREPARING — عكس قيد تكلفة الشحن (نقد أو
+          // استحقاق) داخل نفس المعاملة عبر النسخة InTx، ثم إعادة أمر البيع
+          // إلى CONFIRMED بـ CAS حتى يمكن إنشاء شحنة بديلة. القيد يوجد بأحد
+          // مفتاحين ثابتين مشتقين من معرف الشحنة (كما في createShipment).
+          if (status === ShipmentStatus.CANCELLED) {
+            const costEntry = await tx.journalEntry.findFirst({
+              where: {
+                postingKey: {
+                  in: [
+                    `shipping-cost-cash:${id}`,
+                    `shipping-cost-accrual:${id}`,
+                  ],
+                },
+              },
+              select: { id: true, isReversed: true, code: true },
+            });
+            if (costEntry) {
+              if (costEntry.isReversed) {
+                throw new ConflictException(
+                  `قيد تكلفة الشحنة ${costEntry.code} معكوس بالفعل — حالة غير متسقة تتطلب مراجعة يدوية`,
+                );
+              }
+              await this.financialPosting.reverseJournalEntryInTx(
+                tx,
+                costEntry.id,
+                actorId,
+                `عكس قيد تكلفة شحنة ملغاة ${shipment.code}`,
+              );
+            }
+            // قيد غائب = شحنة بلا تكلفة مرحّلة (تكلفة صفر) — لا شيء لعكسه.
+
+            const orderRevert = await tx.salesOrder.updateMany({
+              where: {
+                id: shipment.salesOrderId,
+                status: SalesOrderStatus.SHIPPED,
+              },
+              data: { status: SalesOrderStatus.CONFIRMED },
+            });
+            if (orderRevert.count !== 1) {
+              throw new ConflictException(
+                'تعذر إعادة أمر البيع إلى CONFIRMED — تغيّرت حالته بشكل متزامن؛ راجع الأمر قبل إعادة المحاولة',
+              );
+            }
+          }
+          const result = await tx.shipment.updateMany({
+            where: { id, status: shipment.status },
+            data: {
+              status,
+              shippedAt:
+                status === ShipmentStatus.SHIPPED
+                  ? new Date()
+                  : shipment.shippedAt,
+              deliveredAt:
+                status === ShipmentStatus.DELIVERED
+                  ? new Date()
+                  : shipment.deliveredAt,
+              proofOfDelivery:
+                status === ShipmentStatus.DELIVERED
+                  ? proofOfDelivery?.trim()
+                  : undefined,
+              deliveredById:
+                status === ShipmentStatus.DELIVERED ? actorId : undefined,
+            },
+          });
+          if (result.count !== 1) {
+            throw new ConflictException('Shipment status changed concurrently');
+          }
+
+          const updated = await tx.shipment.findUnique({ where: { id } });
+          if (!updated) throw new NotFoundException('Shipment not found');
+          await tx.activityLog.create({
+            data: {
+              userId: actorId,
+              action: 'SHIPMENT_STATUS_CHANGED',
+              module: 'SHIPPING',
+              details: {
+                shipmentId: id,
+                from: shipment.status,
+                to: status,
+                proofOfDelivery: status === ShipmentStatus.DELIVERED,
+              },
+            },
+          });
+
+          // SHP-4 (نفس فلسفة createShipment): الاستجابة المنسّقة (shippingCost
+          // رقمي لا Decimal خام) تُخزَّن على المفتاح وتُعاد للطرف الأول —
+          // الاستجابة الأولى وإعادة التشغيل متطابقتان في الشكل والقيم.
+          const response = {
+            ...updated,
+            shippingCost: Number(updated.shippingCost ?? 0),
+          };
+          await storeIdempotencyResponse(tx, idempotencyKey, response);
+          return response;
         },
-      });
-      return updated;
-    });
+      );
+    } catch (error) {
+      // SHP-6: سباق مفتاحين متزامنين → الخاسر يلتقط P2002 على فهرس
+      // idempotency ويعيد محاولة التشغيل (الرابح خزّن استجابته بالفعل).
+      if (idempotencyKey && isIdempotencyUniqueViolation(error)) {
+        const replayed = await tryReplayIdempotencyKey(
+          this.prisma,
+          idempotencyKey,
+          statusScope,
+          requestHash,
+        );
+        if (replayed) return replayed;
+      }
+      throw error;
+    }
   }
 }

@@ -59,20 +59,134 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
     );
   });
 
-  it('يجلب الشحنات مع أمر البيع والعميل', async () => {
-    const shipments = [{ id: 'sh-1', salesOrder: { customer: {} } }];
-    prisma.shipment.findMany.mockResolvedValue(shipments);
-    prisma.shipment.count.mockResolvedValue(shipments.length);
+  // SHP-5 (P2 — GF-IMP-W3): قائمة الشحنات بإسقاط انتقائي + فلاتر عبر
+  // ShipmentQueryDto (قالب CC-6) — كانت ترجع العميل كاملًا (رصيد/هاتف/...)
+  // وتدعم الترقيم فقط بلا أي فلترة.
+  describe('SHP-5 — إسقاط انتقائي وفلاتر قائمة الشحنات', () => {
+    it('يجلب الشحنات بإسقاط انتقائي: salesOrder {id,code} وcustomer {id,name} فقط', async () => {
+      const shipments = [
+        {
+          id: 'sh-1',
+          salesOrder: {
+            id: 'so-1',
+            code: 'SO-1',
+            customer: { id: 'c-1', name: 'عميل' },
+          },
+        },
+      ];
+      prisma.shipment.findMany.mockResolvedValue(shipments);
+      prisma.shipment.count.mockResolvedValue(shipments.length);
 
-    const result = await service.getShipments();
+      const result = await service.getShipments();
 
-    expect(result.data).toEqual(shipments);
-    expect(prisma.shipment.findMany).toHaveBeenCalledWith(
-      expect.objectContaining({
-        include: { salesOrder: { include: { customer: true } } },
-        orderBy: { createdAt: 'desc' },
-      }),
-    );
+      // الإسقاط الانتقائي — لا include customer: true
+      expect(prisma.shipment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          include: {
+            salesOrder: {
+              select: {
+                id: true,
+                code: true,
+                customer: { select: { id: true, name: true } },
+              },
+            },
+          },
+          orderBy: { createdAt: 'desc' },
+        }),
+      );
+      // الاستجابة تلتزم قالب CC-6 (items + توافق data/meta)
+      expect(result.items).toEqual(shipments);
+      expect(result.data).toBe(result.items);
+      expect(result.total).toBe(1);
+      expect(result.page).toBe(1);
+      expect(result.limit).toBe(20);
+    });
+
+    it('يرقّم بحد أقصى 100 ويمرر skip/take وفق page/limit', async () => {
+      prisma.shipment.findMany.mockResolvedValue([]);
+      prisma.shipment.count.mockResolvedValue(0);
+
+      await service.getShipments({ page: 3, limit: 50 });
+
+      expect(prisma.shipment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ skip: 100, take: 50 }),
+      );
+    });
+
+    it('يفلتر بالحالة عبر where ويمرر نفس where إلى count', async () => {
+      prisma.shipment.findMany.mockResolvedValue([]);
+      prisma.shipment.count.mockResolvedValue(0);
+
+      await service.getShipments({ status: ShipmentStatus.IN_TRANSIT });
+
+      const expectedWhere = { status: ShipmentStatus.IN_TRANSIT };
+      expect(prisma.shipment.findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ where: expectedWhere }),
+      );
+      expect(prisma.shipment.count).toHaveBeenCalledWith({
+        where: expectedWhere,
+      });
+    });
+
+    it('يفلتر بالفترة from/to على createdAt (gte/lte)', async () => {
+      prisma.shipment.findMany.mockResolvedValue([]);
+      prisma.shipment.count.mockResolvedValue(0);
+
+      await service.getShipments({
+        from: '2026-08-01T00:00:00Z',
+        to: '2026-08-31T23:59:59Z',
+      });
+
+      const findManyCalls = prisma.shipment.findMany.mock
+        .calls as unknown as Array<
+        [{ where?: { createdAt?: Record<string, Date> } }]
+      >;
+      const findManyCall = findManyCalls[0][0];
+      expect(findManyCall.where?.createdAt?.gte).toEqual(
+        new Date('2026-08-01T00:00:00Z'),
+      );
+      expect(findManyCall.where?.createdAt?.lte).toEqual(
+        new Date('2026-08-31T23:59:59Z'),
+      );
+      expect(prisma.shipment.count).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            createdAt: expect.objectContaining({
+              gte: new Date('2026-08-01T00:00:00Z'),
+              lte: new Date('2026-08-31T23:59:59Z'),
+            }) as Record<string, unknown>,
+          }) as Record<string, unknown>,
+        }) as Record<string, unknown>,
+      );
+    });
+
+    it('يرفض فترة معكوسة (from بعد to) بـ 400 قبل أي استعلام', async () => {
+      await expect(
+        service.getShipments({
+          from: '2026-09-01T00:00:00Z',
+          to: '2026-08-01T00:00:00Z',
+        }),
+      ).rejects.toThrow(BadRequestException);
+      expect(prisma.shipment.findMany).not.toHaveBeenCalled();
+      expect(prisma.shipment.count).not.toHaveBeenCalled();
+    });
+
+    it('نص البحث q يبحث في code وtrackingNumber (غير حساس لحالة الأحرف)', async () => {
+      prisma.shipment.findMany.mockResolvedValue([]);
+      prisma.shipment.count.mockResolvedValue(0);
+
+      await service.getShipments({ q: 'TRK-99' });
+
+      const findManyCalls = prisma.shipment.findMany.mock
+        .calls as unknown as Array<
+        [{ where?: { OR?: Array<Record<string, unknown>> } }]
+      >;
+      const findManyCall = findManyCalls[0][0];
+      expect(findManyCall.where?.OR).toEqual([
+        { code: { contains: 'TRK-99', mode: 'insensitive' } },
+        { trackingNumber: { contains: 'TRK-99', mode: 'insensitive' } },
+      ]);
+    });
   });
 
   it('ينشئ شحنة بكود SHP-* ويحفظ بياناتها (حالة PREPARING الافتراضية من المخطط)', async () => {
@@ -635,7 +749,9 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
           data: { status: SalesOrderStatus.CONFIRMED },
         }),
       );
-      expect(result.status).toBe(ShipmentStatus.CANCELLED);
+      expect((result as { status: ShipmentStatus }).status).toBe(
+        ShipmentStatus.CANCELLED,
+      );
       expect(prisma.activityLog.create).toHaveBeenCalled();
     });
 
@@ -686,7 +802,9 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
         'actor-1',
       );
       expect(financial.reverseJournalEntryInTx).not.toHaveBeenCalled();
-      expect(result.status).toBe(ShipmentStatus.CANCELLED);
+      expect((result as { status: ShipmentStatus }).status).toBe(
+        ShipmentStatus.CANCELLED,
+      );
     });
 
     it('أمر البيع لم يعد SHIPPED → 409 بلا تغيير حالة الشحنة', async () => {
@@ -724,6 +842,171 @@ describe('ShippingService — الشحنات (GF-0003)', () => {
         ),
       ).rejects.toThrow(BadRequestException);
       expect(prisma.shipment.updateMany).not.toHaveBeenCalled();
+    });
+  });
+
+  // SHP-6 (P2 — GF-IMP-W3): تحديث حالة الشحنة idempotent بنطاق
+  // shipping.status-update — replay يعيد الاستجابة المخزنة، وبصمة مختلفة
+  // (حالة هدف أو POD مختلف) = 409، والمفتاح داخل المعاملة مع الاستجابة.
+  describe('SHP-6 — idempotency تحديث حالة الشحنة', () => {
+    const statusHash = (args: {
+      shipmentId: string;
+      status: ShipmentStatus;
+      actorId: string;
+      proofOfDelivery?: string;
+    }) =>
+      computeRequestHash({
+        operation: 'shipping.status-update',
+        shipmentId: args.shipmentId,
+        status: args.status,
+        actorId: args.actorId,
+        proofOfDelivery: args.proofOfDelivery?.trim() ?? null,
+      });
+
+    it('ينشئ المفتاح داخل المعاملة ويخزن الاستجابة المنسّقة (shippingCost رقمي)', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+      prisma.idempotencyKey.create.mockResolvedValue({ id: 'idem-status-1' });
+      prisma.shipment.findUnique
+        .mockResolvedValueOnce({
+          id: 'sh-1',
+          status: ShipmentStatus.PREPARING,
+          code: 'SHP-1',
+          salesOrder: { items: [] },
+        })
+        .mockResolvedValue({
+          id: 'sh-1',
+          status: ShipmentStatus.SHIPPED,
+          shippingCost: '75.5',
+        });
+      prisma.shipment.updateMany.mockResolvedValue({ count: 1 });
+
+      const first = await service.updateShipmentStatus(
+        'sh-1',
+        ShipmentStatus.SHIPPED,
+        'actor-1',
+        undefined,
+        'status-key-1',
+      );
+
+      expect(prisma.idempotencyKey.create).toHaveBeenCalledWith({
+        data: expect.objectContaining({
+          key: 'status-key-1',
+          scope: 'shipping.status-update',
+        }) as Record<string, unknown>,
+        select: { id: true },
+      });
+      // الاستجابة الأولى منسّقة (رقمية) — نفس فلسفة SHP-4
+      const firstTyped = first as { shippingCost: number };
+      expect(firstTyped.shippingCost).toBe(75.5);
+      const updateCalls = prisma.idempotencyKey.update.mock
+        .calls as unknown as Array<
+        [{ where: { key: string }; data: { response: unknown } }]
+      >;
+      const stored = updateCalls[0][0].data.response;
+      expect(stored).toEqual(firstTyped);
+    });
+
+    it('replay: نفس المفتاح + نفس البصمة (نفس الحالة النهائية) يعيد الاستجابة المخزنة بلا أثر ثانٍ', async () => {
+      const stored = {
+        id: 'sh-1',
+        status: ShipmentStatus.SHIPPED,
+        shippingCost: 0,
+      };
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'status-key-replay',
+        scope: 'shipping.status-update',
+        requestHash: statusHash({
+          shipmentId: 'sh-1',
+          status: ShipmentStatus.SHIPPED,
+          actorId: 'actor-1',
+        }),
+        response: stored,
+      });
+
+      const result = await service.updateShipmentStatus(
+        'sh-1',
+        ShipmentStatus.SHIPPED,
+        'actor-1',
+        undefined,
+        'status-key-replay',
+      );
+
+      expect(result).toEqual({ ...stored, replayed: true });
+      // بلا أثر ثانٍ: لا قراءة شحنة ولا تحديث ولا سجل تدقيق
+      expect(prisma.shipment.findUnique).not.toHaveBeenCalled();
+      expect(prisma.shipment.updateMany).not.toHaveBeenCalled();
+      expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    });
+
+    it('نفس المفتاح + بصمة مختلفة (حالة نهائية مختلفة) → 409 بلا أي كتابة', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'status-key-conflict',
+        scope: 'shipping.status-update',
+        // المخزن لطلب SHIPPED — الطلب الحالي CANCELLED ببصمة مختلفة
+        requestHash: statusHash({
+          shipmentId: 'sh-1',
+          status: ShipmentStatus.SHIPPED,
+          actorId: 'actor-1',
+        }),
+        response: { id: 'sh-1', status: ShipmentStatus.SHIPPED },
+      });
+
+      await expect(
+        service.updateShipmentStatus(
+          'sh-1',
+          ShipmentStatus.CANCELLED,
+          'actor-1',
+          undefined,
+          'status-key-conflict',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.shipment.findUnique).not.toHaveBeenCalled();
+      expect(prisma.shipment.updateMany).not.toHaveBeenCalled();
+      expect(prisma.activityLog.create).not.toHaveBeenCalled();
+    });
+
+    it('بصمة مختلفة بنفس المفتاح عبر POD مختلف → 409 (البصمة تشمل إثبات التسليم)', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'status-key-pod',
+        scope: 'shipping.status-update',
+        requestHash: statusHash({
+          shipmentId: 'sh-1',
+          status: ShipmentStatus.DELIVERED,
+          actorId: 'actor-1',
+          proofOfDelivery: 'POD-1',
+        }),
+        response: { id: 'sh-1', status: ShipmentStatus.DELIVERED },
+      });
+
+      await expect(
+        service.updateShipmentStatus(
+          'sh-1',
+          ShipmentStatus.DELIVERED,
+          'actor-1',
+          'POD-2',
+          'status-key-pod',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
+      expect(prisma.shipment.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('مفتاح بنطاق مختلف (scope mismatch) → 409 — لا تلوث بين المسارات', async () => {
+      prisma.idempotencyKey.findUnique.mockResolvedValue({
+        key: 'cross-scope-key',
+        scope: 'shipping.shipment.create',
+        requestHash: 'irrelevant',
+        response: { id: 'sh-1' },
+      });
+
+      await expect(
+        service.updateShipmentStatus(
+          'sh-1',
+          ShipmentStatus.SHIPPED,
+          'actor-1',
+          undefined,
+          'cross-scope-key',
+        ),
+      ).rejects.toBeInstanceOf(ConflictException);
     });
   });
 
