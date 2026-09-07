@@ -97,6 +97,33 @@ integrationDescribe('GF-0013 production workflow integration', () => {
       },
     });
 
+    // SELF-SUFFICIENCY (test hygiene) — مطابقة لنمط Cluster 5 أدناه: قيد
+    // استهلاك الخامات ACC-F01 (Dr WIP / Cr INVENTORY) صار يُرحَّل داخل
+    // consumeMaterial، وهذان الحسابان لا يزرعهما أي تهيئة CI (migrate deploy
+    // بلا seed تزرع wave2 حسابات أخرى فقط، وباقي المواصفات تفرغ جدول accounts
+    // وتعيد زرع مجموعتها الجزئية). upsert كلا الحسابين لينجح هذا المجموع بأي
+    // ترتيب تشغيل وعلى أي حالة قاعدة (CI نظيفة أو محلية مزروعة).
+    await prisma.account.upsert({
+      where: { id: CHART_OF_ACCOUNTS.INVENTORY },
+      create: {
+        id: CHART_OF_ACCOUNTS.INVENTORY,
+        code: `1300-GF13-${randomUUID().slice(0, 8)}`,
+        name: 'GF-0013 Inventory',
+        type: AccountType.ASSET,
+      },
+      update: { isActive: true },
+    });
+    await prisma.account.upsert({
+      where: { id: CHART_OF_ACCOUNTS.WIP },
+      create: {
+        id: CHART_OF_ACCOUNTS.WIP,
+        code: `1320-GF13-${randomUUID().slice(0, 8)}`,
+        name: 'GF-0013 Work in Progress',
+        type: AccountType.ASSET,
+      },
+      update: { isActive: true },
+    });
+
     // GF-IMP-W2 / ACC-3: الترحيلات تتطلب فترة مفتوحة — تُزرع بعد كل TRUNCATE
     await seedOpenFiscalPeriod(prisma, user.id);
 
@@ -707,6 +734,19 @@ integrationDescribe('Cluster 5 finished-good posting', () => {
         id: CHART_OF_ACCOUNTS.WIP,
         code: `1320-C5-${randomUUID().slice(0, 8)}`,
         name: 'Cluster 5 Work in Progress',
+        type: AccountType.ASSET,
+      },
+      update: { isActive: true },
+    });
+    // ACC-F01 (P0): سيناريو Cluster 5 يستهلك خامات قبل إكمال PACKING،
+    // وقيد الاستهلاك يدين WIP ويدائن INVENTORY — لذا يلزم upsert حساب
+    // INVENTORY أيضًا (لا يزرعه migrate deploy وحده في CI).
+    await prisma.account.upsert({
+      where: { id: CHART_OF_ACCOUNTS.INVENTORY },
+      create: {
+        id: CHART_OF_ACCOUNTS.INVENTORY,
+        code: `1300-C5-${randomUUID().slice(0, 8)}`,
+        name: 'Cluster 5 Inventory',
         type: AccountType.ASSET,
       },
       update: { isActive: true },
