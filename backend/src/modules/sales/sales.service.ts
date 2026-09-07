@@ -605,7 +605,10 @@ export class SalesService {
           ...(cogsAmount > 0
             ? [
                 {
-                  debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  // ACC-F01 (P0 — audit-BE2): المرتجع يُستعاد إلى مخزون
+                  // المنتج التام (receiveFinishedGood أدناه) — عكس قيد
+                  // التأكيد المصحح يُدين FINISHED_GOOD_STOCK لا INVENTORY.
+                  debitAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
                   creditAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
                   amount: cogsAmount,
                   description: `عكس تكلفة المرتجع ${order.code}`,
@@ -919,7 +922,13 @@ export class SalesService {
                 // ProductVariant بلا عمود code — المعرِّفات الفعلية:
                 // size/color (فريدان مع المنتج) وbarcode للقراءة السريعة.
                 variant: {
-                  select: { id: true, size: true, color: true, barcode: true },
+                  select: {
+                    id: true,
+                    size: true,
+                    color: true,
+                    barcode: true,
+                    product: { select: { id: true, code: true, name: true } },
+                  },
                 },
               },
             },
@@ -1006,7 +1015,13 @@ export class SalesService {
               // ProductVariant بلا عمود code — المعرِّفات الفعلية: size/color
               // (فريدان مع المنتج) وbarcode للقراءة السريعة.
               variant: {
-                select: { id: true, size: true, color: true, barcode: true },
+                select: {
+                  id: true,
+                  size: true,
+                  color: true,
+                  barcode: true,
+                  product: { select: { id: true, code: true, name: true } },
+                },
               },
             },
           },
@@ -1015,9 +1030,37 @@ export class SalesService {
       }),
       this.prisma.salesOrder.count({ where }),
     ]);
+
+    // UAT-FIX (مرتجع الجوال): حوار المرتجع يحتاج الكمية المرتجعة سابقًا لكل
+    // بند لحساب «المتاح للإرجاع» — بدونها يعرض الكمية الأصلية كاملة
+    // (مضلل). استعلام تجميعي واحد لكل صفحة القائمة.
+    const pageItemIds = data.flatMap((order) =>
+      (order.items ?? []).map((i) => i.id),
+    );
+    const returnedMap = new Map<string, number>();
+    if (pageItemIds.length > 0) {
+      const returnItems = await this.prisma.salesReturnItem.findMany({
+        where: { salesOrderItemId: { in: pageItemIds } },
+        select: { salesOrderItemId: true, quantity: true },
+      });
+      for (const ri of returnItems) {
+        returnedMap.set(
+          ri.salesOrderItemId,
+          (returnedMap.get(ri.salesOrderItemId) ?? 0) + ri.quantity,
+        );
+      }
+    }
+    const ordersWithReturned = data.map((order) => ({
+      ...order,
+      items: (order.items ?? []).map((item) => ({
+        ...item,
+        returnedQuantity: returnedMap.get(item.id) ?? 0,
+      })),
+    }));
+
     // SAL-5: عقد الاستجابة الكنوني (items/total/page/limit + توافق
     // data/meta) — mobile الحالي يقرأ data فلا انكسار.
-    return new ListResponseDto(data, total, page, limit);
+    return new ListResponseDto(ordersWithReturned, total, page, limit);
   }
 
   async createSalesOrder(
@@ -1212,11 +1255,25 @@ export class SalesService {
         //   * creditLimit = NULL  → unlimited (historical behavior, no check)
         //   * creditLimit = 0     → no credit allowed at all (any CREDIT order is rejected)
         //   * creditLimit > 0     → cap at this number (current AR + new order ≤ limit)
-        // We use the customer record that was eager-loaded above (order.customer)
-        // so no extra DB round trip is needed inside the tx. The check happens
-        // BEFORE the status transition so a failed check leaves the order in DRAFT.
+        // SAL-1 (P1 — audit-BE2): قفل صف العميل وإعادة قراءة رصيده داخل
+        // المعاملة قبل فحص الحد. القراءة القديمة (order.customer المحمّل
+        // قبل المعاملة) تجتاز الفحص على رصيد متقادم: طلبا بيع آجل متزامنان
+        // لنفس العميل يرى كل منهما الرصيد نفسه فيتجاوزان الحد معًا. القفل
+        // هنا (SELECT ... FOR UPDATE) هو نفس القفل الذي يطبقه محرك الترحيل
+        // لاحقًا عبر customerUpdates — اكتسابه مبكرًا يسلسل كل التأكيدات على
+        // العميل، والقراءة الجديدة تُجري الفحص على الرصيد الفعلي الملتزم.
         if (order.paymentType === PaymentType.CREDIT) {
-          const customer = order.customer;
+          if (order.customer) {
+            await tx.$queryRaw(
+              Prisma.sql`SELECT id FROM customers WHERE id = ${order.customerId} FOR UPDATE`,
+            );
+          }
+          const customer = order.customer
+            ? await tx.customer.findUnique({
+                where: { id: order.customerId },
+                select: { creditLimit: true, balance: true },
+              })
+            : null;
           if (customer) {
             const limit = customer.creditLimit;
             const limitNum =
@@ -1319,7 +1376,11 @@ export class SalesService {
         if (totalCogs > 0) {
           lines.push({
             debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
-            creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+            // ACC-F01 (P0 — audit-BE2): البضاعة المباعة تُصرف من مخزون
+            // المنتج التام (finished_good_stocks عبر bulkIssueFinishedGoods
+            // أعلاه) لا من مخزون الخامات — القيد القديم (Cr INVENTORY) كان
+            // يخفض حساب الخامات بينما التام يتضخم بلا إنقاص أبدًا.
+            creditAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
             amount: round2(totalCogs),
             description: `تكلفة بضاعة مباعة ${order.code}`,
           });

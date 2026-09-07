@@ -64,17 +64,30 @@ void main() {
       expect(cost.status, 'FINALIZED');
     });
 
-    test('rejects an unknown status instead of leaking dynamic data', () {
-      expect(
-        () => WorkOrderModel.fromJson({
-          'id': 'wo-1',
-          'code': 'WO-0001',
-          'quantity': 1,
-          'status': 'UNKNOWN',
-          'createdAt': '2026-08-26T08:30:00.000Z',
-        }),
-        throwsFormatException,
-      );
+    test('maps FINISHING (legacy server value) to ironing — one old row must not break the list', () {
+      // audit-FE2 (P2): قيمة FINISHING الخادمية القديمة كانت ترمي
+      // FormatException فتفشل قائمة أوامر التشغيل كلها لو وُجد صف واحد بها.
+      final model = WorkOrderModel.fromJson({
+        'id': 'wo-1',
+        'code': 'WO-0001',
+        'quantity': 1,
+        'status': 'FINISHING',
+        'createdAt': '2026-08-26T08:30:00.000Z',
+      });
+      expect(model.toEntity().status, WorkOrderStatus.ironing);
+    });
+
+    test('tolerates an unknown status (inProgress) instead of throwing', () {
+      // audit-FE2 (P2): التسامح بدل الرمي — قيمة مستقبلية غير معروفة تُعرض
+      // كـ inProgress بدل إسقاط القائمة كاملة.
+      final model = WorkOrderModel.fromJson({
+        'id': 'wo-1',
+        'code': 'WO-0001',
+        'quantity': 1,
+        'status': 'SOME_FUTURE_STATUS',
+        'createdAt': '2026-08-26T08:30:00.000Z',
+      });
+      expect(model.toEntity().status, WorkOrderStatus.inProgress);
     });
   });
 }

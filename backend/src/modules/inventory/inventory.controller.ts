@@ -129,7 +129,10 @@ export class InventoryController {
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.inventoryService.receive({ ...body, idempotencyKey }, userId);
+    return this.inventoryService.receive(
+      { ...body, idempotencyKey, postGl: true },
+      userId,
+    );
   }
 
   @Post('movements/issue')
@@ -142,7 +145,10 @@ export class InventoryController {
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
-    return this.inventoryService.issue({ ...body, idempotencyKey }, userId);
+    return this.inventoryService.issue(
+      { ...body, idempotencyKey, postGl: true },
+      userId,
+    );
   }
 
   @Post('movements/adjust')

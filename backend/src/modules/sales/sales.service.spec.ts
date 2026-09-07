@@ -440,6 +440,17 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       prisma,
       expect.objectContaining({
         reference: 'SO-1',
+        // ACC-F01 (audit-BE2 P0): COGS يُقيد ضد مخزون المنتج التام — البضاعة
+        // تُصرف من finished_good_stocks (bulkIssueFinishedGoods أعلاه) لا من
+        // الخامات؛ الحساب القديم INVENTORY كان يخفض الخامات بينما التام
+        // يتضخم بلا إنقاص أبدًا.
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+            creditAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+            amount: 80,
+          }),
+        ]) as Array<Record<string, unknown>>,
         metadata: expect.objectContaining({
           source: 'sales.confirm',
           salesOrderId: 'so-1',
@@ -610,6 +621,14 @@ describe('SalesService — Wave 6: COMM-F07 customer credit limit', () => {
       items: [{ id: 'item-1', productVariantId: 'v-1', quantity: 1 }],
     });
     prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    // SAL-1 (audit-BE2): الفحص يعيد قراءة رصيد العميل تحت قفل FOR UPDATE
+    // داخل المعاملة — نحاكي القراءة الجديدة بنفس قيم الإعداد.
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c-1',
+      balance: opts.balance ?? 0,
+      creditLimit: opts.creditLimit,
+    });
+    prisma.$queryRaw.mockResolvedValue([]);
     prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
     prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
       id: 'so-1',
@@ -1133,7 +1152,9 @@ describe('SalesService — GF-IMP-W2: SAL-3 حسابات المرتجع', () => 
       expect.objectContaining({
         lines: expect.arrayContaining([
           expect.objectContaining({
-            debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+            // ACC-F01 (audit-BE2): عكس تكلفة المرتجع يُدين مخزون المنتج
+            // التام (لا الخامات) — البضاعة تُستعاد إلى finished_good_stocks.
+            debitAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
             creditAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
             amount: 40,
           }),
@@ -1354,13 +1375,26 @@ describe('SalesService — GF-IMP-W3: SAL-5 قائمة الأوامر بفلات
           totalPrice: true,
           // ProductVariant بلا عمود code — المعرّفات: size/color/barcode.
           variant: {
-            select: { id: true, size: true, color: true, barcode: true },
+            select: {
+              id: true,
+              size: true,
+              color: true,
+              barcode: true,
+              product: { select: { id: true, code: true, name: true } },
+            },
           },
         },
       },
     });
     expect(itemsInclude.include).toBeUndefined();
-    expect(JSON.stringify(itemsInclude)).not.toContain('product');
+    // UAT-FIX: اسم المنتج أصبح جزءًا من الإسقاط النحيف — الجوال كان
+    // يعرض «منتج» بدل اسم الصنف في كل فاتورة (variant بلا product).
+    const projection = itemsInclude.select as {
+      variant: { select: { product: unknown } };
+    };
+    expect(projection.variant.select.product).toEqual({
+      select: { id: true, code: true, name: true },
+    });
   });
 
   it('بلا فلاتر: نفس الحد الأدنى القائم (عميل غير محذوف) والإسقاط النحيف', async () => {
@@ -1409,6 +1443,7 @@ describe('SalesService — GF-IMP-W3: SAL-5 قائمة الأوامر بفلات
   it('عقد الاستجابة الكنوني: items/total/page/limit + توافق data/meta (CC-6)', async () => {
     const { prisma, service } = makeService();
     const rows = [{ id: 'so-1', code: 'SO-1' }];
+    prisma.salesReturnItem.findMany.mockResolvedValue([]);
     prisma.salesOrder.findMany.mockResolvedValue(rows);
     prisma.salesOrder.count.mockResolvedValue(1);
 
@@ -1416,7 +1451,8 @@ describe('SalesService — GF-IMP-W3: SAL-5 قائمة الأوامر بفلات
 
     // items هو مرجع data نفسه (لا نسخة) — العقد الكنوني للقوائم الجديدة.
     expect(result.items).toBe(result.data);
-    expect(result.items).toEqual(rows);
+    // UAT-FIX: صف بلا items يُكمل ببنود فارغة (returnedQuantity mapping).
+    expect(result.items).toEqual([{ id: 'so-1', code: 'SO-1', items: [] }]);
     expect(result.total).toBe(1);
     expect(result.page).toBe(1);
     expect(result.limit).toBe(20);

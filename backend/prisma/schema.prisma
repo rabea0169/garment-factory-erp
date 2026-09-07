@@ -294,6 +294,8 @@ model FinishedGoodStock {
   @@unique([warehouseId, productVariantId])
   @@index([productVariantId, quantity])
   @@index([warehouseId, quantity])
+  // audit-DB: فهرس قيمة المخزون التام لكل متغير (تقارير التقييم).
+  @@index([productVariantId, unitCost])
   @@map("finished_good_stocks")
 }
 
@@ -771,6 +773,9 @@ model DailyProduction {
 
   @@index([workOrderId])
   @@index([workerId])
+  // audit-DB: فهارس خادمة لتجميعات الرواتب (workerId + نطاق فترة) وتقارير التاريخ.
+  @@index([date])
+  @@index([workerId, date])
   @@map("daily_production")
 }
 
@@ -791,6 +796,8 @@ model WorkerAdvance {
   worker Worker @relation(fields: [workerId], references: [id])
 
   @@index([workerId])
+  // audit-DB: فهرس التاريخ يخدم ترتيب FIFO عند تسوية السلف في كشوف الرواتب.
+  @@index([date])
   @@map("worker_advances")
 }
 
@@ -822,6 +829,8 @@ model Payroll {
   @@index([status, periodStart, periodEnd])
   @@index([createdById, createdAt])
   @@index([approvedById])
+  // audit-DB: مسار اعتماد/تدقيق كشوف الرواتب (من اعتمد ومتى).
+  @@index([approvedById, approvedAt])
   @@map("payrolls")
 }
 
@@ -923,6 +932,8 @@ model SalesOrder {
   @@index([status, createdAt])
   @@index([customerId])
   @@index([userId])
+  // audit-DB: تقارير ضريبة المبيعات حسب نسبة VAT للأمر.
+  @@index([vatRate])
   @@map("sales_orders")
 }
 
@@ -1140,6 +1151,8 @@ model Shipment {
   @@index([deliveredById])
   @@index([salesOrderId])
   @@index([shippingCompanyId])
+  // audit-DB: تتبع حالة الشحنات المؤكدة وتواريخ التسليم (تقارير POD).
+  @@index([status, deliveredAt])
   // GF-IMP-W1 / SHP-1: يوجد أيضًا فهرس فريد جزئي شحنة نشطة واحدة كحد أقصى
   // لكل أمر بيع (shipments_active_per_order_unique ON "salesOrderId" WHERE
   // "status" IN ('PREPARING','IN_TRANSIT')) يعيش في الهجرة
@@ -1330,6 +1343,8 @@ model Voucher {
   // Cluster 2 — C5/C8: فهارس لتسريع استعلامات الـ treasury حسب النوع والتاريخ
   @@index([type, date])
   @@index([counterpartyId])
+  // audit-DB: جلب سندات طرف بعينه (تقرير كشف حساب الطرف من السندات).
+  @@index([counterpartyType, counterpartyId])
   @@index([createdById])
   @@index([journalEntryId])
   @@index([treasuryId])

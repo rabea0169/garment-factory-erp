@@ -109,7 +109,9 @@ describe('InventoryController — التفويض وتمرير العمليات (
     };
     await controller.receive(body, 'user-1', 'key-100');
     expect(service.receive).toHaveBeenCalledWith(
-      { ...body, idempotencyKey: 'key-100' },
+      // P1 (audit-BE2): المسار اليدوي يفعّل postGl — الحركة تُرحّل قيد GL
+      // داخل نفس معاملتها (المستدعي المالي يبقى بلا علم لتفادي الترحيل المزدوج).
+      { ...body, idempotencyKey: 'key-100', postGl: true },
       'user-1',
     );
   });
@@ -123,7 +125,7 @@ describe('InventoryController — التفويض وتمرير العمليات (
     };
     await controller.receive(body, 'user-1', undefined);
     expect(service.receive).toHaveBeenCalledWith(
-      { ...body, idempotencyKey: undefined },
+      { ...body, idempotencyKey: undefined, postGl: true },
       'user-1',
     );
   });
@@ -140,6 +142,7 @@ describe('InventoryController — التفويض وتمرير العمليات (
         warehouseId: 'wh-1',
         quantity: 20,
         idempotencyKey: 'key-i1',
+        postGl: true,
       },
       'user-1',
     );

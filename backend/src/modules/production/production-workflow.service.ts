@@ -728,6 +728,41 @@ export class ProductionWorkflowService {
     }
   }
 
+  /**
+   * DEV-PQ3 (audit-FE2 P1): تشغيلات مراحل أمر تشغيل — حل stageRunId عبر
+   * الخادم. التطبيق كان يحفظ معرفات التشغيلات محليًا (السجل على الجهاز
+   * الذي نفّذ الانتقال) فتنقطع دورة الإنتاج على تعدد الأجهزة: مفتش جودة
+   * على جهاز آخر لا يستطيع فحص مرحلة مكتملة، ومشرف خط لا يستطيع تسجيل
+   * استهلاك. القراءة فقط بلا أي أثر جانبي.
+   */
+  async getWorkOrderStageRuns(workOrderId: string) {
+    const workOrder = await this.prisma.workOrder.findUnique({
+      where: { id: workOrderId },
+      select: { id: true, code: true, status: true, currentStage: true },
+    });
+    if (!workOrder) {
+      throw new NotFoundException('أمر التشغيل غير موجود');
+    }
+    const stageRuns = await this.prisma.productionStageRun.findMany({
+      where: { workOrderId },
+      orderBy: { sequence: 'asc' },
+      select: {
+        id: true,
+        stage: true,
+        sequence: true,
+        status: true,
+        plannedQty: true,
+        inputQty: true,
+        acceptedQty: true,
+        rejectedQty: true,
+        wasteQty: true,
+        startedAt: true,
+        completedAt: true,
+      },
+    });
+    return { ...workOrder, stageRuns };
+  }
+
   async consumeMaterial(
     input: ConsumeMaterialInput,
     actorId: string,
@@ -772,7 +807,7 @@ export class ProductionWorkflowService {
         // نفس نمط OPS-F03 المطبق في recordStageOutput.
         const workOrder = await tx.workOrder.findUnique({
           where: { id: input.workOrderId },
-          select: { status: true },
+          select: { status: true, code: true },
         });
         if (!workOrder) {
           throw new NotFoundException('Work order not found');
@@ -856,6 +891,48 @@ export class ProductionWorkflowService {
             createdById: actorId,
           },
         });
+
+        // ACC-F01 (P0 — audit-BE2): قيد GL لتحميل WIP بتكلفة الخامات
+        // المصروفة وإنقاص أصل المخزون INVENTORY بالقيمة نفسها. قبل هذا
+        // القيد كان الرصيد الفعلي للخامة ينقص (issue) دون أي أثر في GL،
+        // بينما قيد إكمال الإنتاج (production-completion) يُدين WIP — فيصبح
+        // WIP دائنًا بلا مدين مقابل (سالب دائمًا) وINVENTORY منحرفًا عن
+        // قيمة المخزون الفعلي في ميزان المراجعة.
+        // postingKey مشتق من consumption.id (مستقر وفريد لكل استهلاك) عبر
+        // القيد الفريد الجزئي على JournalEntry.postingKey فيمنع الترحيل
+        // المزدوج. المبلغ Decimal كما هو (PRD-5) بلا تحلل عائم.
+        if (totalCost.gt(0)) {
+          await this.financialPosting.postJournalEntryInTx(
+            tx,
+            {
+              description: 'استهلاك خامات لأمر تشغيل #' + workOrder.code,
+              reference: workOrder.code,
+              postingKey: 'production-consumption:' + consumption.id,
+              isAuto: true,
+              lines: [
+                {
+                  debitAccountId: CHART_OF_ACCOUNTS.WIP,
+                  creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                  amount: totalCost,
+                  description:
+                    'صرف خامات إلى تحت التشغيل — أمر تشغيل ' + workOrder.code,
+                },
+              ],
+              userId: actorId,
+              metadata: {
+                source: 'production.consumption',
+                workOrderId: input.workOrderId,
+                stageRunId: input.stageRunId,
+                consumptionId: consumption.id,
+                rawMaterialId: input.rawMaterialId,
+                actualQuantity: actualQuantity.toNumber(),
+                unitCost: unitCost.toNumber(),
+                totalCost: totalCost.toNumber(),
+              },
+            },
+            actorId,
+          );
+        }
 
         return {
           replayed: false,

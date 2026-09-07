@@ -40,9 +40,14 @@ class PurchasingCubit extends Cubit<PurchasingState> {
     emit(PurchasingLoading());
     try {
       final responses = await Future.wait([
-        ApiClient.instance.dio.get('/purchasing/orders'),
-        ApiClient.instance.dio.get('/suppliers'),
-        ApiClient.instance.dio.get('/inventory/raw-materials'),
+        // P1 (audit-FE2): سقف الخادم الافتراضي 20 — نرفعه إلى 100 في كل
+        // القوائم وحوارات الاختيار (الموردين/الخامات).
+        ApiClient.instance.dio
+            .get('/purchasing/orders', queryParameters: {'limit': 100}),
+        ApiClient.instance.dio
+            .get('/suppliers', queryParameters: {'limit': 100}),
+        ApiClient.instance.dio
+            .get('/inventory/raw-materials', queryParameters: {'limit': 100}),
       ]);
       emit(
         PurchasingLoaded(
@@ -118,5 +123,42 @@ class PurchasingCubit extends Cubit<PurchasingState> {
       options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
     );
     await fetchData();
+  }
+
+  /// PUR-5(أ): اعتماد أمر شراء DRAFT (فصل واجبات خادميًا: المنشئ ≠
+  /// المعتمد). بدون هذه العملية لا يمكن الاستلام ولا المرتجع — كانت
+  /// دورة الشراء مقطوعة بالكامل من الجوال.
+  /// ترجع رسالة الخطأ العربية الدقيقة من الخادم عند الفشل (409 فصل
+  /// واجبات مثلًا) ليعرضها الـ snackbar.
+  Future<String?> approvePurchaseOrder({
+    required String purchaseOrderId,
+  }) async {
+    try {
+      await ApiClient.instance.dio.post(
+        '/purchasing/$purchaseOrderId/approve',
+        options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+      );
+      await fetchData();
+      return null;
+    } on DioException catch (error) {
+      return ApiClient.instance.messageFor(error);
+    }
+  }
+
+  /// إلغاء مسودة أمر شراء (DRAFT فقط خادميًا) — كان خطأ الإنشاء غير قابل
+  /// للتراجع من الجوال.
+  Future<String?> cancelPurchaseOrder({
+    required String purchaseOrderId,
+  }) async {
+    try {
+      await ApiClient.instance.dio.post(
+        '/purchasing/$purchaseOrderId/cancel',
+        options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+      );
+      await fetchData();
+      return null;
+    } on DioException catch (error) {
+      return ApiClient.instance.messageFor(error);
+    }
   }
 }

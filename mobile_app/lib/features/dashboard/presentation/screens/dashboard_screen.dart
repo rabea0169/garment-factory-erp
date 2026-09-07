@@ -63,6 +63,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
               if (state is DashboardLoading || state is DashboardInitial) {
                 return const AppLoadingView();
               }
+              if (state is DashboardForbidden) {
+                // DSH-1: دور بلا صلاحية مؤشرات — شاشة ترحيب تفاعلية
+                // بالتنقل السريع بدل شاشة خطأ (هبوط 5 من 8 أدوار).
+                return const _DashboardWelcome();
+              }
               if (state is DashboardError) {
                 return AppErrorView(
                   message: state.message,
@@ -114,6 +119,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final menuItems = [
       _MenuItem('لوحة التحكم', Icons.dashboard_rounded, AppRouter.dashboard),
       _MenuItem('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
+      _MenuItem(
+          'كتالوج المنتجات', Icons.checkroom_rounded, AppRouter.products),
       _MenuItem('الإنتاج', Icons.precision_manufacturing_rounded,
           AppRouter.production),
       _MenuItem('الجودة', Icons.verified_rounded, AppRouter.quality),
@@ -127,6 +134,10 @@ class _DashboardScreenState extends State<DashboardScreen> {
           'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
       if (_canViewAccounting(role))
         _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
+      // CC-9: إدارة المستخدمين — SUPER_ADMIN فقط (نفس نمط تقييد الحسابات).
+      if (_canManageUsers(role))
+        _MenuItem(
+            'المستخدمون', Icons.manage_accounts_rounded, AppRouter.users),
       _MenuItem(
           'التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
     ];
@@ -223,32 +234,100 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return text.isEmpty ? fallback : text;
   }
 
+  // أدوار الخادم الفعلية (UserRole في schema.prisma): SUPER_ADMIN,
+  // GENERAL_MANAGER, PRODUCTION_MANAGER, INVENTORY_MANAGER, ACCOUNTANT,
+  // CASHIER, HR_MANAGER, VIEWER. الحسابات: CASHIER مسموح له بقراءة/إنشاء
+  // السندات (ACC-5) بجانب ACCOUNTANT وGM وSUPER_ADMIN.
   static bool _canViewAccounting(String role) =>
-      role == 'ACCOUNTANT' || role == 'GENERAL_MANAGER' || role == 'ADMIN';
+      role == 'ACCOUNTANT' ||
+      role == 'GENERAL_MANAGER' ||
+      role == 'SUPER_ADMIN' ||
+      role == 'CASHIER';
+
+  // CC-9: إدارة المستخدمين مقصورة خادميًا على SUPER_ADMIN (كل مسارات
+  // /users) — عنصر القائمة يظهر له فقط.
+  static bool _canManageUsers(String role) => role == 'SUPER_ADMIN';
 
   static String _roleLabel(String role) {
     switch (role) {
+      case 'SUPER_ADMIN':
+        return 'مدير النظام';
       case 'GENERAL_MANAGER':
         return 'مدير عام';
       case 'ACCOUNTANT':
         return 'محاسب';
+      case 'CASHIER':
+        return 'أمين صندوق';
       case 'HR_MANAGER':
         return 'مدير الموارد البشرية';
       case 'INVENTORY_MANAGER':
         return 'مدير المخزون';
       case 'PRODUCTION_MANAGER':
         return 'مدير الإنتاج';
-      case 'SALES_MANAGER':
-        return 'مدير المبيعات';
-      case 'QUALITY_MANAGER':
-        return 'مدير الجودة';
-      case 'ADMIN':
-        return 'مدير النظام';
       case 'VIEWER':
         return 'مشاهد';
       default:
         return role.isEmpty ? 'مستخدم' : role;
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// شاشة الترحيب للأدوار بلا صلاحية مؤشرات (DSH-1) — تنقل سريع مفيد.
+// ---------------------------------------------------------------------------
+
+class _DashboardWelcome extends StatelessWidget {
+  const _DashboardWelcome();
+
+  static const _shortcuts = <(String, IconData, String)>[
+    ('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
+    ('الإنتاج', Icons.precision_manufacturing_rounded, AppRouter.production),
+    ('الجودة', Icons.verified_rounded, AppRouter.quality),
+    ('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
+    ('المبيعات', Icons.receipt_long_rounded, AppRouter.sales),
+    ('المشتريات', Icons.add_business_rounded, AppRouter.purchasing),
+    ('الشحن', Icons.local_shipping_rounded, AppRouter.shipping),
+  ];
+
+  @override
+  Widget build(BuildContext context) {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(16, 24, 16, 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const Icon(Icons.waving_hand_rounded,
+              size: 56, color: AppColors.primary),
+          const SizedBox(height: 12),
+          Text(
+            'أهلًا بك 👋',
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+                fontSize: 22, fontWeight: FontWeight.w700, fontFamily: 'Cairo'),
+          ),
+          const SizedBox(height: 8),
+          const Text(
+            'مؤشرات لوحة التحكم متاحة للمدير العام والمحاسبة.\nابدأ عملك مباشرة من الأقسام التالية:',
+            textAlign: TextAlign.center,
+            style: TextStyle(fontSize: 14, color: Colors.black54),
+          ),
+          const SizedBox(height: 20),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            alignment: WrapAlignment.center,
+            children: [
+              for (final (label, icon, route) in _shortcuts)
+                ActionChip(
+                  avatar: Icon(icon, size: 20, color: AppColors.primary),
+                  label: Text(label),
+                  onPressed: () => context.push(route),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
 

@@ -150,7 +150,8 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
                     controller: _tabController,
                     children: [
                       _buildRawMaterialsTab(_filterItems(state.rawMaterials)),
-                      _buildFinishedGoodsTab(_filterItems(state.finishedGoods)),
+                      _buildFinishedGoodsTab(
+                          _filterItems(state.finishedGoods, nested: true)),
                       _buildLowStockTab(_filterItems(state.lowStockMaterials)),
                     ],
                   ),
@@ -169,13 +170,22 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
     );
   }
 
-  List<dynamic> _filterItems(List<dynamic> items) {
+  List<dynamic> _filterItems(List<dynamic> items, {bool nested = false}) {
     if (_searchQuery.isEmpty) return items;
     return items.where((item) {
       if (item is! Map) return false;
-      final values = [item['name'], item['code'], item['sku']]
-          .whereType<Object>()
-          .map((value) => value.toString().toLowerCase());
+      // خامات + مخازن: الحقول في الجذر.
+      final values = <Object>[
+        ...[item['name'], item['code'], item['sku']].whereType<Object>(),
+        // منتجات تامة: البيانات متداخلة تحت variant/product (SHP-5/FG projection).
+        if (nested) ...[
+          item['variant']?['product']?['name'],
+          item['variant']?['product']?['code'],
+          item['variant']?['size'],
+          item['variant']?['color'],
+          item['variant']?['barcode'],
+        ].whereType<Object>(),
+      ].map((value) => value.toString().toLowerCase());
       return values.any((value) => value.contains(_searchQuery));
     }).toList();
   }

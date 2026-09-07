@@ -77,7 +77,7 @@ void main() {
         {
           'id': 'po-1',
           'code': 'PO-1',
-          'status': 'PENDING',
+          'status': 'APPROVED',
           'supplier': {'name': 'مورد تجريبي'},
           'items': [
             {'id': 'poi-1', 'rawMaterialId': 'material-1', 'quantity': 5},

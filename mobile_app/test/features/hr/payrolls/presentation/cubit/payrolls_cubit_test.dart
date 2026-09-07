@@ -204,6 +204,209 @@ void main() {
     expect(PayrollStatusFilter.paid.queryValue, 'PAID');
     expect(PayrollStatusFilter.values.map((f) => f.label), contains('الكل'));
   });
+
+  group('إجراءات دورة الرواتب (GF-IMP-W3)', () {
+    test('createPayroll: العقد الحرفي + دمج المكافأة/الخصم في الملاحظات',
+        () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('4', 'DRAFT')]);
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+      await cubit.fetchPayrolls();
+
+      final error = await cubit.createPayroll(
+        workerId: 'w-1',
+        from: DateTime(2026, 8, 1),
+        to: DateTime(2026, 8, 31),
+        bonus: 200,
+        deductions: 50,
+        notes: 'كشف أغسطس',
+      );
+
+      expect(error, isNull);
+      final post =
+          transport.requests.lastWhere((r) => r.path == '/hr/payrolls' && r.method == 'POST');
+      final body = post.data as Map;
+      expect(body['workerId'], 'w-1');
+      expect(body['periodStart'], DateTime(2026, 8, 1).toIso8601String());
+      expect(body['periodEnd'], DateTime(2026, 8, 31).toIso8601String());
+      // ADR-0015: لا حقول مبالغ من العميل — تُدمج في الملاحظات.
+      expect(body.containsKey('bonus'), isFalse);
+      expect(body.containsKey('deductions'), isFalse);
+      expect(body['notes'],
+          'كشف أغسطس | مكافأة إضافية: 200.00 | خصم إضافي: 50.00');
+      // مفتاح اندماجية صريح.
+      expect(post.headers['Idempotency-Key'], isA<String>());
+      // نجاح الإنشاء → إعادة جلب الكشوف.
+      expect(
+        transport.requests
+            .where((r) => r.path == '/hr/payrolls' && r.method == 'GET')
+            .length,
+        2,
+      );
+    });
+
+    test('createPayroll: فترة افتراضية = الشهر الحالي عند غياب from/to',
+        () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('5', 'DRAFT')]);
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+
+      await cubit.createPayroll(workerId: 'w-2');
+
+      final body = transport.requests
+          .lastWhere((r) => r.path == '/hr/payrolls' && r.method == 'POST')
+          .data as Map;
+      final now = DateTime.now();
+      expect(body['periodStart'], DateTime(now.year, now.month, 1).toIso8601String());
+      expect(
+          body['periodEnd'], DateTime(now.year, now.month + 1, 0).toIso8601String());
+      // لا ملاحظات → الحقل لا يُرسل.
+      expect(body.containsKey('notes'), isFalse);
+    });
+
+    test('createPayroll: خطأ 409 → رسالة نصية والقائمة لا تمس', () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('6', 'DRAFT')]);
+      transport.errorStatus['POST:/hr/payrolls'] = 409;
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+      await cubit.fetchPayrolls();
+
+      final error = await cubit.createPayroll(workerId: 'w-1');
+
+      expect(error, isNotNull);
+      expect(cubit.state, isA<PayrollsLoaded>());
+    });
+
+    test('approvePayroll: POST بلا جسم + مفتاح اندماجية + إعادة جلب',
+        () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('7', 'APPROVED')]);
+      transport.payloads['/hr/payrolls/p-7/approve'] = (_) => {'ok': true};
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+      await cubit.fetchPayrolls();
+
+      final error = await cubit.approvePayroll('p-7');
+
+      expect(error, isNull);
+      final post = transport.requests
+          .lastWhere((r) => r.path == '/hr/payrolls/p-7/approve');
+      expect(post.method, 'POST');
+      expect(post.data, isNull);
+      expect(post.headers['Idempotency-Key'], isA<String>());
+      expect(
+        transport.requests
+            .where((r) => r.path == '/hr/payrolls' && r.method == 'GET')
+            .length,
+        2,
+      );
+    });
+
+    test('cancelPayroll: مسار الإبطال الصحيح', () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('8', 'DRAFT')]);
+      transport.payloads['/hr/payrolls/p-8/cancel'] = (_) => {'cancelled': true};
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+      await cubit.fetchPayrolls();
+
+      final error = await cubit.cancelPayroll('p-8');
+
+      expect(error, isNull);
+      expect(
+        transport.requests.lastWhere((r) => r.path == '/hr/payrolls/p-8/cancel').method,
+        'POST',
+      );
+    });
+
+    test('payPayroll: الخزينة في الجسم عند توفيرها فقط', () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('9', 'PAID')]);
+      transport.payloads['/hr/payrolls/p-9/pay'] = (_) => {'ok': true};
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+      await cubit.fetchPayrolls();
+
+      expect(await cubit.payPayroll('p-9', treasuryId: 't-1'), isNull);
+      var body = transport.requests
+          .lastWhere((r) => r.path == '/hr/payrolls/p-9/pay')
+          .data as Map;
+      expect(body['treasuryId'], 't-1');
+
+      // بلا خزينة (صافٍ صفر — HR-4): جسم فارغ بلا المفتاح.
+      expect(await cubit.payPayroll('p-9'), isNull);
+      body = transport.requests
+          .lastWhere((r) => r.path == '/hr/payrolls/p-9/pay')
+          .data as Map;
+      expect(body.containsKey('treasuryId'), isFalse);
+    });
+
+    test('approvePayroll: خطأ خادم 400 → رسالة نصية', () async {
+      final transport = _PathTransport();
+      transport.payloads['/hr/payrolls'] = (_) =>
+          payrollsPayload([payrollItem('10', 'DRAFT')]);
+      transport.errorStatus['POST:/hr/payrolls/p-10/approve'] = 400;
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+      await cubit.fetchPayrolls();
+
+      final error = await cubit.approvePayroll('p-10');
+
+      expect(error, isNotNull);
+      expect(error, isNotEmpty);
+      expect(cubit.state, isA<PayrollsLoaded>());
+    });
+
+    test('fetchWorkers: data[] تُحل؛ والفشل يعيد قائمة فارغة', () async {
+      final transport = _PathTransport()
+        ..payloads['/hr/workers'] = (_) => const {
+              'data': [
+                {'id': 'w-1', 'name': 'أحمد', 'code': 'W-001'},
+              ],
+            };
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+
+      final workers = await cubit.fetchWorkers();
+      expect(workers.length, 1);
+      expect(workers.single['name'], 'أحمد');
+
+      // فشل الجلب → قائمة فارغة (الحوار يعطّل الحفظ بصمت).
+      final failing = _PathTransport()..errorStatus['GET:/hr/workers'] = 403;
+      final cubit2 = PayrollsCubit(dio: failing.dio);
+      addTearDown(cubit2.close);
+      expect(await cubit2.fetchWorkers(), isEmpty);
+    });
+
+    test('fetchTreasuries: data[] تُحل؛ والفشل يعيد قائمة فارغة', () async {
+      final transport = _PathTransport()
+        ..payloads['/accounting/treasuries'] = (_) => const {
+              'data': [
+                {'id': 't-1', 'name': 'الخزينة الرئيسية'},
+              ],
+            };
+      final cubit = PayrollsCubit(dio: transport.dio);
+      addTearDown(cubit.close);
+
+      final treasuries = await cubit.fetchTreasuries();
+      expect(treasuries.single['id'], 't-1');
+
+      final failing = _PathTransport()
+        ..errorStatus['GET:/accounting/treasuries'] = 403;
+      final cubit2 = PayrollsCubit(dio: failing.dio);
+      addTearDown(cubit2.close);
+      expect(await cubit2.fetchTreasuries(), isEmpty);
+    });
+  });
 }
 
 /// Dio وهمي عبر اعتراض: يسجل الطلبات ويرد بالحمولة أو يرفض بخطأ.
@@ -233,4 +436,55 @@ Dio _stubDio({
     ),
   );
   return instance;
+}
+
+/// نقل وهمي بمسارات: يفصل بين الطلبات حسب المسار — يسجل كل طلب ويرد
+/// بالحمولة أو يرفض بخطأ حالة (المفتاح "METHOD:path" للفصل).
+class _PathTransport {
+  final List<RequestOptions> requests = <RequestOptions>[];
+
+  final Map<String, Object? Function(int index)> payloads =
+      <String, Object? Function(int index)>{};
+
+  final Map<String, int> errorStatus = <String, int>{};
+
+  Dio get dio {
+    final instance = Dio(BaseOptions(baseUrl: 'https://erp.test'));
+    instance.interceptors.add(
+      InterceptorsWrapper(
+        onRequest: (options, handler) {
+          requests.add(options);
+          final methodKey = '${options.method}:${options.path}';
+          final status = errorStatus[options.path] ?? errorStatus[methodKey];
+          if (status != null) {
+            handler.reject(
+              DioException(
+                requestOptions: options,
+                type: DioExceptionType.badResponse,
+                response: Response<Object>(
+                  requestOptions: options,
+                  statusCode: status,
+                  data: {'message': 'خطأ من الخادم'},
+                ),
+              ),
+              true,
+            );
+            return;
+          }
+          final index = requests
+                  .where((r) => r.path == options.path)
+                  .length -
+              1;
+          handler.resolve(
+            Response<Object>(
+              requestOptions: options,
+              statusCode: 200,
+              data: payloads[options.path]?.call(index),
+            ),
+          );
+        },
+      ),
+    );
+    return instance;
+  }
 }

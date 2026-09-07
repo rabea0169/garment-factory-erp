@@ -8,7 +8,8 @@ abstract interface class ProductionRepository {
     required int limit,
   });
 
-  Future<void> createWorkOrder(CreateWorkOrderCommand command);
+  /// DEV-PQ1: يعيد هوية الأمر الجديد (id/code) لعرض رمزه بعد الإنشاء.
+  Future<CreatedWorkOrder> createWorkOrder(CreateWorkOrderCommand command);
 
   Future<StageTransition> transitionStage({
     required String workOrderId,

@@ -49,6 +49,7 @@ class StageOutputResultModel {
     required this.workOrderId,
     required this.stage,
     required this.status,
+    required this.stageRunId,
   });
 
   factory StageOutputResultModel.fromJson(Map<String, dynamic> json) {
@@ -56,17 +57,20 @@ class StageOutputResultModel {
       workOrderId: _requiredString(json, 'workOrderId'),
       stage: parseProductionStage(_requiredString(json, 'stage'))!,
       status: _requiredString(json, 'status'),
+      stageRunId: _requiredString(json, 'stageRunId'),
     );
   }
 
   final String workOrderId;
   final ProductionStage stage;
   final String status;
+  final String stageRunId;
 
   StageOutputResult toEntity() => StageOutputResult(
         workOrderId: workOrderId,
         stage: stage,
         status: status,
+        stageRunId: stageRunId,
       );
 }
 
@@ -122,6 +126,24 @@ class MaterialConsumptionModel {
         wasteCost: wasteCost,
         replayed: replayed,
       );
+}
+
+/// DEV-PQ1: تحليل استجابة إنشاء أمر التشغيل — id مطلوب (يخضع له الحوار
+/// والاختبارات) وcode اختياري تحمّلًا لأي إسقاط مستقبلي (fallback نص عام).
+class CreatedWorkOrderModel {
+  const CreatedWorkOrderModel({required this.id, this.code});
+
+  factory CreatedWorkOrderModel.fromJson(Map<String, dynamic> json) {
+    return CreatedWorkOrderModel(
+      id: _requiredString(json, 'id'),
+      code: json['code'] is String ? json['code'] as String : null,
+    );
+  }
+
+  final String id;
+  final String? code;
+
+  CreatedWorkOrder toEntity() => CreatedWorkOrder(id: id, code: code);
 }
 
 class ProductionCostSnapshotModel {

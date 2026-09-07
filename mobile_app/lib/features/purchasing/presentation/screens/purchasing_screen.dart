@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
+import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/purchasing_cubit.dart';
 
@@ -51,8 +52,11 @@ class PurchasingScreen extends StatelessWidget {
                   final supplier = order['supplier'] as Map?;
                   final items = order['items'] as List? ?? const [];
                   final status = '${order['status'] ?? ''}';
-                  final canReceive =
-                      status != 'RECEIVED' && status != 'CANCELLED';
+                  // الاستلام متاح للأوامر APPROVED فقط (خادميًا) — إظهار
+                  // الزر لغيرها كان يضمن رسالة 400 مضللة.
+                  final canReceive = status == 'APPROVED';
+                  final canApprove = status == 'DRAFT';
+                  final canCancel = status == 'DRAFT';
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
                     child: ExpansionTile(
@@ -68,16 +72,52 @@ class PurchasingScreen extends StatelessWidget {
                       children: [
                         ...items.map<Widget>((item) {
                           final itemMap = item as Map;
+                          final material = itemMap['rawMaterial'] as Map?;
+                          final received =
+                              (itemMap['receivedQuantity'] as num?) ?? 0;
                           return ListTile(
                             dense: true,
                             leading: const Icon(Icons.category_outlined),
                             title: Text(
-                                'خامة: ${itemMap['rawMaterialId'] ?? 'غير محددة'}'),
+                                'خامة: ${material?['name'] ?? itemMap['rawMaterialId'] ?? 'غير محددة'}'),
                             subtitle: Text(
-                              'الكمية: ${itemMap['quantity'] ?? 0} | تكلفة الوحدة: ${itemMap['unitCost'] ?? 0}',
+                              'الكمية: ${itemMap['quantity'] ?? 0} | المستلم: $received | تكلفة الوحدة: ${itemMap['unitCost'] ?? 0}',
                             ),
                           );
                         }),
+                        if (canApprove)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: FilledButton.icon(
+                                onPressed: () => _approveOrder(
+                                  screenContext,
+                                  '${order['id']}',
+                                ),
+                                icon: const Icon(Icons.verified_outlined),
+                                label: const Text('اعتماد أمر الشراء'),
+                              ),
+                            ),
+                          ),
+                        if (canCancel)
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(16, 4, 16, 4),
+                            child: SizedBox(
+                              width: double.infinity,
+                              child: OutlinedButton.icon(
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.red.shade700,
+                                ),
+                                onPressed: () => _cancelOrder(
+                                  screenContext,
+                                  '${order['id']}',
+                                ),
+                                icon: const Icon(Icons.cancel_outlined),
+                                label: const Text('إلغاء المسودة'),
+                              ),
+                            ),
+                          ),
                         if (canReceive)
                           Align(
                             alignment: AlignmentDirectional.centerStart,
@@ -149,6 +189,54 @@ class PurchasingScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _approveOrder(BuildContext context, String orderId) async {
+    final error = await context
+        .read<PurchasingCubit>()
+        .approvePurchaseOrder(purchaseOrderId: orderId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          error ?? 'تم اعتماد أمر الشراء — صار الاستلام متاحًا',
+        ),
+        backgroundColor: error == null ? Colors.green.shade700 : null,
+      ),
+    );
+  }
+
+  Future<void> _cancelOrder(BuildContext context, String orderId) async {
+    // نقرأ الـ cubit قبل أي فجوة async (قاعدة use_build_context_synchronously).
+    final cubit = context.read<PurchasingCubit>();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('إلغاء مسودة أمر الشراء'),
+        content: const Text('هل تريد إلغاء هذه المسودة؟ لا يمكن التراجع.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('تراجع'),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+                backgroundColor: Colors.red.shade700),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('إلغاء المسودة'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    final error = await cubit.cancelPurchaseOrder(purchaseOrderId: orderId);
+    if (!context.mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(error ?? 'تم إلغاء مسودة أمر الشراء'),
+        backgroundColor: error == null ? Colors.green.shade700 : null,
+      ),
+    );
+  }
+
   Future<void> _showReturnDialog(BuildContext context, Map order) async {
     final saved = await showDialog<bool>(
       context: context,
@@ -182,7 +270,9 @@ class PurchasingScreen extends StatelessWidget {
   static String _translateStatus(String status) {
     switch (status) {
       case 'DRAFT':
-        return 'مسودة';
+        return 'مسودة — بانتظار الاعتماد';
+      case 'APPROVED':
+        return 'معتمد — جاهز للاستلام';
       case 'PENDING':
         return 'استلام جزئي';
       case 'RECEIVED':
@@ -241,13 +331,14 @@ class _CreatePurchaseOrderDialogState
         ],
       );
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _isSaving = false);
+      // P2 (audit-FE2): رسالة الخادم الفعلية (validation/403/409) بدل عامة.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('تعذر إنشاء أمر الشراء. تحقق من البيانات والصلاحيات.')),
+        SnackBar(
+            content: Text(
+                'تعذر إنشاء أمر الشراء: ${ApiClient.instance.messageFor(e)}')),
       );
     }
   }
@@ -392,13 +483,22 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
       .where((item) => item['id'] != null)
       .toList();
 
-  int _remaining(Map item) {
-    final ordered = int.tryParse('${item['quantity'] ?? 0}') ?? 0;
-    final received = int.tryParse(
-          '${item['receivedQuantity'] ?? item['quantityReceived'] ?? 0}',
-        ) ??
-        0;
+  /// PUR-2: كميات كسرية حتى 4 منازل (Decimal 10,4 خادميًا) —
+  /// int.tryParse كان يحوّل «2.5» إلى null/failure صامت.
+  double _remaining(Map item) {
+    final ordered = double.tryParse('${item['quantity'] ?? 0}') ?? 0;
+    final received =
+        double.tryParse('${item['receivedQuantity'] ?? 0}') ?? 0;
     return (ordered - received).clamp(0, ordered);
+  }
+
+  String _remainingLabel(Map item) {
+    final remaining = _remaining(item);
+    // أزل الأصفار الزائدة: 3.0 → «3» و2.5 → «2.5».
+    final text = remaining == remaining.roundToDouble()
+        ? '${remaining.toInt()}'
+        : remaining.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+    return text;
   }
 
   @override
@@ -417,18 +517,20 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
         items: [
           {
             'purchaseOrderItemId': _itemId,
-            'quantity': int.parse(_quantityController.text.trim()),
+            'quantity': double.parse(_quantityController.text.trim()),
           },
         ],
         notes: _notesController.text.trim(),
       );
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() => _isSaving = false);
+      // رسالة الخادم الفعلية (تجاوز المتبقي/عدم الاعتماد) بدل رسالة عامة.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('تعذر تسجيل الاستلام. تحقق من الكمية المتبقية.')),
+        SnackBar(
+            content: Text(
+                'تعذر تسجيل الاستلام: ${ApiClient.instance.messageFor(error)}')),
       );
     }
   }
@@ -446,11 +548,14 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
               initialValue: _itemId,
               decoration: const InputDecoration(labelText: 'بند أمر الشراء *'),
               items: _items
-                  .map((item) => DropdownMenuItem<String>(
-                        value: item['id'].toString(),
-                        child: Text(
-                            'خامة ${item['rawMaterialId'] ?? ''} — متبقي ${_remaining(item)}'),
-                      ))
+                  .map((item) {
+                    final material = item['rawMaterial'] as Map?;
+                    return DropdownMenuItem<String>(
+                      value: item['id'].toString(),
+                      child: Text(
+                          '${material?['name'] ?? item['rawMaterialId'] ?? ''} — متبقي ${_remainingLabel(item)}'),
+                    );
+                  })
                   .toList(),
               onChanged:
                   _isSaving ? null : (value) => setState(() => _itemId = value),
@@ -459,20 +564,22 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
             const SizedBox(height: 10),
             TextFormField(
               controller: _quantityController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'كمية الاستلام *'),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                  labelText: 'كمية الاستلام *',
+                  hintText: 'يقبل كسورًا حتى 4 منازل، مثل 2.5'),
               validator: (value) {
-                final quantity = int.tryParse(value?.trim() ?? '');
+                final quantity = double.tryParse(value?.trim() ?? '');
                 if (quantity == null || quantity <= 0) {
-                  return 'أدخل عددًا صحيحًا موجبًا';
+                  return 'أدخل عددًا موجبًا (كسورًا مسموحة)';
                 }
                 final item = _items.cast<Map?>().firstWhere(
                       (item) => item?['id']?.toString() == _itemId,
                       orElse: () => null,
                     );
-                final remaining = item == null ? 0 : _remaining(item);
+                final remaining = item == null ? 0.0 : _remaining(item);
                 return quantity > remaining
-                    ? 'الكمية تتجاوز المتبقي ($remaining)'
+                    ? 'الكمية تتجاوز المتبقي (${item == null ? '0' : _remainingLabel(item)})'
                     : null;
               },
             ),
@@ -521,11 +628,17 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
       .where((item) => item['id'] != null)
       .toList();
 
-  int _received(Map item) {
-    return int.tryParse(
-          '${item['receivedQuantity'] ?? item['quantityReceived'] ?? 0}',
-        ) ??
-        0;
+  /// receivedQuantity أصبح متاحًا من إسقاط PUR-6 المُحسّن (UAT-FIX)
+  /// خادميًا — كان قبل الإصلاح غير موجود فتُعرض القائمة فارغة دائمًا.
+  double _received(Map item) {
+    return double.tryParse('${item['receivedQuantity'] ?? 0}') ?? 0;
+  }
+
+  String _receivedLabel(Map item) {
+    final received = _received(item);
+    return received == received.roundToDouble()
+        ? '${received.toInt()}'
+        : received.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
   }
 
   @override
@@ -546,12 +659,13 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
         notes: _notesController.text.trim(),
       );
       if (mounted) Navigator.pop(context, true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('تعذر تسجيل المرتجع. تحقق من الكمية المستلمة.')),
+        SnackBar(
+            content: Text(
+                'تعذر تسجيل المرتجع: ${ApiClient.instance.messageFor(error)}')),
       );
     }
   }
@@ -571,12 +685,15 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
               items: _items
                   .where((item) => _received(item) > 0)
                   .map(
-                    (item) => DropdownMenuItem<String>(
-                      value: '${item['id']}',
-                      child: Text(
-                        'خامة ${item['rawMaterialId'] ?? ''} — مستلم ${_received(item)}',
-                      ),
-                    ),
+                    (item) {
+                      final material = item['rawMaterial'] as Map?;
+                      return DropdownMenuItem<String>(
+                        value: '${item['id']}',
+                        child: Text(
+                          '${material?['name'] ?? item['rawMaterialId'] ?? ''} — مستلم ${_receivedLabel(item)}',
+                        ),
+                      );
+                    },
                   )
                   .toList(),
               onChanged:
@@ -599,9 +716,9 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
                       (item) => item?['id']?.toString() == _itemId,
                       orElse: () => null,
                     );
-                final received = item == null ? 0 : _received(item);
+                final received = item == null ? 0.0 : _received(item);
                 return quantity > received
-                    ? 'الكمية تتجاوز المستلم ($received)'
+                    ? 'الكمية تتجاوز المستلم (${item == null ? received : _receivedLabel(item)})'
                     : null;
               },
             ),

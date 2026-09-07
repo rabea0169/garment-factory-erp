@@ -304,6 +304,42 @@ export class AccountingService {
       throw new BadRequestException('مبلغ السند يجب أن يكون موجبًا');
     }
 
+    // ACC-1 (P1 — audit-BE2): الطرف المقابل يتطلب معرفًا — سند بنوع طرف بلا
+    // معرف كان يُقيّد على حساب التحكم (AR/AP/WORKER_ADVANCES) دون تحديد
+    // الكيان، فلا يمكن مطابقة الرصيد لاحقًا ولا التدقيق.
+    if (data.counterpartyType && !data.counterpartyId) {
+      throw new BadRequestException(
+        'معرف الطرف المقابل (counterpartyId) مطلوب عند تحديد نوع الطرف',
+      );
+    }
+    // WORKER (P1 — audit-BE2): سند الصرف للعامل يُنشئ سجل WorkerAdvance داخل
+    // نفس المعاملة (رصيد GL يخصم من رواتب العامل فعليًا عبر createPayroll)،
+    // وسند القبض من العامل يسوّي السلف غير المسوّاة FIFO (محاسبة GL ↔
+    // السجلات متطابقة دائمًا). قبل هذا الإصلاح كان السند يقيد
+    // WORKER_ADVANCES بلا أي صف سلف → السلفة لا تُخصم من الرواتب أبدًا.
+    if (data.counterpartyType === 'WORKER') {
+      if (data.type === VoucherType.RECEIPT) {
+        // القبض من العامل = رد سلفة: نسوّي السلف القائمة (المسار المحاسبي
+        // للسلف اليدوية عبر /hr/advances). رصيد غير مسوّى صفر → رفض.
+        const unsettled = await this.prisma.workerAdvance.findMany({
+          where: { workerId: data.counterpartyId },
+          orderBy: [{ date: 'asc' }, { id: 'asc' }],
+        });
+        const unsettledTotal = unsettled
+          .filter((a) => a.amount.gt(a.settledAmount))
+          .reduce(
+            (sum, a) => sum.plus(a.amount.minus(a.settledAmount)),
+            new Prisma.Decimal(0),
+          );
+        if (new Prisma.Decimal(data.amount).gt(unsettledTotal)) {
+          throw new BadRequestException(
+            `مبلغ السند (${data.amount}) يتجاوز إجمالي السلف غير المسوّاة للعامل (${unsettledTotal.toString()}) — ` +
+              'سند القبض من عامل يسوّي سلفًا قائمة فقط',
+          );
+        }
+      }
+    }
+
     const cashAccount = CHART_OF_ACCOUNTS.CASH;
     // ACC-1: الطرف المقابل من المصفوفة الصريحة أعلاه، والسند بلا طرف
     // مقابل (undefined/فارغ) يُقيّ على GENERAL_EXPENSE — حساب المصروفات
@@ -333,6 +369,19 @@ export class AccountingService {
       data.type === VoucherType.RECEIPT ? data.amount : -data.amount;
 
     return this.prisma.$transaction(async (tx) => {
+      // WORKER (P1 — audit-BE2): تحقق وجود العامل داخل المعاملة (404) —
+      // counterpartyId غير الموجود كان يُقبل بصمت.
+      if (data.counterpartyType === 'WORKER' && data.counterpartyId) {
+        const worker = await tx.worker.findUnique({
+          where: { id: data.counterpartyId },
+          select: { id: true, name: true },
+        });
+        if (!worker) {
+          throw new NotFoundException(
+            `العامل ${data.counterpartyId} غير موجود`,
+          );
+        }
+      }
       const entry = await this.financial.postJournalEntryInTx(
         tx,
         {
@@ -398,6 +447,43 @@ export class AccountingService {
       if (existingVoucher) return existingVoucher;
 
       const voucherCode = `VCH-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${randomBytes(4).toString('hex').toUpperCase()}`;
+      // WORKER (P1 — audit-BE2) — بعد نجاح الترحيل وقبل إنشاء السند (مسار
+      // غير الـ replay فقط): سند الصرف للعامل يُنشئ صف WorkerAdvance حتى
+      // يُخصم من كشوف رواتبه اللاحقة (الخصم يقرأ صفوف worker_advances فقط)،
+      // وسند القبض منه يسوّي السلف غير المسوّاة FIFO بالمبلغ نفسه —
+      // فتبقى أرصدة GL والحسابات التشغيلية متطابقة دائمًا.
+      if (data.counterpartyType === 'WORKER' && data.counterpartyId) {
+        if (data.type === VoucherType.PAYMENT) {
+          await tx.workerAdvance.create({
+            data: {
+              workerId: data.counterpartyId,
+              amount: new Prisma.Decimal(round2(data.amount)),
+              notes: `سند صرف ${voucherCode}: ${data.description}`,
+            },
+          });
+        } else {
+          // RECEIPT: تسوية FIFO بمقدار السند (تحقق الرصيد أعلاه ضمنيًا —
+          // المبلغ ≤ غير المسوّى)، بنفس توزيع خصم الرواتب.
+          const advances = await tx.workerAdvance.findMany({
+            where: { workerId: data.counterpartyId },
+            orderBy: [{ date: 'asc' }, { id: 'asc' }],
+          });
+          let remaining = new Prisma.Decimal(round2(data.amount));
+          for (const advance of advances) {
+            if (remaining.lte(0)) break;
+            const outstanding = advance.amount.minus(advance.settledAmount);
+            if (outstanding.lte(0)) continue;
+            const allocation = outstanding.lt(remaining)
+              ? outstanding
+              : remaining;
+            await tx.workerAdvance.update({
+              where: { id: advance.id },
+              data: { settledAmount: { increment: allocation } },
+            });
+            remaining = remaining.minus(allocation);
+          }
+        }
+      }
       return tx.voucher.create({
         data: {
           code: voucherCode,

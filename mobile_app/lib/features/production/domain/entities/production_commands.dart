@@ -1,5 +1,16 @@
 import 'work_order.dart';
 
+/// DEV-PQ1: أمر التشغيل المُنشأ كما يعيده الخادم (POST /production/work-orders
+/// يعيد صف أمر التشغيل كاملًا) — يكفينا للـ snackbar هوية الأمر الجديد:
+/// id + code. لا نرسل dueDate لأن CreateWorkOrderDto لا يقبل غير
+/// productVariantId/bomVersionId/quantity (forbidNonWhitelisted).
+class CreatedWorkOrder {
+  const CreatedWorkOrder({required this.id, this.code});
+
+  final String id;
+  final String? code;
+}
+
 class CreateWorkOrderCommand {
   const CreateWorkOrderCommand({
     required this.productVariantId,
@@ -69,11 +80,17 @@ class StageOutputResult {
     required this.workOrderId,
     required this.stage,
     required this.status,
+    required this.stageRunId,
   });
 
   final String workOrderId;
   final ProductionStage stage;
   final String status;
+
+  /// DEV-PQ3: معرف تشغيل المرحلة كما يعيده الخادم في استجابة stage-output —
+  /// أساس سجل مرحلات التشغيل المحلي الذي تقرأه حوارات الجودة واستهلاك
+  /// الخامات (لا يوجد مسار خادمي لجلب stageRuns لأمر ما).
+  final String stageRunId;
 }
 
 class MaterialConsumption {

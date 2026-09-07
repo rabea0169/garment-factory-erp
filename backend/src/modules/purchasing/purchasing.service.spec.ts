@@ -57,10 +57,27 @@ describe('PurchasingService (GF-0009)', () => {
       ];
       prisma.purchaseOrder.findMany.mockResolvedValue(orders);
       prisma.purchaseOrder.count.mockResolvedValue(1);
+      prisma.purchaseReceiptItem.findMany.mockResolvedValue([]);
 
       const result = await service.getPurchaseOrders();
 
-      expect(result.items).toEqual(orders);
+      // UAT-FIX: كل بند يُكمل بـ receivedQuantity (افتراضي 0) —
+      // إصلاح حواري الاستلام/المرتجع في الجوال.
+      expect(result.items).toEqual([
+        {
+          id: 'po-1',
+          supplier: { id: 'sup-1', code: 'SUP-1', name: 'مورد' },
+          items: [
+            {
+              rawMaterialId: 'rm-1',
+              quantity: 10,
+              unitCost: 5,
+              totalCost: 50,
+              receivedQuantity: 0,
+            },
+          ],
+        },
+      ]);
       expect(result.data).toBe(result.items);
       expect(result.total).toBe(1);
       expect(result.page).toBe(1);

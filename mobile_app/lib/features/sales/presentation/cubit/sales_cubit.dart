@@ -27,7 +27,10 @@ class SalesCubit extends Cubit<SalesState> {
     emit(SalesLoading());
     try {
       final dio = ApiClient.instance.dio;
-      final response = await dio.get('/sales/orders');
+      final response = await dio.get(
+        '/sales/orders',
+        queryParameters: {'limit': 100},
+      );
       emit(
         SalesLoaded(
           ApiParsing.paginatedMaps(
@@ -42,7 +45,10 @@ class SalesCubit extends Cubit<SalesState> {
   }
 
   Future<List<Map<String, dynamic>>> fetchCustomers() async {
-    final response = await ApiClient.instance.dio.get('/sales/customers');
+    final response = await ApiClient.instance.dio.get(
+      '/sales/customers',
+      queryParameters: {'limit': 100},
+    );
     return ApiParsing.paginatedMaps(
       response.data,
       context: 'العملاء',
@@ -50,7 +56,10 @@ class SalesCubit extends Cubit<SalesState> {
   }
 
   Future<List<Map<String, dynamic>>> fetchProducts() async {
-    final response = await ApiClient.instance.dio.get('/products');
+    final response = await ApiClient.instance.dio.get(
+      '/products',
+      queryParameters: {'limit': 100},
+    );
     return ApiParsing.paginatedMaps(
       response.data,
       context: 'المنتجات',

@@ -81,6 +81,11 @@ WorkOrderStatus parseWorkOrderStatus(String? value) {
       return WorkOrderStatus.sewing;
     case 'IRONING':
       return WorkOrderStatus.ironing;
+    // FINISHING قيمة legacy خادمية (تنظيم/تجهيز نهائي بعد الكي قبل التعبئة)
+    // — تُترجم إلى ironing لأنها أقرب مرحلة معروضة، صف قديم واحد كان يكسر
+    // قائمة الإنتاج كلها عبر FormatException (audit-FE2 P2).
+    case 'FINISHING':
+      return WorkOrderStatus.ironing;
     case 'PACKAGING':
     case 'PACKING':
       return WorkOrderStatus.packing;
@@ -91,7 +96,9 @@ WorkOrderStatus parseWorkOrderStatus(String? value) {
     case 'CANCELLED':
       return WorkOrderStatus.cancelled;
     default:
-      throw FormatException('حالة أمر التشغيل غير معروفة: $value');
+      // تسامح بدل الرمي: أي قيمة مستقبلية غير معروفة تُعرض كـ inProgress
+      // بدل إسقاط القائمة كاملة — الترقية الخادمية يجب أن ترافقها ترجمة هنا.
+      return WorkOrderStatus.inProgress;
   }
 }
 

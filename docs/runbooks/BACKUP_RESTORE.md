@@ -248,8 +248,9 @@ psql --host=<DB_HOST> --port=<DB_PORT> --username=<DB_USER> --dbname="${DRILL_DB
   --command='SELECT COUNT(*) AS applied_migrations FROM "_prisma_migrations";'
 ```
 
-- **القيمة المرجعية للبوابة G9: 36.**
-- القيمة الحاكمة: تساوي عدد مجلدات الهجرات في المستودع (`ls <REPO_PATH>/backend/prisma/migrations | grep -v migration_lock.toml | wc -l`). عند إعداد هذا الدليل كان HEAD `e72ee94` يحوي **35** مجلد هجرة (تحقق تجريبي: قاعدة مبنية من هجرات المستودع سجّلت 35 صفًا في `_prisma_migrations`)، وإصلاح wave 7 (P0) قيد الدمج — حدّث الرقم المرجعي في هذا البند عند دمج أي هجرة جديدة حتى يبلغ 36.
+- **القيمة المرجعية للبوابة G9: 39.**
+- القيمة الحاكمة: تساوي عدد مجلدات الهجرات في المستودع (`ls <REPO_PATH>/backend/prisma/migrations | grep -v migration_lock.toml | wc -l`). عند إعداد هذا الدليل كان HEAD `e72ee94` يحوي **35** مجلد هجرة (تحقق تجريبي: قاعدة مبنية من هجرات المستودع سجّلت 35 صفًا في `_prisma_migrations`)، ثم أضافت الموجات W1/W2/W3 ثلاثًا (38)، وهجرة `20260907000000_audit_db_index_alignment` محاذاة الفهارس/قيود FK (39 — audit-DB). حدّث الرقم المرجعي في هذا البند عند دمج أي هجرة جديدة.
+- **بوابة الانحراف المصاحبة (audit-DB):** `npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code` على قاعدة مستعادة يجب أن تُرجع "No difference detected" — أي فرق يعني انحرافًا بين الهجرات والمخطط (فهارس/قيود/FK actions) ويجب فحصه قبل الاعتماد على القاعدة المستعادة.
 - إضافة إلزامية — لا هجرات فاشلة/معلقة:
 
 ```bash

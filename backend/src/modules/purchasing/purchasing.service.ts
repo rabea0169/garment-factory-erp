@@ -127,9 +127,38 @@ export class PurchasingService {
       this.prisma.purchaseOrder.count({ where }),
     ]);
 
+    // UAT-FIX (استقبال الجوال): الكمية المستلمة لكل بند مطلوبة في واجهتي
+    // الاستلام («المتبقي») والمرتجع («المتاح للإرجاع») — بدونها تُبنى
+    // القوائم على حقول غير موجودة فتظهر فارغة دائمًا. نحسبها بمجموعة
+    // receipt items واحدة لكل الصفحة (استعلام إضافي واحد بدل N+1).
+    const pageItemIds = data.flatMap((order) =>
+      (order.items ?? []).map((i) => i.id),
+    );
+    const receivedMap = new Map<string, number>();
+    if (pageItemIds.length > 0) {
+      const receiptItems =
+        (await this.prisma.purchaseReceiptItem.findMany({
+          where: { purchaseOrderItemId: { in: pageItemIds } },
+          select: { purchaseOrderItemId: true, quantity: true },
+        })) ?? [];
+      for (const ri of receiptItems) {
+        receivedMap.set(
+          ri.purchaseOrderItemId,
+          (receivedMap.get(ri.purchaseOrderItemId) ?? 0) + Number(ri.quantity),
+        );
+      }
+    }
+    const ordersWithReceived = data.map((order) => ({
+      ...order,
+      items: (order.items ?? []).map((item) => ({
+        ...item,
+        receivedQuantity: receivedMap.get(item.id) ?? 0,
+      })),
+    }));
+
     // CC-6: قالب الاستجابة الموحد (items/total/page/limit + توافق
     // data/meta الانتقالي للمستهلكين الحاليين).
-    return new ListResponseDto(data, total, page, limit);
+    return new ListResponseDto(ordersWithReceived, total, page, limit);
   }
 
   async createPurchaseOrder(
@@ -994,9 +1023,11 @@ export class PurchasingService {
                 returnAmount: returnTotal,
                 inventoryEntryCode: result.entryCode,
               },
-              postingKey: idempotencyKey
-                ? `purchasing.return:${idempotencyKey}`
-                : undefined,
+              // P2 (audit-BE2): postingKey مشتق ثابت من مرجع المرتجع (لا
+              // يعتمد على إرسال العميل لمفتاح Idempotency) — القيد الفريد
+              // الجزئي على postingKey يحمي القيد المزدوج حتى لو أعاد عميل
+              // بلا المفتاح المحاولة ضمن حد الاستلام.
+              postingKey: `purchasing.return:${returnCode}`,
             },
             userId,
           );

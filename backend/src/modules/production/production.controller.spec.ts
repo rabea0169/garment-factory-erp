@@ -15,6 +15,7 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
     updateOrderStatus: jest.Mock;
   };
   let workflow: {
+    getWorkOrderStageRuns: jest.Mock;
     transitionStage: jest.Mock;
     recordStageOutput: jest.Mock;
     consumeMaterial: jest.Mock;
@@ -28,6 +29,11 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
       updateOrderStatus: jest.fn().mockResolvedValue({ id: 'wo-1' }),
     };
     workflow = {
+      getWorkOrderStageRuns: jest.fn().mockResolvedValue({
+        workOrderId: 'wo-1',
+        code: 'WO-0001',
+        stageRuns: [],
+      }),
       transitionStage: jest.fn().mockResolvedValue({
         replayed: false,
         transitionId: 'transition-1',
@@ -79,6 +85,29 @@ describe('ProductionController — هوية الجلسة والصلاحيات (G
       'SEWING',
       'test-user-id',
     );
+  });
+
+  it('مسار stage-runs الجديد (DEV-PQ3): يمرر معرف الأمر كما ورد ويحترم أدوار الجودة/الإنتاج', async () => {
+    const result = await controller.getWorkOrderStageRuns(
+      '0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f',
+    );
+
+    expect(workflow.getWorkOrderStageRuns).toHaveBeenCalledWith(
+      '0f0f0f0f-0f0f-0f0f-0f0f-0f0f0f0f0f0f',
+    );
+    expect(result).toMatchObject({ workOrderId: 'wo-1' });
+
+    // audit-FE2 (P1): نفس جمهور وحدة الجودة — مفتش الجودة يحتاج التشغيلات.
+    const roles = getMethodMetadata<UserRole[]>(
+      ROLES_KEY,
+      ProductionController.prototype,
+      'getWorkOrderStageRuns',
+    );
+    expect(roles).toEqual([
+      UserRole.PRODUCTION_MANAGER,
+      UserRole.GENERAL_MANAGER,
+      UserRole.SUPER_ADMIN,
+    ]);
   });
 
   it('انتقال GF-0013 يمرر actor وIdempotency-Key إلى الخدمة', async () => {

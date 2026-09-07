@@ -65,6 +65,23 @@ export class ProductionController {
     return this.productionService.createWorkOrder(body, userId, idempotencyKey);
   }
 
+  @Get('work-orders/:id/stage-runs')
+  // DEV-PQ3 (audit-FE2 P1): حل stageRunId عبر الخادم — السجل المحلي في
+  // التطبيق كان يقصر دورة الإنتاج (استهلاك خامات + فحص جودة) على الجهاز
+  // الذي نفّذ انتقال المرحلة نفسه؛ هذا المسار يجعل تعدد الأجهزة ممكنًا.
+  // نفس جمهور وحدة الجودة (مفتش الجودة يحتاج التشغيلات المكتملة).
+  @Roles(
+    UserRole.PRODUCTION_MANAGER,
+    UserRole.GENERAL_MANAGER,
+    UserRole.SUPER_ADMIN,
+  )
+  @ApiOperation({
+    summary: 'تشغيلات مراحل أمر التشغيل (حل stageRunId عبر الخادم)',
+  })
+  async getWorkOrderStageRuns(@Param('id', ParseUUIDPipe) workOrderId: string) {
+    return this.workflowService.getWorkOrderStageRuns(workOrderId);
+  }
+
   @Patch('work-orders/:id/status')
   @Roles(UserRole.PRODUCTION_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({

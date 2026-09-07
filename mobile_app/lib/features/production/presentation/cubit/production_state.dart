@@ -31,6 +31,19 @@ final class ProductionLoaded extends ProductionState {
   final DateTime? cachedAt;
 }
 
+/// DEV-PQ1/2: فشل عملية كتابة (إنشاء أمر/استهلاك خامات) — لا يمسح القائمة
+/// المعروضة خلف الحوار: ترث [ProductionLoaded] فيبقى عرض الأوامر كما هو،
+/// وتحمل الفشل ليقرأه الحوار ويعرض رسالته داخل الحوار نفسه (نفس نهج
+/// UAT-FIX في QualityCubit: خطأ الكتابة لا يهدم حالة القراءة).
+final class ProductionWriteFailure extends ProductionLoaded {
+  const ProductionWriteFailure({
+    required super.workOrders,
+    required this.failure,
+  });
+
+  final failures.ProductionFailure failure;
+}
+
 final class ProductionEmpty extends ProductionState {
   const ProductionEmpty();
 }
