@@ -6,6 +6,7 @@ import '../../domain/entities/production_commands.dart';
 import '../../domain/entities/work_order.dart';
 import '../../domain/failures/production_failure.dart' as failures;
 import '../../domain/usecases/production_usecases.dart';
+import '../../stage_run_registry.dart';
 import 'production_state.dart';
 
 class ProductionCubit extends Cubit<ProductionState> {
@@ -88,23 +89,36 @@ class ProductionCubit extends Cubit<ProductionState> {
     }
   }
 
-  Future<bool> createWorkOrder(CreateWorkOrderCommand command) async {
+  /// DEV-PQ1: ينشئ أمر التشغيل ويعيد هوية الأمر الجديد (رمزه للـ snackbar)
+  /// أو null عند الفشل. الاستدعاء يمر بالـ use case الموجود والقائمة
+  /// تُعاد جلبًا تلقائيًا عند النجاح (نفس سلوك transitionStage).
+  Future<CreatedWorkOrder?> createWorkOrder(CreateWorkOrderCommand command) async {
     final createWorkOrder = _createWorkOrder;
-    if (createWorkOrder == null) return false;
+    if (createWorkOrder == null) return null;
     try {
-      await createWorkOrder(command);
+      final created = await createWorkOrder(command);
       await fetchWorkOrders(refresh: true);
-      return true;
+      return created;
     } on failures.ProductionUnauthorizedFailure {
       emit(const ProductionUnauthorized());
-    } on failures.ProductionNetworkFailure {
-      emit(const ProductionOffline());
     } on failures.ProductionFailure catch (failure) {
-      emit(ProductionFailure(failure));
+      _emitWriteFailure(failure);
     } catch (_) {
-      emit(const ProductionFailure(failures.ProductionServerFailure()));
+      _emitWriteFailure(const failures.ProductionServerFailure());
     }
-    return false;
+    return null;
+  }
+
+  /// فشل الكتابة لا يهدم القائمة المعروضة: مع قائمة محملة نُصدر
+  /// [ProductionWriteFailure] (ترث Loaded) ليقرأ الحوار رسالة الخادم
+  /// ويعرضها داخل الحوار — وبلا قائمة نُصدر الفشل العادي.
+  void _emitWriteFailure(failures.ProductionFailure failure) {
+    final current = state;
+    if (current is ProductionLoaded) {
+      emit(ProductionWriteFailure(workOrders: current.workOrders, failure: failure));
+    } else {
+      emit(ProductionFailure(failure));
+    }
   }
 
   Future<void> transitionStage({
@@ -112,10 +126,17 @@ class ProductionCubit extends Cubit<ProductionState> {
     required ProductionStage stage,
   }) async {
     try {
-      await _transitionStage(
+      final transition = await _transitionStage(
         workOrderId: workOrderId,
         toStage: stage,
         idempotencyKey: _uuid.v4(),
+      );
+      // DEV-PQ3: الانتقال أنشأ تشغيل المرحلة الجديدة — سجّل معرفه محليًا.
+      await rememberStageRun(
+        _cache,
+        workOrderId: workOrderId,
+        stageApiValue: transition.toStage.apiValue,
+        stageRunId: transition.stageRunId,
       );
       await fetchWorkOrders(refresh: true);
     } on failures.ProductionUnauthorizedFailure {
@@ -134,6 +155,14 @@ class ProductionCubit extends Cubit<ProductionState> {
   ) async {
     try {
       final result = await _recordStageOutput(command);
+      // DEV-PQ3: تسجيل المخرجات أكمل تشغيل المرحلة — سجّل معرفه محليًا
+      // ليستطيع فحص الجودة الربط به (الجودة ترفض المراحل غير المكتملة).
+      await rememberStageRun(
+        _cache,
+        workOrderId: result.workOrderId,
+        stageApiValue: result.stage.apiValue,
+        stageRunId: result.stageRunId,
+      );
       await fetchWorkOrders(refresh: true);
       return result;
     } on failures.ProductionUnauthorizedFailure {
@@ -155,12 +184,10 @@ class ProductionCubit extends Cubit<ProductionState> {
       return await _consumeMaterial(command);
     } on failures.ProductionUnauthorizedFailure {
       emit(const ProductionUnauthorized());
-    } on failures.ProductionNetworkFailure {
-      emit(const ProductionOffline());
     } on failures.ProductionFailure catch (failure) {
-      emit(ProductionFailure(failure));
+      _emitWriteFailure(failure);
     } catch (_) {
-      emit(const ProductionFailure(failures.ProductionServerFailure()));
+      _emitWriteFailure(const failures.ProductionServerFailure());
     }
     return null;
   }
@@ -186,6 +213,20 @@ class ProductionCubit extends Cubit<ProductionState> {
     if (limit <= 0) return;
     _limit = limit;
     _page = 1;
+  }
+
+  /// DEV-PQ3: يعيد معرف تشغيل المرحلة المحفوظ محليًا (workOrderId+stage)،
+  /// أو null إن لم يُسجّل من هذا الجهاز بعد — الحوارات تعرض حينها تلميحًا
+  /// واضحًا بدل قبول UUID يدوي.
+  Future<String?> stageRunIdFor(
+    String workOrderId,
+    ProductionStage stage,
+  ) {
+    return lookupStageRunId(
+      _cache,
+      workOrderId: workOrderId,
+      stageApiValue: stage.apiValue,
+    );
   }
 
   /// يحوّل قيمة الكاش (List بروابط dynamic) إلى أوامر تشغيل — null عند

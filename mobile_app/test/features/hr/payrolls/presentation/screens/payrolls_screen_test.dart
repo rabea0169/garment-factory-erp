@@ -73,7 +73,7 @@ void main() {
     await _pump(tester, const PayrollsEmpty(filter: PayrollStatusFilter.all));
     expect(find.byType(AppEmptyView), findsOneWidget);
     expect(find.text('لا توجد كشوف رواتب'), findsOneWidget);
-    expect(find.text('لم تُنشأ أي كشوف بعد'), findsOneWidget);
+    expect(find.textContaining('لم تُنشأ أي كشوف بعد'), findsOneWidget);
   });
 
   testWidgets('فراغ بمرشح → الرسالة تحمل اسم الحالة', (tester) async {
@@ -122,6 +122,168 @@ void main() {
     await tester.pump();
     expect(cubit.fetchCalls, 1);
   });
+
+  // ===================== GF-IMP-W3: أزرار إجراءات الدورة =====================
+
+  final actionPayrolls = <Map<String, dynamic>>[
+    payroll('p-1', 'DRAFT'),
+    payroll('p-2', 'APPROVED'),
+    payroll('p-3', 'PAID'),
+  ];
+
+  testWidgets('أزرار حسب الحالة: DRAFT اعتماد+إبطال، APPROVED دفع، PAID لا شيء',
+      (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    );
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    // بطاقة المسودة: زرا الاعتماد والإبطال.
+    expect(find.widgetWithText(FilledButton, 'اعتماد'), findsOneWidget);
+    expect(find.widgetWithText(TextButton, 'إبطال'), findsOneWidget);
+    // بطاقة المعتمد: زر الدفع.
+    expect(find.widgetWithText(FilledButton, 'دفع'), findsOneWidget);
+    // المدفوع: لا أزرار — مجموع الأزرار = 3 فقط.
+    expect(
+      find.descendant(
+        of: find.byType(Card),
+        matching: find.byType(FilledButton),
+      ),
+      findsNWidgets(2),
+    );
+    expect(
+      find.descendant(of: find.byType(Card), matching: find.byType(TextButton)),
+      findsOneWidget,
+    );
+    // FAB "كشف جديد".
+    expect(find.widgetWithText(FloatingActionButton, 'كشف جديد'), findsOneWidget);
+  });
+
+  testWidgets('زر الاعتماد يستدعي approvePayroll بمعرف الكشف', (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    );
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('اعتماد'));
+    await tester.pump();
+
+    expect(cubit.approvePayrollCalls, ['p-1']);
+  });
+
+  testWidgets('زر الإبطال يطلب تأكيدًا ثم يستدعي cancelPayroll', (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    );
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('إبطال'));
+    await tester.pumpAndSettle();
+
+    // حوار التأكيد ظاهر — التأكيد يستدعي الإبطال.
+    expect(find.byType(AlertDialog), findsOneWidget);
+    await tester.tap(find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('إبطال'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(cubit.cancelPayrollCalls, ['p-1']);
+    expect(find.text('تم إبطال كشف الراتب'), findsOneWidget);
+  });
+
+  testWidgets('زر الدفع يفتح حوار الخزينة ويمرر المختار إلى payPayroll',
+      (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    );
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'دفع'));
+    await tester.pumpAndSettle();
+
+    // حوار الدفع مع قائمة الخزائن (الافتراضية الأولى مختارة).
+    expect(find.text('دفع كشف الراتب'), findsOneWidget);
+    expect(find.text('الخزينة الرئيسية'), findsOneWidget);
+
+    await tester.tap(find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.text('دفع'),
+    ));
+    await tester.pumpAndSettle();
+
+    expect(cubit.payPayrollCalls, [('p-2', 't-1')]);
+    expect(find.text('تم دفع كشف الراتب وترحيله من الخزينة'), findsOneWidget);
+  });
+
+  testWidgets('فشل جلب الخزائن → تلميح داخل حوار الدفع', (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    )..treasuriesResult = const [];
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FilledButton, 'دفع'));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('لا توجد خزائن'), findsOneWidget);
+  });
+
+  testWidgets('FAB "كشف جديد" → الحوار يستدعي createPayroll بالوسائط',
+      (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    );
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'كشف جديد'));
+    await tester.pumpAndSettle();
+
+    // العمال جلبوا والحوار جاهز (أول عامل افتراضيًا).
+    expect(find.text('كشف راتب جديد'), findsOneWidget);
+    expect(find.text('أحمد محمود (W-001)'), findsOneWidget);
+
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'من (yyyy-MM-dd)'), '2026-08-01');
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'إلى (yyyy-MM-dd)'), '2026-08-31');
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'مكافأة إضافية (اختياري)'), '150');
+    await tester.tap(find.text('إنشاء الكشف'));
+    await tester.pumpAndSettle();
+
+    expect(cubit.createPayrollCalls, hasLength(1));
+    final call = cubit.createPayrollCalls.single;
+    expect(call['workerId'], 'w-1');
+    expect(call['from'], DateTime(2026, 8, 1));
+    expect(call['to'], DateTime(2026, 8, 31));
+    expect(call['bonus'], 150);
+    expect(find.text('تم إنشاء كشف الراتب (مسودة) بنجاح'), findsOneWidget);
+  });
+
+  testWidgets('تحقق حقول الحوار: تاريخ غير صالح يمنع الإنشاء', (tester) async {
+    final cubit = _ActionsTrackingCubit(
+      PayrollsLoaded(payrolls: actionPayrolls, filter: PayrollStatusFilter.all),
+    );
+    await _pump(tester, null, cubit: cubit);
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.widgetWithText(FloatingActionButton, 'كشف جديد'));
+    await tester.pumpAndSettle();
+
+    await tester.enterText(
+        find.widgetWithText(TextFormField, 'من (yyyy-MM-dd)'), 'not-a-date');
+    await tester.tap(find.text('إنشاء الكشف'));
+    await tester.pump();
+
+    expect(find.text('تاريخ غير صالح'), findsOneWidget);
+    expect(cubit.createPayrollCalls, isEmpty);
+  });
 }
 
 Future<void> _pump(
@@ -161,3 +323,82 @@ class _TrackingPayrollsCubit extends _StaticPayrollsCubit {
   Future<void> setFilter(PayrollStatusFilter filter) async =>
       setFilterCalls.add(filter);
 }
+
+/// GF-IMP-W3: cubit تتبع لأفعال الدورة — يسجل الاستدعاءات ويعيد نجاحًا.
+class _ActionsTrackingCubit extends _TrackingPayrollsCubit {
+  _ActionsTrackingCubit(super.state);
+
+  final List<String> approvePayrollCalls = <String>[];
+  final List<String> cancelPayrollCalls = <String>[];
+  final List<(String, String?)> payPayrollCalls = <(String, String?)>[];
+  final List<Map<String, dynamic>> createPayrollCalls =
+      <Map<String, dynamic>>[];
+
+  List<Map<String, dynamic>> treasuriesResult = [
+    {'id': 't-1', 'name': 'الخزينة الرئيسية'},
+    {'id': 't-2', 'name': 'خزينة المصنع'},
+  ];
+
+  @override
+  Future<String?> approvePayroll(String id) async {
+    approvePayrollCalls.add(id);
+    return null;
+  }
+
+  @override
+  Future<String?> cancelPayroll(String id) async {
+    cancelPayrollCalls.add(id);
+    return null;
+  }
+
+  @override
+  Future<String?> payPayroll(String id, {String? treasuryId}) async {
+    payPayrollCalls.add((id, treasuryId));
+    return null;
+  }
+
+  @override
+  Future<String?> createPayroll({
+    required String workerId,
+    DateTime? from,
+    DateTime? to,
+    double? bonus,
+    double? deductions,
+    String? notes,
+  }) async {
+    createPayrollCalls.add({
+      'workerId': workerId,
+      'from': from,
+      'to': to,
+      'bonus': bonus,
+      'deductions': deductions,
+      'notes': notes,
+    });
+    return null;
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchWorkers() async => [
+        {'id': 'w-1', 'name': 'أحمد محمود', 'code': 'W-001'},
+        {'id': 'w-2', 'name': 'سعيد علي', 'code': 'W-002'},
+      ];
+
+  @override
+  Future<List<Map<String, dynamic>>> fetchTreasuries() async =>
+      treasuriesResult;
+}
+
+Map<String, dynamic> payroll(String id, String status) =>
+    <String, dynamic>{
+      'id': id,
+      'workerId': 'w-$id',
+      'periodStart': '2026-08-01T00:00:00.000Z',
+      'periodEnd': '2026-08-31T00:00:00.000Z',
+      'grossAmount': 5000,
+      'advanceDeduct': 300,
+      'absenceDeduct': 200,
+      'netAmount': 4500,
+      'status': status,
+      'createdAt': '2026-09-01T10:00:00.000Z',
+      'worker': {'id': 'w-$id', 'name': 'عامل $id', 'code': 'W-00$id'},
+    };

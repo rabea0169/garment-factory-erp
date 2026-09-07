@@ -220,7 +220,9 @@ void main() {
 
       expect(outcome, RecordProductionOutcome.failed);
       expect(outbox.pendingCount, 0);
-      expect(cubit.state, isA<HrError>());
+      // UAT-FIX: فشل الكتابة لا يمسح القائمة المحمّلة — القائمة تبقى
+      // للحوار كي يعرض رسالة الخطأ دون فقدان الشاشة.
+      expect(cubit.state, isA<HrLoaded>());
     });
   });
 
@@ -325,7 +327,144 @@ void main() {
 
       expect(outcome, RecordAttendanceOutcome.failed);
       expect(outbox.pendingCount, 0);
+      // UAT-FIX: القائمة تبقى معروضة عند فشل الكتابة.
+      expect(cubit.state, isA<HrLoaded>());
+    });
+  });
+
+  group('recordAdvance (COMM-F05)', () {
+    test('النجاح: POST بعقد CreateAdvanceDto + مفتاح اندماجية + إعادة جلب العمال',
+        () async {
+      final transport = _StubTransport();
+      transport.payloads['/hr/workers'] = (_) => workersPayload;
+      transport.payloads['/hr/advances'] = (_) => {'id': 'adv-1'};
+      final cubit = HrCubit(dio: transport.dio, cache: cache, outbox: outbox);
+      addTearDown(cubit.close);
+      await cubit.fetchWorkers();
+
+      final error = await cubit.recordAdvance(
+        workerId: 'w-1',
+        amount: 250,
+        reason: '  سلفة شهرية  ',
+        treasuryId: 't-9',
+      );
+
+      expect(error, isNull);
+      final post =
+          transport.requests.lastWhere((r) => r.path == '/hr/advances');
+      expect(post.method, 'POST');
+      final body = post.data as Map;
+      expect(body['workerId'], 'w-1');
+      expect(body['amount'], 250);
+      // السبب يُرسل في حقل notes (اسم الخادم) بعد القص.
+      expect(body['notes'], 'سلفة شهرية');
+      expect(body['treasuryId'], 't-9');
+      // D2: مفتاح اندماجية UUID صريح.
+      expect(
+        post.headers['Idempotency-Key'],
+        isA<String>(),
+      );
+      // نجاح السلفة → إعادة جلب العمال (تحديث أرصدة السلف).
+      expect(
+        transport.requests.where((r) => r.path == '/hr/workers').length,
+        2,
+      );
+    });
+
+    test('بلا خزينة/بسبب فارغ → الحقول لا تُرسل في الجسم', () async {
+      final transport = _StubTransport();
+      transport.payloads['/hr/workers'] = (_) => workersPayload;
+      transport.payloads['/hr/advances'] = (_) => {'id': 'adv-2'};
+      final cubit = HrCubit(dio: transport.dio, cache: cache, outbox: outbox);
+      addTearDown(cubit.close);
+      await cubit.fetchWorkers();
+
+      await cubit.recordAdvance(
+        workerId: 'w-2',
+        amount: 100,
+        reason: '',
+      );
+
+      final body = transport.requests
+          .lastWhere((r) => r.path == '/hr/advances')
+          .data as Map;
+      expect(body.containsKey('notes'), isFalse);
+      expect(body.containsKey('treasuryId'), isFalse);
+    });
+
+    test('خطأ خادم 403 → رسالة نصية والقائمة المعروضة لا تمس (UAT-FIX)',
+        () async {
+      final transport = _StubTransport();
+      transport.payloads['/hr/workers'] = (_) => workersPayload;
+      transport.errorStatus['/hr/advances'] = 403;
+      final cubit = HrCubit(dio: transport.dio, cache: cache, outbox: outbox);
+      addTearDown(cubit.close);
+      await cubit.fetchWorkers();
+      final workersBefore =
+          (cubit.state as HrLoaded).workers.length;
+
+      final error = await cubit.recordAdvance(
+        workerId: 'w-1',
+        amount: 50,
+        reason: 'سلفة',
+      );
+
+      // رسالة الخطأ نصية (messageFor) — HrError لا يُصدر.
+      expect(error, isNotNull);
+      expect(error, contains('صلاحية'));
+      expect(cubit.state, isA<HrLoaded>());
+      expect((cubit.state as HrLoaded).workers.length, workersBefore);
+    });
+
+    test('خطأ بلا قائمة محملة → HrError', () async {
+      final transport = _StubTransport()..errorStatus['/hr/advances'] = 500;
+      final cubit = HrCubit(dio: transport.dio, cache: cache, outbox: outbox);
+      addTearDown(cubit.close);
+
+      final error = await cubit.recordAdvance(
+        workerId: 'w-1',
+        amount: 50,
+        reason: 'سلفة',
+      );
+
+      expect(error, isNotNull);
       expect(cubit.state, isA<HrError>());
+    });
+  });
+
+  group('fetchTreasuries (COMM-F05)', () {
+    test('النجاح: data[] تُحل كقائمة خرائط', () async {
+      final transport = _StubTransport()
+        ..payloads['/accounting/treasuries'] = (_) => {
+              'data': [
+                {'id': 't-1', 'name': 'الخزينة الرئيسية', 'balance': 5000},
+                {'id': 't-2', 'name': 'خزينة المصنع', 'balance': 1200},
+              ],
+              'meta': {'total': 2, 'page': 1, 'pageSize': 100},
+            };
+      final cubit = HrCubit(dio: transport.dio, cache: cache, outbox: outbox);
+      addTearDown(cubit.close);
+
+      final treasuries = await cubit.fetchTreasuries();
+
+      expect(treasuries.length, 2);
+      expect(treasuries.first['name'], 'الخزينة الرئيسية');
+      expect(
+        transport.requests.single.queryParameters['limit'],
+        100,
+      );
+    });
+
+    test('فشل الجلب (403) → قائمة فارغة بصمت (تعطيل الخيار في الحوار)',
+        () async {
+      final transport = _StubTransport()
+        ..errorStatus['/accounting/treasuries'] = 403;
+      final cubit = HrCubit(dio: transport.dio, cache: cache, outbox: outbox);
+      addTearDown(cubit.close);
+
+      final treasuries = await cubit.fetchTreasuries();
+
+      expect(treasuries, isEmpty);
     });
   });
 

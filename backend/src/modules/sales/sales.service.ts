@@ -919,7 +919,13 @@ export class SalesService {
                 // ProductVariant بلا عمود code — المعرِّفات الفعلية:
                 // size/color (فريدان مع المنتج) وbarcode للقراءة السريعة.
                 variant: {
-                  select: { id: true, size: true, color: true, barcode: true },
+                  select: {
+                    id: true,
+                    size: true,
+                    color: true,
+                    barcode: true,
+                    product: { select: { id: true, code: true, name: true } },
+                  },
                 },
               },
             },
@@ -1006,7 +1012,13 @@ export class SalesService {
               // ProductVariant بلا عمود code — المعرِّفات الفعلية: size/color
               // (فريدان مع المنتج) وbarcode للقراءة السريعة.
               variant: {
-                select: { id: true, size: true, color: true, barcode: true },
+                select: {
+                  id: true,
+                  size: true,
+                  color: true,
+                  barcode: true,
+                  product: { select: { id: true, code: true, name: true } },
+                },
               },
             },
           },
@@ -1015,9 +1027,37 @@ export class SalesService {
       }),
       this.prisma.salesOrder.count({ where }),
     ]);
+
+    // UAT-FIX (مرتجع الجوال): حوار المرتجع يحتاج الكمية المرتجعة سابقًا لكل
+    // بند لحساب «المتاح للإرجاع» — بدونها يعرض الكمية الأصلية كاملة
+    // (مضلل). استعلام تجميعي واحد لكل صفحة القائمة.
+    const pageItemIds = data.flatMap((order) =>
+      (order.items ?? []).map((i) => i.id),
+    );
+    const returnedMap = new Map<string, number>();
+    if (pageItemIds.length > 0) {
+      const returnItems = await this.prisma.salesReturnItem.findMany({
+        where: { salesOrderItemId: { in: pageItemIds } },
+        select: { salesOrderItemId: true, quantity: true },
+      });
+      for (const ri of returnItems) {
+        returnedMap.set(
+          ri.salesOrderItemId,
+          (returnedMap.get(ri.salesOrderItemId) ?? 0) + ri.quantity,
+        );
+      }
+    }
+    const ordersWithReturned = data.map((order) => ({
+      ...order,
+      items: (order.items ?? []).map((item) => ({
+        ...item,
+        returnedQuantity: returnedMap.get(item.id) ?? 0,
+      })),
+    }));
+
     // SAL-5: عقد الاستجابة الكنوني (items/total/page/limit + توافق
     // data/meta) — mobile الحالي يقرأ data فلا انكسار.
-    return new ListResponseDto(data, total, page, limit);
+    return new ListResponseDto(ordersWithReturned, total, page, limit);
   }
 
   async createSalesOrder(

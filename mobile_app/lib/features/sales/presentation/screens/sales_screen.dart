@@ -66,12 +66,19 @@ class SalesScreen extends StatelessWidget {
                         backgroundColor: AppColors.success,
                         child: Icon(Icons.receipt_long, color: Colors.white),
                       ),
-                      title: Text(
-                        'طلب ${order['code'] ?? ''}',
-                        style: const TextStyle(
-                          fontWeight: FontWeight.bold,
-                          fontFamily: 'Cairo',
-                        ),
+                      title: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'طلب ${order['code'] ?? ''}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontFamily: 'Cairo',
+                              ),
+                            ),
+                          ),
+                          _StatusChip(status: '${order['status'] ?? ''}'),
+                        ],
                       ),
                       subtitle: Text(
                         'العميل: ${customer?['name'] ?? 'غير محدد'} | الإجمالي: ${order['totalAmount'] ?? 0} جنيه',
@@ -999,6 +1006,60 @@ class _SalesReturnDialogState extends State<_SalesReturnDialog> {
               : const Text('حفظ المرتجع'),
         ),
       ],
+    );
+  }
+}
+
+/// شارة حالة أمر البيع — كانت الحالة غير معروضة إطلاقًا (أمر ملغى يظهر
+/// كبند بلا أزرار وبلا تفسير). الألوان: مسودة رمادي، مؤكد أخضر،
+/// مشحون/في الطريق أزرق، ملغى/مبطل أحمر، مرتجع برتقالي.
+class _StatusChip extends StatelessWidget {
+  const _StatusChip({required this.status});
+
+  final String status;
+
+  (String, Color) get _info {
+    switch (status) {
+      case 'DRAFT':
+        return ('مسودة', Colors.blueGrey);
+      case 'CONFIRMED':
+        return ('مؤكد', Colors.green);
+      case 'SHIPPED':
+        return ('مشحون', Colors.indigo);
+      case 'IN_TRANSIT':
+        return ('في الطريق', Colors.indigo);
+      case 'DELIVERED':
+        return ('تم التسليم', Colors.teal);
+      case 'CANCELLED':
+        return ('ملغى', Colors.red);
+      case 'VOIDED':
+        return ('مبطل', Colors.red);
+      case 'RETURNED':
+        return ('مرتجع', Colors.orange);
+      default:
+        return (status.isEmpty ? 'غير محددة' : status, Colors.grey);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, color) = _info;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
+      ),
+      child: Text(
+        label,
+        style: TextStyle(
+          color: color,
+          fontSize: 11,
+          fontWeight: FontWeight.w700,
+          fontFamily: 'Cairo',
+        ),
+      ),
     );
   }
 }

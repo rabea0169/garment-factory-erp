@@ -13,7 +13,10 @@ class ShippingCubit extends Cubit<ShippingState> {
   final Uuid _uuid;
 
   Future<List<Map<String, dynamic>>> fetchConfirmedSalesOrders() async {
-    final response = await ApiClient.instance.dio.get('/sales/orders');
+    // فلترة خادمية مباشرة بدل جلب كل الأوامر ثم الترشيح محليًا —
+    // أمر مؤكد خارج أول 20 كان يُحجب صامتًا عن قائمة الشحن.
+    final response = await ApiClient.instance.dio
+        .get('/sales/orders', queryParameters: {'status': 'CONFIRMED', 'limit': 100});
     return ApiParsing.paginatedMaps(
       response.data,
       context: 'أوامر البيع',

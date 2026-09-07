@@ -15,6 +15,7 @@ import '../../features/suppliers/presentation/screens/suppliers_screen.dart';
 import '../../features/shipping/presentation/screens/shipping_screen.dart';
 import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
+import '../../features/users/presentation/screens/users_screen.dart';
 import '../storage/auth_storage.dart';
 
 class AppRouter {
@@ -25,6 +26,7 @@ class AppRouter {
   static const String dashboard = '/dashboard';
   static const String inventory = '/inventory';
   static const String purchasing = '/purchasing';
+  static const String products = '/products';
   static const String production = '/production';
   static const String quality = '/quality';
   static const String hr = '/hr';
@@ -36,6 +38,8 @@ class AppRouter {
   static const String shipping = '/shipping';
   static const String accounting = '/accounting';
   static const String reports = '/reports';
+  // CC-9: إدارة المستخدمين (SUPER_ADMIN فقط خادميًا).
+  static const String users = '/users';
 
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static String _initialLocation = login;
@@ -97,7 +101,8 @@ class AppRouter {
         builder: (context, state) => const PurchasingScreen(),
       ),
       GoRoute(
-        path: '/products',
+        path: products,
+        name: 'products',
         builder: (context, state) => const ProductsScreen(),
       ),
       GoRoute(
@@ -155,6 +160,12 @@ class AppRouter {
         path: reports,
         name: 'reports',
         builder: (context, state) => const ReportsScreen(),
+      ),
+      // CC-9: إدارة المستخدمين — قائمة/إنشاء/دور/تعطيل/تنشيط.
+      GoRoute(
+        path: users,
+        name: 'users',
+        builder: (context, state) => const UsersScreen(),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

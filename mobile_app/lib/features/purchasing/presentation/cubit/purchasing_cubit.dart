@@ -119,4 +119,41 @@ class PurchasingCubit extends Cubit<PurchasingState> {
     );
     await fetchData();
   }
+
+  /// PUR-5(أ): اعتماد أمر شراء DRAFT (فصل واجبات خادميًا: المنشئ ≠
+  /// المعتمد). بدون هذه العملية لا يمكن الاستلام ولا المرتجع — كانت
+  /// دورة الشراء مقطوعة بالكامل من الجوال.
+  /// ترجع رسالة الخطأ العربية الدقيقة من الخادم عند الفشل (409 فصل
+  /// واجبات مثلًا) ليعرضها الـ snackbar.
+  Future<String?> approvePurchaseOrder({
+    required String purchaseOrderId,
+  }) async {
+    try {
+      await ApiClient.instance.dio.post(
+        '/purchasing/$purchaseOrderId/approve',
+        options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+      );
+      await fetchData();
+      return null;
+    } on DioException catch (error) {
+      return ApiClient.instance.messageFor(error);
+    }
+  }
+
+  /// إلغاء مسودة أمر شراء (DRAFT فقط خادميًا) — كان خطأ الإنشاء غير قابل
+  /// للتراجع من الجوال.
+  Future<String?> cancelPurchaseOrder({
+    required String purchaseOrderId,
+  }) async {
+    try {
+      await ApiClient.instance.dio.post(
+        '/purchasing/$purchaseOrderId/cancel',
+        options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+      );
+      await fetchData();
+      return null;
+    } on DioException catch (error) {
+      return ApiClient.instance.messageFor(error);
+    }
+  }
 }

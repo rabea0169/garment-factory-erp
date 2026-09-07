@@ -10,6 +10,7 @@ import '../../../production/presentation/widgets/outbox_pending_badge.dart';
 import '../cubit/hr_cubit.dart';
 import '../cubit/hr_state.dart';
 import '../widgets/create_worker_dialog.dart';
+import '../widgets/record_advance_dialog.dart';
 import '../widgets/worker_nfc_button.dart';
 
 class HrScreen extends StatefulWidget {
@@ -41,6 +42,14 @@ class _HrScreenState extends State<HrScreen> {
           actions: [
             // MOB-3: عدد تسجيلات الإنتاج المحفوظة محليًا بانتظار الاتصال.
             const OutboxPendingBadge(),
+            // COMM-F05: تسجيل سلفة عامل (POST /hr/advances).
+            Builder(
+              builder: (ctx) => IconButton(
+                tooltip: 'تسجيل سلفة',
+                icon: const Icon(Icons.savings),
+                onPressed: () => _showRecordAdvanceDialog(ctx),
+              ),
+            ),
             // MOB-8: اختصار شاشة حالة الرواتب.
             Builder(
               builder: (ctx) => IconButton(
@@ -155,6 +164,31 @@ class _HrScreenState extends State<HrScreen> {
         ),
       ),
     );
+  }
+
+  /// COMM-F05: فتح حوار تسجيل سلفة — العامل من قائمة العمال المعروضة،
+  /// وبعد النجاح snackbar + إعادة جلب fetchWorkers() (داخل recordAdvance).
+  Future<void> _showRecordAdvanceDialog(BuildContext context) async {
+    final cubit = context.read<HrCubit>();
+    final state = cubit.state;
+    final workers = state is HrLoaded
+        ? state.workers
+            .whereType<Map>()
+            .map((worker) => Map<String, dynamic>.from(worker))
+            .toList(growable: false)
+        : <Map<String, dynamic>>[];
+    final saved = await showDialog<bool>(
+      context: context,
+      builder: (_) => RecordAdvanceDialog(
+        cubit: cubit,
+        workers: workers,
+      ),
+    );
+    if (saved == true && context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تسجيل السلفة بنجاح')),
+      );
+    }
   }
 
   Future<void> _showAttendanceDialog(

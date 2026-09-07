@@ -34,14 +34,16 @@ class AuthCubit extends Cubit<AuthState> {
   final ApiClient _apiClient;
 
   Future<void> checkAuthStatus() async {
+    String? token;
+    Map<String, dynamic>? cachedUser;
     try {
-      final token = await _storage.readAccessToken();
+      token = await _storage.readAccessToken();
       if (token == null || token.isEmpty) {
         emit(AuthUnauthenticated());
         return;
       }
 
-      final cachedUser = await _storage.readUser();
+      cachedUser = await _storage.readUser();
       if (cachedUser == null) {
         await _apiClient.clearSession();
         emit(AuthUnauthenticated());
@@ -57,12 +59,25 @@ class AuthCubit extends Cubit<AuthState> {
         final user = Map<String, dynamic>.from(responseData);
         await _storage.writeUser(user);
         emit(AuthAuthenticated(user));
+      } on DioException catch (error) {
+        // MOB-3 (إصلاح الجلسة اللا-اتصالية): خطأ الشبكة (انقطاع/timeout)
+        // لا يعني أن الجلسة باطلة — نبقي المستخدم داخلًا ببياناته المخزنة
+        // كي يعمل الوضع اللا-اتصالي (كاش Hive + طابور الكتابة الصادر).
+        // فقط 401 (توكن فعليًا مرفوض) يمسح الجلسة.
+        final isAuthRejection = error.response?.statusCode == 401;
+        if (isAuthRejection) {
+          await _apiClient.clearSession();
+          emit(AuthUnauthenticated());
+        } else {
+          emit(AuthAuthenticated(cachedUser));
+        }
       } catch (error) {
-        await _apiClient.clearSession();
-        emit(AuthUnauthenticated());
+        // أخطاء الصياغة المحلية فقط — الشبكة عادت باستجابة غير متوقعة:
+        // نُبقي الجلسة (توكن صالح على الأرجح) ونعرض المستخدم المخزن.
+        emit(AuthAuthenticated(cachedUser));
       }
     } catch (error) {
-      await _apiClient.clearSession();
+      // فشل قراءة التخزين نفسه: لا يمكن استعادة جلسة.
       emit(AuthUnauthenticated());
     }
   }

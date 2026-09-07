@@ -8,7 +8,7 @@ class CreateWorkOrder {
 
   final ProductionRepository repository;
 
-  Future<void> call(CreateWorkOrderCommand command) {
+  Future<CreatedWorkOrder> call(CreateWorkOrderCommand command) {
     return repository.createWorkOrder(command);
   }
 }

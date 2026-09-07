@@ -69,6 +69,12 @@ class DashboardCubit extends Cubit<DashboardState> {
       await _cache.writeThrough(_statsCacheKey, stats);
       emit(DashboardLoaded(stats));
     } on DioException catch (error) {
+      // DSH-1: 403 = الدور غير مصرح له بالمؤشرات (5 من 8 أدوار خادميًا) —
+      // حالة محترمة بشاشة ترحيب تفاعلية، ليست خطأً يفسد الهبوط.
+      if (error.response?.statusCode == 403) {
+        emit(const DashboardForbidden());
+        return;
+      }
       // MOB-3: انقطاع الشبكة → آخر حالة ناجحة من الكاش مع شارة، وإلا
       // خطأ الشبكة المعتاد.
       if (ApiClient.isNetworkError(error)) {

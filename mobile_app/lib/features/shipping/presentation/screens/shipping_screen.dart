@@ -188,6 +188,8 @@ class ShippingScreen extends StatelessWidget {
         return 'تم التسليم';
       case 'RETURNED':
         return 'مرتجع';
+      case 'CANCELLED':
+        return 'ملغى';
       default:
         return status.isEmpty ? 'غير محددة' : status;
     }
@@ -228,21 +230,24 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
   Future<void> _save() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     setState(() => _isSaving = true);
+    final carrier = _shippingCompanyIdController.text.trim();
     try {
       await widget.cubit.createShipment(
         salesOrderId: _selectedSalesOrderId!,
-        shippingCompanyId: _shippingCompanyIdController.text.trim(),
+        // حقل اختياري خادميًا — لا نرسل سلسلة فارغة (كانت تفشل بـ IsUUID).
+        shippingCompanyId: carrier.isEmpty ? null : carrier,
         shippingCost: double.tryParse(_shippingCostController.text.trim()),
         trackingNumber: _trackingController.text.trim(),
         notes: _notesController.text.trim(),
       );
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (error) {
       if (!mounted) return;
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('تعذر إنشاء الشحنة. تحقق من أمر البيع والصلاحيات.'),
+        SnackBar(
+          content: Text(
+              'تعذر إنشاء الشحنة: ${ApiClient.instance.messageFor(error)}'),
         ),
       );
     }
@@ -287,8 +292,19 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
                 TextFormField(
                   controller: _shippingCompanyIdController,
                   decoration: const InputDecoration(
-                    labelText: 'معرف شركة الشحن',
+                    labelText: 'معرف شركة الشحن (UUID — اختياري)',
+                    hintText:
+                        'اتركه فارغًا إن لم يكن لديك معرّف شركة شحن',
                   ),
+                  validator: (value) {
+                    final text = value?.trim() ?? '';
+                    if (text.isEmpty) return null;
+                    final uuidPattern = RegExp(
+                        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+                    return uuidPattern.hasMatch(text)
+                        ? null
+                        : 'أدخل UUID صالحًا أو اتركه فارغًا';
+                  },
                 ),
                 const SizedBox(height: 10),
                 TextFormField(
@@ -378,11 +394,16 @@ class _UpdateShipmentDialogState extends State<_UpdateShipmentDialog> {
   static List<String> _availableStatusesFor(String status) {
     switch (status) {
       case 'PREPARING':
-        return ['SHIPPED'];
+        // SHP-3: إلغاء شحنة في التحضير قانوني خادميًا (يعكس قيد التكلفة
+        // ويعيد أمر البيع لـ CONFIRMED).
+        return ['SHIPPED', 'CANCELLED'];
       case 'SHIPPED':
         return ['IN_TRANSIT'];
       case 'IN_TRANSIT':
         return ['DELIVERED', 'RETURNED'];
+      case 'DELIVERED':
+        // RETURNED بعد التسليم قانوني (يتطلب مرتجعًا مقترنًا خادميًا).
+        return ['RETURNED'];
       default:
         return [];
     }

@@ -16,12 +16,16 @@ class ProductionRemoteDataSource {
     return response.data;
   }
 
-  Future<void> createWorkOrder({
+  /// DEV-PQ1: يعيد استجابة الخادم (صف أمر التشغيل المُنشأ: id/code/...)
+  /// ليعرض التطبيق رمز الأمر الجديد — الحقول المرسلة مطابقة تمامًا
+  /// لـ CreateWorkOrderDto: productVariantId/bomVersionId/quantity فقط
+  /// (أي حقل إضافي يُرفض 400 forbidNonWhitelisted).
+  Future<dynamic> createWorkOrder({
     required String productVariantId,
     required String bomVersionId,
     required int quantity,
   }) async {
-    await dio.post<dynamic>(
+    final response = await dio.post<dynamic>(
       '/production/work-orders',
       data: {
         'productVariantId': productVariantId,
@@ -29,6 +33,7 @@ class ProductionRemoteDataSource {
         'quantity': quantity,
       },
     );
+    return response.data;
   }
 
   Future<dynamic> transitionStage({

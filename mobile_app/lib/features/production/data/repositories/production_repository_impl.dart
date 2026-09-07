@@ -40,13 +40,14 @@ class ProductionRepositoryImpl implements ProductionRepository {
   }
 
   @override
-  Future<void> createWorkOrder(CreateWorkOrderCommand command) async {
+  Future<CreatedWorkOrder> createWorkOrder(CreateWorkOrderCommand command) async {
     try {
-      await remote.createWorkOrder(
+      final payload = await remote.createWorkOrder(
         productVariantId: command.productVariantId,
         bomVersionId: command.bomVersionId,
         quantity: command.quantity,
       );
+      return CreatedWorkOrderModel.fromJson(_requiredMap(payload)).toEntity();
     } on DioException catch (error) {
       throw mapProductionFailure(error);
     } on ProductionFailure {

@@ -33,6 +33,13 @@ class DashboardEmpty extends DashboardState {
   const DashboardEmpty();
 }
 
+/// دور المستخدم لا يملك صلاحية قراءة /dashboard/stats (مقصور خادميًا على
+/// GM/SUPER_ADMIN/ACCOUNTANT — DSH-1). ليست خطأً: تُعرض شاشة ترحيب تفاعلية
+/// بالتنقل بدل المؤشرات، فيهبط كل دور على شيء مفيد لا على شاشة خطأ.
+class DashboardForbidden extends DashboardState {
+  const DashboardForbidden();
+}
+
 class DashboardError extends DashboardState {
   const DashboardError(this.message);
 

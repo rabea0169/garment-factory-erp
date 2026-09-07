@@ -142,8 +142,70 @@ class HrCubit extends Cubit<HrState> {
       );
       await fetchWorkers();
     } catch (error) {
-      emit(HrError(ApiClient.instance.messageFor(error)));
+      // UAT-FIX: فشل الكتابة لا يمسح قائمة العمال المعروضة خلف الحوار —
+      // الحوار نفسه يعرض رسالة الخطأ. HrError فقط عند لا قائمة محمّلة أصلًا.
+      if (state is! HrLoaded) {
+        emit(HrError(ApiClient.instance.messageFor(error)));
+      }
       rethrow;
+    }
+  }
+
+  /// COMM-F05: تسجيل سلفة عامل (POST /hr/advances).
+  ///
+  /// عقد CreateAdvanceDto الحرفي: {workerId, amount, notes?, treasuryId?} —
+  /// معامل [reason] يُرسل في حقل `notes` (اسم الخادم). عند توفير
+  /// [treasuryId] يُخصم المبلغ من الخزينة ويُرحَّل قيد مزدوج خادميًا
+  /// (Dr WORKER_ADVANCES / Cr CASH) داخل نفس المعاملة.
+  ///
+  /// يُعيد رسالة خطأ نصية عبر messageFor أو null عند النجاح (نمط UAT-FIX:
+  /// فشل الكتابة لا يُصدر HrError ما دامت قائمة العمال معروضة خلف الحوار —
+  /// الحوار نفسه يعرض الرسالة). بعد النجاح يُعاد جلب العمال (تحديث
+  /// أرصدة السلف خلف الحوار).
+  Future<String?> recordAdvance({
+    required String workerId,
+    required double amount,
+    required String reason,
+    String? treasuryId,
+  }) async {
+    try {
+      await _dio.post(
+        '/hr/advances',
+        data: <String, dynamic>{
+          'workerId': workerId,
+          'amount': amount,
+          if (reason.trim().isNotEmpty) 'notes': reason.trim(),
+          if (treasuryId != null && treasuryId.isNotEmpty)
+            'treasuryId': treasuryId,
+        },
+        options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
+      );
+      // نجاح السلفة → تحديث القائمة خلف الحوار (أرصدة/عدد السلف).
+      await fetchWorkers();
+      return null;
+    } catch (error) {
+      if (state is! HrLoaded) {
+        emit(HrError(ApiClient.instance.messageFor(error)));
+      }
+      return ApiClient.instance.messageFor(error);
+    }
+  }
+
+  /// يجلب الخزائن النشطة (GET /accounting/treasuries) لخيار "الترحيل
+  /// النقدي من خزينة" في حوار السلفة (COMM-F05).
+  ///
+  /// الفشل لأي سبب (صلاحية 403 / شبكة) يُعاد كقائمة فارغة — الحوار يُعطّل
+  /// الخيار بصمت ويعرض تلميح "لا توجد خزائن" (مسار HR_MANAGER: قراءة
+  /// الخزائن مقصورة على المحاسب/المدير العام/مدير النظام خادميًا).
+  Future<List<Map<String, dynamic>>> fetchTreasuries() async {
+    try {
+      final response = await _dio.get<dynamic>(
+        '/accounting/treasuries',
+        queryParameters: <String, dynamic>{'page': 1, 'limit': 100},
+      );
+      return ApiParsing.paginatedMaps(response.data, context: 'الخزائن');
+    } catch (_) {
+      return const <Map<String, dynamic>>[];
     }
   }
 
@@ -189,7 +251,9 @@ class HrCubit extends Cubit<HrState> {
         }
         // تعطل الطابور (تخزين) → سقط إلى إظهار خطأ الشبكة الأصلي.
       }
-      emit(HrError(ApiClient.instance.messageFor(error)));
+      if (state is! HrLoaded) {
+        emit(HrError(ApiClient.instance.messageFor(error)));
+      }
       return RecordAttendanceOutcome.failed;
     }
   }
@@ -233,7 +297,9 @@ class HrCubit extends Cubit<HrState> {
         }
         // تعطل الطابور (تخزين) → سقط إلى إظهار خطأ الشبكة الأصلي.
       }
-      emit(HrError(ApiClient.instance.messageFor(error)));
+      if (state is! HrLoaded) {
+        emit(HrError(ApiClient.instance.messageFor(error)));
+      }
       return RecordProductionOutcome.failed;
     }
   }
