@@ -1,10 +1,12 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
   IsNotEmpty,
+  IsNumber,
   IsOptional,
   IsPositive,
   IsString,
   IsUUID,
+  Max,
 } from 'class-validator';
 
 export class CreateAdvanceDto {
@@ -14,9 +16,14 @@ export class CreateAdvanceDto {
 
   @ApiProperty({
     example: 200,
-    description: 'مبلغ السلفة (يجب أن يكون موجبًا)',
+    description: 'مبلغ السلفة (يجب أن يكون موجبًا، منزلتان عشريتان كحد أقصى)',
   })
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'مبلغ السلفة يجب أن يكون برقم موجب بمنزلتين عشريتين كحد أقصى' },
+  )
   @IsPositive({ message: 'مبلغ السلفة يجب أن يكون رقمًا موجبًا' })
+  @Max(1_000_000_000, { message: 'مبلغ السلفة يتجاوز الحد المسموح' })
   amount: number;
 
   @ApiPropertyOptional({

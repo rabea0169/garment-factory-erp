@@ -80,6 +80,13 @@ jobs:
       - name: Prisma migrate deploy
         run: npx prisma migrate deploy
 
+      # audit-DB (P1): بوابة انحراف المخطط — بعد deploy على قاعدة نظيفة يجب
+      # ألا يكون هناك أي فرق بين حالة القاعدة والمخطط (فهارس/قيود/FK
+      # actions). exit code 2 = انحراف → CI أحمر قبل الدمج. تحمي من تكرار
+      # فئة مشكلة wave7 (P2022) وفئة audit-DB (فهارس غير مصرّح بها).
+      - name: Prisma migrate diff gate (schema drift)
+        run: npx prisma migrate diff --from-config-datasource --to-schema prisma/schema.prisma --exit-code
+
       - name: Integration tests — PostgreSQL (required)
         run: npm run test:integration:required
 

@@ -40,9 +40,14 @@ class PurchasingCubit extends Cubit<PurchasingState> {
     emit(PurchasingLoading());
     try {
       final responses = await Future.wait([
-        ApiClient.instance.dio.get('/purchasing/orders'),
-        ApiClient.instance.dio.get('/suppliers'),
-        ApiClient.instance.dio.get('/inventory/raw-materials'),
+        // P1 (audit-FE2): سقف الخادم الافتراضي 20 — نرفعه إلى 100 في كل
+        // القوائم وحوارات الاختيار (الموردين/الخامات).
+        ApiClient.instance.dio
+            .get('/purchasing/orders', queryParameters: {'limit': 100}),
+        ApiClient.instance.dio
+            .get('/suppliers', queryParameters: {'limit': 100}),
+        ApiClient.instance.dio
+            .get('/inventory/raw-materials', queryParameters: {'limit': 100}),
       ]);
       emit(
         PurchasingLoaded(

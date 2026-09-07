@@ -440,6 +440,17 @@ describe('SalesService — Cluster 5 corrective coverage', () => {
       prisma,
       expect.objectContaining({
         reference: 'SO-1',
+        // ACC-F01 (audit-BE2 P0): COGS يُقيد ضد مخزون المنتج التام — البضاعة
+        // تُصرف من finished_good_stocks (bulkIssueFinishedGoods أعلاه) لا من
+        // الخامات؛ الحساب القديم INVENTORY كان يخفض الخامات بينما التام
+        // يتضخم بلا إنقاص أبدًا.
+        lines: expect.arrayContaining([
+          expect.objectContaining({
+            debitAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
+            creditAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
+            amount: 80,
+          }),
+        ]) as Array<Record<string, unknown>>,
         metadata: expect.objectContaining({
           source: 'sales.confirm',
           salesOrderId: 'so-1',
@@ -610,6 +621,14 @@ describe('SalesService — Wave 6: COMM-F07 customer credit limit', () => {
       items: [{ id: 'item-1', productVariantId: 'v-1', quantity: 1 }],
     });
     prisma.warehouse.findFirst.mockResolvedValue({ id: 'wh-fg' });
+    // SAL-1 (audit-BE2): الفحص يعيد قراءة رصيد العميل تحت قفل FOR UPDATE
+    // داخل المعاملة — نحاكي القراءة الجديدة بنفس قيم الإعداد.
+    prisma.customer.findUnique.mockResolvedValue({
+      id: 'c-1',
+      balance: opts.balance ?? 0,
+      creditLimit: opts.creditLimit,
+    });
+    prisma.$queryRaw.mockResolvedValue([]);
     prisma.salesOrder.updateMany.mockResolvedValue({ count: 1 });
     prisma.salesOrder.findUniqueOrThrow.mockResolvedValue({
       id: 'so-1',
@@ -1133,7 +1152,9 @@ describe('SalesService — GF-IMP-W2: SAL-3 حسابات المرتجع', () => 
       expect.objectContaining({
         lines: expect.arrayContaining([
           expect.objectContaining({
-            debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+            // ACC-F01 (audit-BE2): عكس تكلفة المرتجع يُدين مخزون المنتج
+            // التام (لا الخامات) — البضاعة تُستعاد إلى finished_good_stocks.
+            debitAccountId: CHART_OF_ACCOUNTS.FINISHED_GOOD_STOCK,
             creditAccountId: CHART_OF_ACCOUNTS.COST_OF_GOODS_SOLD,
             amount: 40,
           }),

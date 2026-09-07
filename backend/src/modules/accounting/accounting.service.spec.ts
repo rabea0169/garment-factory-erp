@@ -1,5 +1,9 @@
-import { AccountType, VoucherType } from '@prisma/client';
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import { AccountType, Prisma, VoucherType } from '@prisma/client';
+import {
+  BadRequestException,
+  ConflictException,
+  NotFoundException,
+} from '@nestjs/common';
 import { AccountingService } from './accounting.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
@@ -334,6 +338,22 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
       prisma.voucher.create.mockImplementation(({ data }) =>
         Promise.resolve({ id: 'v-acc1', ...data }),
       );
+      // P1 (audit-BE2) — مسار WORKER في السندات: العامل موجود دائمًا في
+      // هذه المجموعة، والسلف غير المسوّاة تغطي سند القبض (150).
+      prisma.worker.findUnique.mockResolvedValue({
+        id: 'worker-001',
+        name: 'عامل اختبار',
+      });
+      prisma.workerAdvance.findMany.mockResolvedValue([
+        {
+          id: 'adv-1',
+          amount: new Prisma.Decimal('200'),
+          settledAmount: new Prisma.Decimal('0'),
+          date: new Date('2026-08-01T00:00:00Z'),
+        },
+      ]);
+      prisma.workerAdvance.create.mockResolvedValue({ id: 'adv-new' });
+      prisma.workerAdvance.update.mockResolvedValue({ id: 'adv-1' });
     });
 
     it.each(cases)(
@@ -377,6 +397,88 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
         });
       },
     );
+    it('P1 (audit-BE2): سند صرف لعامل يُنشئ صف WorkerAdvance يُخصم من رواتبه', async () => {
+      await service.createVoucher(
+        {
+          type: VoucherType.PAYMENT,
+          amount: 150,
+          description: 'سلفة عامل نقدية',
+          treasuryId: 'treasury-acc1',
+          counterpartyType: 'WORKER',
+          counterpartyId: 'worker-001',
+        },
+        'user-acc1',
+      );
+
+      // السلفة تُنشأ داخل نفس معاملة السند — قبل الإصلاح كان القيد GL يمر
+      // بلا أي صف سلف فلا تُخصم من كشوف رواتب العامل أبدًا.
+      expect(prisma.workerAdvance.create).toHaveBeenCalledTimes(1);
+      expect(prisma.workerAdvance.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            workerId: 'worker-001',
+            amount: new Prisma.Decimal('150'),
+          }) as Record<string, unknown>,
+        }),
+      );
+      expect(prisma.workerAdvance.update).not.toHaveBeenCalled();
+    });
+
+    it('P1 (audit-BE2): سند قبض من عامل يسوّي السلف FIFO بمقدار المبلغ', async () => {
+      await service.createVoucher(
+        {
+          type: VoucherType.RECEIPT,
+          amount: 150,
+          description: 'رد سلفة عامل',
+          treasuryId: 'treasury-acc1',
+          counterpartyType: 'WORKER',
+          counterpartyId: 'worker-001',
+        },
+        'user-acc1',
+      );
+
+      expect(prisma.workerAdvance.create).not.toHaveBeenCalled();
+      expect(prisma.workerAdvance.update).toHaveBeenCalledTimes(1);
+      expect(prisma.workerAdvance.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'adv-1' },
+          data: { settledAmount: { increment: new Prisma.Decimal('150') } },
+        }),
+      );
+    });
+
+    it('P1 (audit-BE2): سند قبض من عامل يرفض مبلغًا يتجاوز السلف غير المسوّاة', async () => {
+      await expect(
+        service.createVoucher(
+          {
+            type: VoucherType.RECEIPT,
+            amount: 500,
+            description: 'رد سلفة يتجاوز المستحق',
+            treasuryId: 'treasury-acc1',
+            counterpartyType: 'WORKER',
+            counterpartyId: 'worker-001',
+          },
+          'user-acc1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
+
+    it('P1 (audit-BE2): سند بنوع طرف بلا معرف يُرفض (كان يُقيّد على حساب التحكم بلا كيان)', async () => {
+      await expect(
+        service.createVoucher(
+          {
+            type: VoucherType.PAYMENT,
+            amount: 100,
+            description: 'سند بلا طرف محدد',
+            treasuryId: 'treasury-acc1',
+            counterpartyType: 'CUSTOMER',
+          },
+          'user-acc1',
+        ),
+      ).rejects.toThrow(BadRequestException);
+      expect(financial.postJournalEntryInTx).not.toHaveBeenCalled();
+    });
   });
 
   it('D10: كود السند بنمط VCH-YYYYMMDD-XXXXXXXX (لا Date.now)', async () => {

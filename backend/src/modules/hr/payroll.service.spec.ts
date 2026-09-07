@@ -237,16 +237,18 @@ describe('HrService — GF-0015 payroll', () => {
       });
     });
 
-    it('يجلب صفوف السلف بالترتيب الزمني (تجهيز FIFO) و بنطاق الفترة الحصري', async () => {
+    it('يجلب صفوف السلف بالترتيب الزمني (FIFO) — كل سلف العامل غير المسوّاة لا فترة الكشف فقط', async () => {
       await service.createPayroll(
         { workerId: 'worker-1', periodStart, periodEnd },
         'actor-1',
       );
 
+      // HR-2 (audit-BE2): نطاق الجلب = كل سلف العامل (الترشيح لغير المسوّى
+      // في الكود) — سلفة خارج فترة الكشف تُخصم أيضًا وإلا بقيت أصلًا
+      // WORKER_ADVANCES معلقًا بلا استرداد أبدًا.
       expect(prisma.workerAdvance.findMany).toHaveBeenCalledWith({
         where: {
           workerId: 'worker-1',
-          date: { gte: periodStart, lt: new Date('2026-09-01T00:00:00.000Z') },
         },
         select: { id: true, amount: true, settledAmount: true },
         orderBy: [{ date: 'asc' }, { id: 'asc' }],

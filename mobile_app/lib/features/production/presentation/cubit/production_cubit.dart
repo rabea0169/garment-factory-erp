@@ -1,6 +1,7 @@
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:uuid/uuid.dart';
 
+import '../../../../core/network/api_client.dart';
 import '../../../../core/services/cache_service.dart';
 import '../../domain/entities/production_commands.dart';
 import '../../domain/entities/work_order.dart';
@@ -41,7 +42,8 @@ class ProductionCubit extends Cubit<ProductionState> {
   /// الاتصال مع شارة "بيانات مخزنة".
   final CacheService _cache;
   int _page = 1;
-  int _limit = 20;
+  // P1 (audit-FE2): 20 افتراضيًا كان يقطع قائمة الإنتاج في مصنع حقيقي.
+  int _limit = 100;
 
   static const String _workOrdersCacheKey = 'production_work_orders';
 
@@ -215,18 +217,37 @@ class ProductionCubit extends Cubit<ProductionState> {
     _page = 1;
   }
 
-  /// DEV-PQ3: يعيد معرف تشغيل المرحلة المحفوظ محليًا (workOrderId+stage)،
-  /// أو null إن لم يُسجّل من هذا الجهاز بعد — الحوارات تعرض حينها تلميحًا
-  /// واضحًا بدل قبول UUID يدوي.
+  /// DEV-PQ3 + audit-FE2 (P1): يعيد معرف تشغيل المرحلة (workOrderId+stage)
+  /// بمسارين: المحلي أولًا ثم الخادم عبر
+  /// GET /production/work-orders/:id/stage-runs عند غيابه محليًا (تعدد
+  /// الأجهزة)، أو null عند فشل الخطين — الحوارات تعرض تلميحًا واضحًا.
   Future<String?> stageRunIdFor(
     String workOrderId,
     ProductionStage stage,
   ) {
-    return lookupStageRunId(
+    return resolveStageRunIdFromRegistry(
       _cache,
       workOrderId: workOrderId,
       stageApiValue: stage.apiValue,
+      fetchStageRuns: _fetchStageRunsFromServer,
     );
+  }
+
+  /// audit-FE2 (P1): جلب تشغيلات مراحل أمر من الخادم — الاستجابة
+  /// { workOrderId, code, stageRuns: [...] }.
+  Future<List<Map<String, dynamic>>> _fetchStageRunsFromServer(
+    String workOrderId,
+  ) async {
+    final response = await ApiClient.instance.dio
+        .get('/production/work-orders/$workOrderId/stage-runs');
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final runs = data['stageRuns'];
+      if (runs is List) {
+        return runs.whereType<Map<String, dynamic>>().toList();
+      }
+    }
+    return <Map<String, dynamic>>[];
   }
 
   /// يحوّل قيمة الكاش (List بروابط dynamic) إلى أوامر تشغيل — null عند

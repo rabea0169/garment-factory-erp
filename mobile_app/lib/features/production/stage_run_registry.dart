@@ -11,6 +11,11 @@ import '../../core/services/cache_service.dart';
 /// بدل إدخال UUID يدويًا.
 ///
 /// المفتاح: '$workOrderId|STAGE' (مثل 'wo-1|CUTTING') → stageRunId.
+///
+/// audit-FE2 (P1): أُضيف `resolveStageRunIdFromRegistry` — مسار خادمي جديد
+/// GET /production/work-orders/:id/stage-runs يُستخدم كخط ثانٍ عند غياب
+/// المعرف محليًا (تعدد الأجهزة): مفتش الجودة على جهاز آخر يرى التشغيلات
+/// المكتملة، ومشرف الخط يسجل الاستهلاك — ثم تُخزَّن النتيجة محليًا.
 const String stageRunRegistryCacheKey = 'production_stage_run_ids';
 
 /// مفتاح صف السجل لأمر/مرحلة — stageApiValue إحدى قيم ProductionStage
@@ -56,4 +61,49 @@ Future<String?> lookupStageRunId(
   final registry = await readStageRunRegistry(cache);
   final value = registry[stageRunRegistryKey(workOrderId, stageApiValue)];
   return value != null && value.isNotEmpty ? value : null;
+}
+
+/// audit-FE2 (P1): حل ثنائي الخطوط — المحلي أولًا ثم الخادم عند الغياب
+/// (تعدد الأجهزة: جهاز نفّذ الانتقال ≠ جهاز الفحص/الاستهلاك).
+///
+/// [fetchStageRuns] دالة جلب مسجلة من الطبقة العليا (تكسر الاعتماد الدائري
+/// بين السجل و ApiClient — تُمرَّد من Cubit بـ GET /production/work-orders/:id/stage-runs).
+/// النتيجة الخادمية تُخزَّن في السجل المحلي فتتاح الخطوط اللاحقة دون طلبات
+/// جديدة. فشل الشبكة يعيد null بهدوء (الحوارات تعرض تلميحها الإرشادي).
+Future<String?> resolveStageRunIdFromRegistry(
+  CacheService cache, {
+  required String workOrderId,
+  required String stageApiValue,
+  required Future<List<Map<String, dynamic>>> Function(String workOrderId)
+      fetchStageRuns,
+}) async {
+  final local = await lookupStageRunId(
+    cache,
+    workOrderId: workOrderId,
+    stageApiValue: stageApiValue,
+  );
+  if (local != null) return local;
+
+  try {
+    final runs = await fetchStageRuns(workOrderId);
+    for (final run in runs) {
+      final stage = run['stage'];
+      final id = run['id'];
+      if (id is String && id.isNotEmpty && stage is String) {
+        await rememberStageRun(
+          cache,
+          workOrderId: workOrderId,
+          stageApiValue: stage.toUpperCase(),
+          stageRunId: id,
+        );
+      }
+    }
+    return await lookupStageRunId(
+      cache,
+      workOrderId: workOrderId,
+      stageApiValue: stageApiValue,
+    );
+  } catch (_) {
+    return null;
+  }
 }

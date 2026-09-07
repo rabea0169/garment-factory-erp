@@ -7,6 +7,7 @@ import {
   IsEnum,
   IsNumber,
   IsUUID,
+  Max,
   Min,
   ValidateNested,
 } from 'class-validator';
@@ -27,9 +28,16 @@ export class CreateSalesOrderDto {
   })
   paymentType: PaymentType;
 
-  @ApiProperty({ example: 0, description: 'الخصم (رقم ≥ 0)' })
-  @IsNumber()
+  @ApiProperty({
+    example: 0,
+    description: 'الخصم (رقم ≥ 0 بمنزلتين عشريتين كحد أقصى)',
+  })
+  @IsNumber(
+    { maxDecimalPlaces: 2 },
+    { message: 'الخصم يجب أن يكون بمنزلتين عشريتين كحد أقصى' },
+  )
   @Min(0, { message: 'الخصم لا يمكن أن يكون سالبًا' })
+  @Max(1_000_000_000, { message: 'الخصم يتجاوز الحد المسموح' })
   discount: number;
 
   @ApiProperty({

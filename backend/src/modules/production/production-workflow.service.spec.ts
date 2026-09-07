@@ -666,6 +666,7 @@ describe('ProductionWorkflowService — PRD-1 / INV-1 (consumeMaterial)', () => 
     prisma.productionStageRun.findUnique.mockResolvedValue(STAGE_RUN);
     prisma.workOrder.findUnique.mockResolvedValue({
       status: WorkOrderStatus.IN_PROGRESS,
+      code: 'WO-0001',
     });
     prisma.stockLedgerEntry.findUnique.mockResolvedValue({ id: 'sle-1' });
     prisma.productionMaterialConsumption.create.mockResolvedValue({
@@ -710,7 +711,6 @@ describe('ProductionWorkflowService — PRD-1 / INV-1 (consumeMaterial)', () => 
   it('PRD-1: الصرف على أمر IN_PROGRESS ينجح (السلوك القائم بلا انحدار)', async () => {
     const { prisma, issue, service } = makeService();
     setupHappyPath(prisma, issue);
-
     const result = await service.consumeMaterial(consumeInput(), 'user-1');
 
     expect(result.replayed).toBe(false);
@@ -724,8 +724,56 @@ describe('ProductionWorkflowService — PRD-1 / INV-1 (consumeMaterial)', () => 
     expect(issue).toHaveBeenCalledTimes(1);
     expect(prisma.workOrder.findUnique).toHaveBeenCalledWith({
       where: { id: 'wo-1' },
-      select: { status: true },
+      // P0 (audit-BE2): أُضيف code — قيد استهلاك الخامات الجديد يحتاج كود
+      // أمر التشغيل في الوصف/المرجع.
+      select: { status: true, code: true },
     });
+  });
+
+  it('ACC-F01 (audit-BE2 P0): استهلاك الخامات يرحّل قيد Dr WIP / Cr INVENTORY داخل المعاملة', async () => {
+    // قبل إصلاح P0 كانت الدورة المشتراة تُنتج WIP دائنًا بلا مدين (سالبًا
+    // دائمًا) وFG_STOCK بلا إنقاص عند البيع — هذا الاختبار يثبّت القيد
+    // المصحح: كل استهلاك يحمّل WIP ويُنقص أصل المخزون بالقيمة نفسها.
+    const { prisma, issue, service, postJournalEntryInTx } = makeService();
+    setupHappyPath(prisma, issue);
+
+    await service.consumeMaterial(consumeInput(), 'user-1');
+
+    expect(postJournalEntryInTx).toHaveBeenCalledTimes(1);
+    const [txArg, input, actorArg] = postJournalEntryInTx.mock.calls[0];
+    expect(txArg).toBeDefined();
+    expect(actorArg).toBe('user-1');
+    expect(input.postingKey).toBe('production-consumption:cons-1');
+    expect(input.lines).toEqual([
+      {
+        debitAccountId: CHART_OF_ACCOUNTS.WIP,
+        creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+        amount: new Prisma.Decimal('20'),
+        description: 'صرف خامات إلى تحت التشغيل — أمر تشغيل WO-0001',
+      },
+    ]);
+    expect(input.metadata).toMatchObject({
+      source: 'production.consumption',
+      workOrderId: 'wo-1',
+      stageRunId: 'srun-1',
+      consumptionId: 'cons-1',
+      rawMaterialId: 'rm-1',
+    });
+  });
+
+  it('ACC-F01: استهلاك بتكلفة صفر لا يرحّل قيدًا (لا معنى لقيد بمبلغ 0)', async () => {
+    const { prisma, issue, service, postJournalEntryInTx } = makeService();
+    setupHappyPath(prisma, issue);
+    // unitCost = 0 → totalCost = 0
+    issue.mockResolvedValue({
+      ...INVENTORY_ISSUE_RESULT,
+      unitCost: 0,
+      totalValue: 0,
+    });
+
+    await service.consumeMaterial(consumeInput(), 'user-1');
+
+    expect(postJournalEntryInTx).not.toHaveBeenCalled();
   });
 
   it('INV-1: يبث أحداث المخزون بعد نجاح المعاملة فقط وبعد الصرف نفسه', async () => {

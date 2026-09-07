@@ -23,7 +23,10 @@ class QualityCubit extends Cubit<QualityState> {
   Future<void> fetchQualityChecks() async {
     emit(QualityLoading());
     try {
-      final response = await ApiClient.instance.dio.get('/quality');
+      final response = await ApiClient.instance.dio.get(
+        '/quality',
+        queryParameters: {'limit': 100},
+      );
       emit(QualityLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
       emit(QualityError(
@@ -31,18 +34,37 @@ class QualityCubit extends Cubit<QualityState> {
     }
   }
 
-  /// DEV-PQ3: يعيد معرف تشغيل المرحلة المحفوظ محليًا لأمر/مرحلة (قيم
-  /// المرحلة بأحرف الخادم: CUTTING/SEWING/IRONING/PACKING) أو null إن لم
-  /// يُسجّل من هذا الجهاز بعد — الحوار يعرض حينها تلميحًا إرشاديًا.
+  /// DEV-PQ3 + audit-FE2 (P1): يعيد معرف تشغيل المرحلة لأمر/مرحلة (قيم
+  /// المرحلة بأحرف الخادم: CUTTING/SEWING/IRONING/PACKING) بمسارين:
+  /// المحلي أولًا ثم الخادم (GET /production/work-orders/:id/stage-runs)
+  /// عند غيابه محليًا — تعدد الأجهزة (جهاز الفحص ≠ جهاز الانتقال) —
+  /// أو null عند فشل الخطين؛ الحوار يعرض حينها تلميحًا إرشاديًا.
   Future<String?> resolveStageRunId(
     String workOrderId,
     String stageApiValue,
   ) {
-    return lookupStageRunId(
+    return resolveStageRunIdFromRegistry(
       _cache,
       workOrderId: workOrderId,
       stageApiValue: stageApiValue,
+      fetchStageRuns: _fetchStageRunsFromServer,
     );
+  }
+
+  /// audit-FE2 (P1): جلب تشغيلات مراحل أمر من الخادم — { stageRuns: [...] }.
+  Future<List<Map<String, dynamic>>> _fetchStageRunsFromServer(
+    String workOrderId,
+  ) async {
+    final response = await ApiClient.instance.dio
+        .get('/production/work-orders/$workOrderId/stage-runs');
+    final data = response.data;
+    if (data is Map<String, dynamic>) {
+      final runs = data['stageRuns'];
+      if (runs is List) {
+        return runs.whereType<Map<String, dynamic>>().toList();
+      }
+    }
+    return <Map<String, dynamic>>[];
   }
 
   Future<void> submitQualityCheck({

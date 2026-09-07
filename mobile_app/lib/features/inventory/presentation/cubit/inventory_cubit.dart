@@ -25,8 +25,10 @@ class InventoryCubit extends Cubit<InventoryState> {
     try {
       final dio = _dio;
       final responses = await Future.wait([
-        dio.get('/inventory/raw-materials'),
-        dio.get('/inventory/finished-goods'),
+        dio.get('/inventory/raw-materials',
+            queryParameters: {'limit': 100}),
+        dio.get('/inventory/finished-goods',
+            queryParameters: {'limit': 100}),
         dio.get('/inventory/raw-materials/low-stock'),
         dio.get('/inventory/warehouses'),
       ]);

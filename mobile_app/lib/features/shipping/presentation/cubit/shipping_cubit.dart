@@ -66,10 +66,15 @@ class ShippingCubit extends Cubit<ShippingState> {
   Future<void> fetchShipments() async {
     emit(ShippingLoading());
     try {
-      final response = await ApiClient.instance.dio.get('/shipping');
+      final response = await ApiClient.instance.dio.get(
+        '/shipping',
+        queryParameters: {'limit': 100},
+      );
       emit(ShippingLoaded(ApiClient.extractPaginatedData(response.data)));
     } catch (e) {
-      emit(ShippingError('فشل في تحميل بيانات الشحن'));
+      // P2 (audit-FE2): رسالة الخادم الفعلية بدل عامة.
+      emit(ShippingError(
+          'فشل في تحميل بيانات الشحن: ${ApiClient.instance.messageFor(e)}'));
     }
   }
 }

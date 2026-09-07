@@ -331,13 +331,14 @@ class _CreatePurchaseOrderDialogState
         ],
       );
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _isSaving = false);
+      // P2 (audit-FE2): رسالة الخادم الفعلية (validation/403/409) بدل عامة.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content:
-                Text('تعذر إنشاء أمر الشراء. تحقق من البيانات والصلاحيات.')),
+        SnackBar(
+            content: Text(
+                'تعذر إنشاء أمر الشراء: ${ApiClient.instance.messageFor(e)}')),
       );
     }
   }

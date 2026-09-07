@@ -57,7 +57,8 @@ class AppRouter {
   static final router = GoRouter(
     navigatorKey: _rootNavigatorKey,
     initialLocation: _initialLocation,
-    debugLogDiagnostics: true,
+    // audit-FE2 P2: إيقاف ضوضاء التشخيص في نسخ release — كان مفعلاً دائمًا.
+    debugLogDiagnostics: false,
     redirect: (context, state) async {
       final isLoginRoute = state.matchedLocation == login;
       String? token;

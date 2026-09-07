@@ -588,14 +588,15 @@ export class HrService {
             },
             _sum: { totalAmount: true },
           }),
-          // HR-2 (P1 — GF-IMP-W2): نجلب صفوف السلف (لا مجموعها الأعمى) —
-          // الخصم يُحسب من المتبقي غير المسى فقط (amount - settledAmount)،
-          // والترتيب الزمني يجهّز للتوزيع FIFO عند الدفع. سلفة بلغت
-          // settledAmount == amount مسوية بالكامل ولا تدخل الحساب أبدًا.
+          // HR-2 (P1 — audit-BE2): نجلب كل سلف العامل غير المسوّاة (لا
+          // سلف الفترة فقط) بالترتيب الزمني FIFO. الحصر القديم بفترة الكشف
+          // كان يترك أي سلفة وقعت في فجوة بين كشفين (أو قبل أول كشف) خارج
+          // الخصم أبدًا — فيبقى أصل WORKER_ADVANCES في GL قائمًا بلا استرداد
+          // وsettledAmount لا يتقدم. Prisma لا يدعم مقارنة عمودين في where
+          // (amount > settledAmount) فنجلب الكل ونرشّح غير المسوّى في الكود.
           tx.workerAdvance.findMany({
             where: {
               workerId: input.workerId,
-              date: { gte: input.periodStart, lt: periodEndExclusive },
             },
             select: { id: true, amount: true, settledAmount: true },
             orderBy: [{ date: 'asc' }, { id: 'asc' }],
@@ -603,14 +604,17 @@ export class HrService {
         ]);
         const grossAmount =
           production._sum.totalAmount ?? new Prisma.Decimal(0);
-        // HR-2: الخصم = مجموع المتبقي غير المسى (amount - settledAmount)
-        // لسلف الفترة. السلوك القديم كان يجمع السلف كاملة كل مرة — بلا
-        // ذاكرة لما خُصم فعليًا — فتُخصم السلفة الواحدة مرات متعددة.
-        const unsettledAdvanceTotal = advances.reduce(
-          (sum, advance) =>
-            sum.plus(advance.amount.minus(advance.settledAmount)),
-          new Prisma.Decimal(0),
-        );
+        // HR-2: الخصم = مجموع المتبقي غير المسوى (amount - settledAmount)
+        // لكل سلف العامل غير المسوّاة (أي فترة — انظر أعلاه). السلوك القديم
+        // كان يجمع السلف كاملة كل مرة — بلا ذاكرة لما خُصم فعليًا — فتُخصم
+        // السلفة الواحدة مرات متعددة.
+        const unsettledAdvanceTotal = advances
+          .filter((advance) => advance.amount.gt(advance.settledAmount))
+          .reduce(
+            (sum, advance) =>
+              sum.plus(advance.amount.minus(advance.settledAmount)),
+            new Prisma.Decimal(0),
+          );
         const advanceDeduct = unsettledAdvanceTotal.gt(grossAmount)
           ? grossAmount
           : unsettledAdvanceTotal;
@@ -1320,11 +1324,12 @@ export class HrService {
       allocation: Prisma.Decimal;
     },
   ): Promise<void> {
-    const periodEndExclusive = getPeriodEndExclusive(input.periodEnd);
+    // HR-2 (P1 — audit-BE2): نطاق التسوية = كل سلف العامل غير المسوّاة FIFO
+    // (لا سلف فترة الكشف فقط) — نفس نطاق حساب الخصم في createPayroll أعلاه
+    // حتى يتطابق ما حُسب مع ما يُوزّع: سلفة خارج الفترة تُخصم وتُسوى هنا.
     const advances = await tx.workerAdvance.findMany({
       where: {
         workerId: input.workerId,
-        date: { gte: input.periodStart, lt: periodEndExclusive },
       },
       select: { id: true, amount: true, settledAmount: true },
       orderBy: [{ date: 'asc' }, { id: 'asc' }],

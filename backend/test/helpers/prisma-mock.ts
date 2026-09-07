@@ -162,7 +162,12 @@ export function createPrismaMock() {
       aggregate: jest.fn(),
     },
     attendance: { create: jest.fn() },
-    workerAdvance: { create: jest.fn(), aggregate: jest.fn() },
+    workerAdvance: {
+      create: jest.fn(),
+      aggregate: jest.fn(),
+      findMany: jest.fn().mockResolvedValue([]),
+      update: jest.fn(),
+    },
     payroll: {
       findFirst: jest.fn(),
       findUnique: jest.fn(),

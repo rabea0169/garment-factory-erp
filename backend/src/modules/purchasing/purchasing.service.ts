@@ -1023,9 +1023,11 @@ export class PurchasingService {
                 returnAmount: returnTotal,
                 inventoryEntryCode: result.entryCode,
               },
-              postingKey: idempotencyKey
-                ? `purchasing.return:${idempotencyKey}`
-                : undefined,
+              // P2 (audit-BE2): postingKey مشتق ثابت من مرجع المرتجع (لا
+              // يعتمد على إرسال العميل لمفتاح Idempotency) — القيد الفريد
+              // الجزئي على postingKey يحمي القيد المزدوج حتى لو أعاد عميل
+              // بلا المفتاح المحاولة ضمن حد الاستلام.
+              postingKey: `purchasing.return:${returnCode}`,
             },
             userId,
           );

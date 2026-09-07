@@ -27,7 +27,10 @@ class SuppliersCubit extends Cubit<SuppliersState> {
   Future<void> fetchSuppliers() async {
     emit(SuppliersLoading());
     try {
-      final response = await ApiClient.instance.dio.get('/suppliers');
+      final response = await ApiClient.instance.dio.get(
+        '/suppliers',
+        queryParameters: {'limit': 100},
+      );
       emit(
         SuppliersLoaded(
           ApiParsing.paginatedMaps(

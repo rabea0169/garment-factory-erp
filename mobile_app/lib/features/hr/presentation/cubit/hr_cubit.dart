@@ -62,7 +62,12 @@ class HrCubit extends Cubit<HrState> {
   Future<void> fetchWorkers() async {
     emit(HrLoading());
     try {
-      final response = await _dio.get('/hr/workers');
+      final response = await _dio.get(
+        '/hr/workers',
+        // P1 (audit-FE2): سقف الخادم الافتراضي 20 عاملًا فقط — مصنع حقيقي
+        // يتجاوز ذلك بكثير فتفقد حوارات السلفة/الرواتب العامل رقم 21+.
+        queryParameters: {'limit': 100},
+      );
       final workers = ApiParsing.paginatedMaps(
         response.data,
         context: 'العمال',

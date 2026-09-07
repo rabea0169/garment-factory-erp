@@ -55,6 +55,10 @@ export interface ReceiveStockInput {
   reference?: string;
   notes?: string;
   idempotencyKey?: string;
+  /** P1 (audit-BE2): المسار اليدوي (controller) يرحّل قيد GL مباشرة —
+   * المستدعي المالي (purchasing/production) يرحل قيده بنفسه مقابل الطرف
+   * الصحيح (AP/WIP) فلا يفعّل هذا العلم منعًا للترحيل المزدوج. */
+  postGl?: boolean;
 }
 
 export interface IssueStockInput {
@@ -65,6 +69,8 @@ export interface IssueStockInput {
   reference?: string;
   notes?: string;
   idempotencyKey?: string;
+  /** P1 (audit-BE2): نفس دلالة postGl في ReceiveStockInput. */
+  postGl?: boolean;
 }
 
 export interface AdjustStockInput {
@@ -206,6 +212,9 @@ interface MovementExecutionInput {
   notes?: string;
   idempotencyKey?: string;
   userId?: string;
+  /** P1 (audit-BE2): يفعّله المسار اليدوي فقط — المستدعي المالي
+   * (purchasing/production) يرحّل قيده بنفسه. */
+  postGl?: boolean;
 }
 
 /** خطأ Prisma معروف (P2002/P2025…) بشكل duck-typing — يعمل مع نسخ runtime المختلفة. */
@@ -518,6 +527,7 @@ export class InventoryService {
         notes: input.notes,
         idempotencyKey: input.idempotencyKey,
         userId,
+        postGl: input.postGl,
       },
       tx,
       eventsCollector,
@@ -542,6 +552,7 @@ export class InventoryService {
         notes: input.notes,
         idempotencyKey: input.idempotencyKey,
         userId,
+        postGl: input.postGl,
       },
       tx,
       eventsCollector,
@@ -1631,9 +1642,11 @@ export class InventoryService {
       // OPS-F01 / OPS-F11: قيد GL لهدر/تسوية المخزون داخل نفس الـ transaction.
       // postingKey مستقر على شكل '<scope>:<entryCode>' فيربط القيد بسجل الـ ledger
       // واحد-لواحد، فيمنع الترحيل المزدوج حتى لو أُعيد تنفيذ الـ executeLogic
-      // ضمن نفس الـ tx لأي سبب. لا قيد للـ RECEIVE/ISSUE هنا — استلام الخامات
-      // يُرحَّل من المستدعي (مثلاً purchasing.createReceipt)، والصرف يُرحَّل من
-      // consumeMaterial في production-workflow عبر قيد WIP/INVENTORY مستقل.
+      // ضمن نفس الـ tx لأي سبب.
+      // RECEIVE/ISSUE (P1 — audit-BE2): المستدعي المالي يرحّل قيده بنفسه
+      // (purchasing.createReceipt → Dr INVENTORY/Cr AP؛ consumeMaterial →
+      // Dr WIP/Cr INVENTORY)، والمسار اليدوي من controller يفعّل postGl
+      // فيرحَّل القيد هنا ضد حسابات التسوية — بلا ترحيل مزدوج في الحالين.
       const glAmount = round2(Math.abs(totalValue));
       if (glAmount > 0 && input.type === StockMovementType.WASTE) {
         await this.financialPosting.postJournalEntryInTx(
@@ -1700,6 +1713,61 @@ export class InventoryService {
               rawMaterialId: input.rawMaterialId,
               warehouseId: input.warehouseId,
               delta: input.delta,
+              unitCost: appliedUnitCost,
+              entryCode: entry.entryCode,
+            },
+          },
+          input.userId,
+        );
+      } else if (
+        glAmount > 0 &&
+        input.postGl &&
+        (input.type === StockMovementType.RECEIVE ||
+          input.type === StockMovementType.ISSUE)
+      ) {
+        // P1 (audit-BE2): المسار اليدوي — استلام/صرف مباشر من الـ controller
+        // بلا مستدعي مالي يرحّل قيدًا. الاستلام يُثبت المخزون ضد إيراد تسوية
+        // (رصيد افتتاحي/وارد بلا فاتورة)، والصرف يُحمَّل على مصروف تسوية
+        // (استخدام تشغيلي خارج أوامر التشغيل). الحسابات الفعلية (AP/WIP)
+        // تبقى لمسارات الشراء/الإنتاج التي تمرر postGl=false (الافتراضي).
+        const isReceive = input.type === StockMovementType.RECEIVE;
+        await this.financialPosting.postJournalEntryInTx(
+          tx,
+          {
+            description: `ترحيل ${
+              isReceive ? 'استلام' : 'صرف'
+            } خامات يدوي — ${input.reference ?? entry.entryCode}`,
+            reference: input.reference ?? entry.entryCode,
+            postingKey: `inventory-${isReceive ? 'receive' : 'issue'}:${
+              entry.entryCode
+            }`,
+            isAuto: true,
+            lines: [
+              isReceive
+                ? {
+                    debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                    creditAccountId:
+                      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_INCOME,
+                    amount: glAmount,
+                    description:
+                      input.notes ??
+                      `استلام خامات يدوي — ${input.rawMaterialId}`,
+                  }
+                : {
+                    debitAccountId:
+                      CHART_OF_ACCOUNTS.INVENTORY_ADJUSTMENT_EXPENSE,
+                    creditAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+                    amount: glAmount,
+                    description:
+                      input.notes ?? `صرف خامات يدوي — ${input.rawMaterialId}`,
+                  },
+            ],
+            userId: input.userId,
+            metadata: {
+              source: `inventory.manual-${isReceive ? 'receive' : 'issue'}`,
+              rawMaterialId: input.rawMaterialId,
+              warehouseId: input.warehouseId,
+              quantity: input.unsignedQuantity,
               unitCost: appliedUnitCost,
               entryCode: entry.entryCode,
             },

@@ -419,12 +419,14 @@ class _UpdateShipmentDialogState extends State<_UpdateShipmentDialog> {
         proofOfDelivery: _proofController.text.trim(),
       );
       if (mounted) Navigator.of(context).pop(true);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _isSaving = false);
+      // P2 (audit-FE2): رسالة الخادم الفعلية (انتقال غير مسموح/مرتجع مطلوب...).
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('تعذر تحديث حالة الشحنة. تحقق من الانتقال.')),
+        SnackBar(
+            content: Text(
+                'تعذر تحديث حالة الشحنة: ${ApiClient.instance.messageFor(e)}')),
       );
     }
   }
