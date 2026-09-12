@@ -17,6 +17,7 @@ import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
 import '../../features/users/presentation/screens/users_screen.dart';
 import '../storage/auth_storage.dart';
+import '../security/route_access.dart';
 
 class AppRouter {
   AppRouter._();
@@ -78,6 +79,17 @@ class AppRouter {
       final isAuthenticated = token?.isNotEmpty == true && user?['id'] != null;
       if (!isAuthenticated && !isLoginRoute) return login;
       if (isAuthenticated && isLoginRoute) return dashboard;
+
+      // audit-FE (P0): حماية الوصول المباشر (deep-link) حسب الدور —
+      // محاولة مستخدم بلاغٍ خاطئ دخول /users أو /accounting عبر URL
+      // كان يعرض شاشة 403؛ الآن يُعاد توجيهه للوحة التحكم. الخادم يظل
+      // خط الدفاع الأخير (fail-closed).
+      if (isAuthenticated && !isLoginRoute) {
+        final role = user?['role']?.toString() ?? '';
+        if (!RouteAccess.canAccess(state.matchedLocation, role)) {
+          return dashboard;
+        }
+      }
       return null;
     },
     routes: [

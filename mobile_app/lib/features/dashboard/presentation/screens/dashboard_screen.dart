@@ -8,6 +8,7 @@ import 'package:intl/intl.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/navigation/double_back_exit_guard.dart';
 import '../../../../core/router/app_router.dart';
+import '../../../../core/security/route_access.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../auth/presentation/cubit/auth_cubit.dart';
 import '../cubit/dashboard_cubit.dart';
@@ -132,15 +133,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _MenuItem('الموردون', Icons.business_center_rounded, AppRouter.suppliers),
       _MenuItem(
           'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
-      if (_canViewAccounting(role))
-        _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
-      // CC-9: إدارة المستخدمين — SUPER_ADMIN فقط (نفس نمط تقييد الحسابات).
-      if (_canManageUsers(role))
-        _MenuItem(
-            'المستخدمون', Icons.manage_accounts_rounded, AppRouter.users),
+      _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
+      // CC-9: إدارة المستخدمين — SUPER_ADMIN فقط.
+      _MenuItem(
+          'المستخدمون', Icons.manage_accounts_rounded, AppRouter.users),
       _MenuItem(
           'التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
-    ];
+    ]
+        // audit-FE (P0): تصفية موحدة حسب الدور من مصدر واحد
+        // (RouteAccess — مرآة سياسات @Roles الخادمية). لاغٍ ما كان
+        // الشرطيّة اليدوية المنفصلة لكل عنصر.
+        .where((item) => RouteAccess.canAccess(item.route, role))
+        .toList();
 
     return Drawer(
       child: Column(
@@ -236,17 +240,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   // أدوار الخادم الفعلية (UserRole في schema.prisma): SUPER_ADMIN,
   // GENERAL_MANAGER, PRODUCTION_MANAGER, INVENTORY_MANAGER, ACCOUNTANT,
-  // CASHIER, HR_MANAGER, VIEWER. الحسابات: CASHIER مسموح له بقراءة/إنشاء
-  // السندات (ACC-5) بجانب ACCOUNTANT وGM وSUPER_ADMIN.
-  static bool _canViewAccounting(String role) =>
-      role == 'ACCOUNTANT' ||
-      role == 'GENERAL_MANAGER' ||
-      role == 'SUPER_ADMIN' ||
-      role == 'CASHIER';
-
-  // CC-9: إدارة المستخدمين مقصورة خادميًا على SUPER_ADMIN (كل مسارات
-  // /users) — عنصر القائمة يظهر له فقط.
-  static bool _canManageUsers(String role) => role == 'SUPER_ADMIN';
+  // CASHIER, HR_MANAGER, VIEWER. تصفية عناصر الدرو تتم مركزيًا عبر
+  // RouteAccess (audit-FE) — مرآة سياسات @Roles الخادمية.
 
   static String _roleLabel(String role) {
     switch (role) {
