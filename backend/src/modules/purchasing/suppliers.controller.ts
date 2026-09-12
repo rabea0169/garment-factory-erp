@@ -4,6 +4,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -73,7 +74,7 @@ export class SuppliersController {
     summary: 'PUR-7: تحديث name/phone/address/notes لمورد (PATCH دلالي)',
   })
   async updateSupplier(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateSupplierDto,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
@@ -97,7 +98,7 @@ export class SuppliersController {
     summary: 'PUR-7: تعطيل مورد (isActive=false بـ CAS وتدقيق)',
   })
   async deactivateSupplier(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
@@ -119,7 +120,7 @@ export class SuppliersController {
     summary: 'PUR-7: تنشيط مورد (isActive=true بـ CAS وتدقيق)',
   })
   async activateSupplier(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {

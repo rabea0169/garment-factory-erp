@@ -106,6 +106,8 @@ model ActivityLog {
   user User @relation(fields: [userId], references: [id])
 
   @@index([userId])
+  // audit-DB: فهرس تصفح سجل التدقيق بحسب الوحدة زمنيًا.
+  @@index([module, createdAt])
   @@map("activity_logs")
 }
 
@@ -146,6 +148,8 @@ model Product {
   // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
   @@index([isActive, deletedAt])
   @@index([seasonId])
+  // audit-DB: ترتيب قوائم المنتجات زمنيًا (createdAt DESC).
+  @@index([createdAt])
   @@map("products")
 }
 
@@ -194,6 +198,8 @@ model BomLine {
   rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id])
 
   @@unique([bomVersionId, rawMaterialId])
+  // audit-DB: استعلام "أي BOMs تستخدم الخامة X" — آخر FK غير مفهرس.
+  @@index([rawMaterialId])
   @@map("bom_lines")
 }
 
@@ -477,6 +483,8 @@ model WorkOrder {
   @@index([productVariantId, status])
   @@index([bomVersionId])
   @@index([createdById])
+  // audit-DB: ترتيب قوائم أوامر التشغيل زمنيًا (createdAt DESC).
+  @@index([createdAt])
   @@map("work_orders")
 }
 
@@ -967,6 +975,8 @@ model CustomerPayment {
 
   @@index([customerId])
   @@index([salesOrderId])
+  // audit-DB: كشف الذمم وأعمار العملاء (العميل + التاريخ).
+  @@index([customerId, date])
   @@map("customer_payments")
 }
 
@@ -1038,6 +1048,8 @@ model PurchaseOrder {
 
   @@index([supplierId])
   @@index([userId])
+  // audit-DB: تعادل sales_orders — قوائم المشتريات تفلتر بالحالة وتُرتّب زمنيًا.
+  @@index([status, createdAt])
   @@map("purchase_orders")
 }
 
@@ -1102,6 +1114,8 @@ model SupplierPayment {
 
   @@index([purchaseOrderId])
   @@index([supplierId])
+  // audit-DB: كشف ذمم الموردين وأعمارها (المورد + التاريخ).
+  @@index([supplierId, date])
   @@map("supplier_payments")
 }
 
@@ -1153,6 +1167,8 @@ model Shipment {
   @@index([shippingCompanyId])
   // audit-DB: تتبع حالة الشحنات المؤكدة وتواريخ التسليم (تقارير POD).
   @@index([status, deliveredAt])
+  // audit-DB: قوائم الشحنات تفلتر بالحالة وتُرتّب زمنيًا.
+  @@index([status, createdAt])
   // GF-IMP-W1 / SHP-1: يوجد أيضًا فهرس فريد جزئي شحنة نشطة واحدة كحد أقصى
   // لكل أمر بيع (shipments_active_per_order_unique ON "salesOrderId" WHERE
   // "status" IN ('PREPARING','IN_TRANSIT')) يعيش في الهجرة

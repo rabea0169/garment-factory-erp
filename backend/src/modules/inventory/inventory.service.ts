@@ -838,6 +838,8 @@ export class InventoryService {
    * مسار قديم متوافق (POST /inventory/raw-materials/:id/add-stock) —
    * يوجَّه داخليًا عبر receive() في مخزن الخامات الافتراضي، فيمر عبر الـ ledger
    * مثل أي حركة أخرى (معيار القبول 2 بلا استثناءات).
+   * P0 (audit-GL): يفعّل postGl — إضافة مخزون يدوية بلا قيد GL كانت تُنحرف
+   * بميزان المراجعة عن قيمة المخزون الفعلية (نفس دلالة movements/receive).
    */
   async addRawMaterialStock(
     materialId: string,
@@ -855,6 +857,7 @@ export class InventoryService {
         unitCost: costPerUnit,
         reference: 'إضافة مخزون يدوية (مسار add-stock)',
         idempotencyKey,
+        postGl: true,
       },
       userId,
     );

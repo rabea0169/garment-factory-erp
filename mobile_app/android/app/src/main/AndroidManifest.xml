@@ -1,4 +1,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- INTERNET: required for release builds to reach the backend API
+         (debug/profile manifests declare it only for dev tooling). -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- CAMERA: barcode scanning (mobile_scanner) — also merged from the
+         plugin manifest, declared here explicitly for release safety. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <!-- NFC: worker identification tags (nfc_manager). -->
+    <uses-permission android:name="android.permission.NFC" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <application
         android:label="garment_factory_erp"

@@ -49,6 +49,9 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
     // PRD-2: الافتراضي CAS ينجح (صف واحد مُحدَّث).
     prisma.workOrder.updateMany.mockResolvedValue({ count: 1 });
+    // audit-WO-CANCEL: default = no stage runs / no consumptions.
+    prisma.productionStageRun.count.mockResolvedValue(0);
+    prisma.productionMaterialConsumption.count.mockResolvedValue(0);
     prisma.activityLog.create.mockResolvedValue({});
     emitSpy = jest
       .spyOn(EventEmitter2.prototype, 'emitAsync')
@@ -378,6 +381,33 @@ describe('ProductionService — أوامر التشغيل (GF-0003)', () => {
     ).rejects.toThrow(
       'Completed work orders are immutable. Use approved reversal workflows if needed.',
     );
+    expect(prisma.workOrder.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('audit-WO-CANCEL: refuses CANCELLED from an active workflow status (IN_PROGRESS) — WIP protection', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.IN_PROGRESS,
+    });
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED),
+    ).rejects.toThrow(ConflictException);
+    expect(prisma.workOrder.updateMany).not.toHaveBeenCalled();
+    expect(prisma.activityLog.create).not.toHaveBeenCalled();
+  });
+
+  it('audit-WO-CANCEL: refuses CANCELLED even from PLANNED when stage runs or consumptions exist (defense-in-depth)', async () => {
+    prisma.workOrder.findUnique.mockResolvedValue({
+      id: 'wo-1',
+      status: WorkOrderStatus.PLANNED,
+    });
+    prisma.productionStageRun.count.mockResolvedValue(2);
+    prisma.productionMaterialConsumption.count.mockResolvedValue(3);
+
+    await expect(
+      service.updateOrderStatus('wo-1', WorkOrderStatus.CANCELLED),
+    ).rejects.toThrow(ConflictException);
     expect(prisma.workOrder.updateMany).not.toHaveBeenCalled();
   });
 });

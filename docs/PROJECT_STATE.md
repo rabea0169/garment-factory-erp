@@ -2,6 +2,27 @@
 
 > هذا الملف هو مصدر الحقيقة لحالة المشروع. يجب تحديثه في نفس commit كلما أُغلقت مهمة، ولا يبدأ أي نموذج مهمة جديدة قبل قراءته.
 
+## تحديث التدقيق الشامل ثلاثي المحاور + إصلاحات P0/P1 (2026-09-12) — audit-full
+
+**النطاق:** تدقيق كامل للخلفية (13 موديولًا / 73+ مسارًا) والجوال (14 ميزة / 17 مسارًا / 8 أدوار) وقاعدة البيانات (50 موديلًا / 39 هجرة / 22 enum) عبر 3 وكلاء متوازين + تحقق مركزي بالبوابات. **قاعدة البيانات: صفر انحراف** بين schema.prisma والهجرات (مُثبت بتشغيل بوابة `prisma migrate diff` نفسها على قاعدة نظيفة — "No difference detected").
+
+**الإصلاحات المنفذة (فرع `fix/audit-full-p0`):**
+
+1. **P0 (إصدار الجوال):** AndroidManifest الرئيسي لم يكن يصرّح بـ `INTERNET` — نسخة release كانت ستفشل في الاتصال بالخادم إطلاقًا (الصلاحية كانت في debug/profile فقط). أُضيفت INTERNET + CAMERA + NFC صراحةً في main، وأوصاف الاستخدام الكاميرا/NFC في iOS Info.plist (كانت ستنهار عند التشغيل).
+2. **P0 (نزاهة GL):** مسار `add-stock` legacy لم يكن يرحّل قيدًا — الرصيد الدفتري للمخزون كان ينحرف عن ميزان المراجعة. الآن `postGl: true` (Dr INVENTORY / Cr INVENTORY_ADJUSTMENT_INCOME).
+3. **P1 (حماية WIP):** إلغاء أمر تشغيل داخل مسار عمل نشط كان يترك قيود WIP/الخامات بلا عكس. الآن `CANCELLED` من PLANNED فقط + فحص دفاعي (سجل مراحل/استهلاك) → 409.
+4. **P1 (GF-0004 شامل):** ParseUUIDPipe على **كل** معاملات المسار (19 معاملًا في 6 متحكمات: sales/hr/shipping/purchasing/suppliers/users/accounting) — UUID غير صالح كان يرد 500 عبر PrismaClientValidationError.
+5. **P1 (فهارس):** هجرة `20260909000000_audit_gap_indexes`: `purchase_orders(status,createdAt)` (تعادل sales_orders)، `customer_payments(customerId,date)`، `supplier_payments(supplierId,date)`، `bom_lines(rawMaterialId)` (آخر FK غير مفهرس)، `activity_logs(module,createdAt)`، `shipments(status,createdAt)`، `products(createdAt)`، `work_orders(createdAt)` — مصرّح بها كذلك في schema.prisma (بوابة drift خضراء).
+6. **P0 (أمان الجوال):** حماية أدوار على مستوى الموجّه — ملف `core/security/route_access.dart` (مرآة سياسات @Roles الخادمية) + redirect للمسارات المقيَّدة + تصفية درج التنقل من مصدر واحد. كان أي مستخدم موثّق يصل `/users` أو `/accounting` عبر deep-link.
+7. **P1 (البذرة):** قيد افتتاحي `JE-SEED-OPENING-001` (Dr INVENTORY / Cr OWNERS_EQUITY = 7,005 EGP) — الدفتر كان يبدأ صفرًا بينما المخزون غير صفري. + تمويل خزينة اختياري `SEED_TREASURY_OPENING` (Dr CASH / Cr OWNERS_EQUITY) يحل مشكلة رفض أول صرف (رصيد سالب ممنوع). مُتحقق: تشغيل بذرة مزدوج ناجح والقيد متوازن (7005/7005).
+8. **P1 (الوثائق):** API_CONTRACT.md مُزامَن بالكامل: ~27 مسارًا غير موثق أُضيفت + تصحيح 4 انحرافات سلوكية (قيود دفع الرواتب SALARIES_PAYABLE، انتقال PREPARING→CANCELLED، أدوار الجودة QLT-6، أدوار دفع الرواتب مع SoD).
+
+**البوابات (الفرع):** tsc 0 / lint 0 / format ✓ / **772 unit (49 suite)** / 64 e2e / **45 integration على PostgreSQL 16** / **flutter analyze 0 + 276 test** / **prisma migrate diff = No difference** / seed idempotent (تشغيل مزدوج) — كلها خضراء.
+
+**أبرز المتبقي (خارج نطاق هذه الجولة — مرتّب):** (1) اختبارات integration لوحدة المبيعات على PG حقيقي، (2) CRUD شركات الشحن + تنظيف 4 نماذج ميتة، (3) تفعيل أحداث الأعمال الأخرى (WORK_ORDER_COMPLETED/SALES_ORDER_PAID...)، (4) مسارات تحديث ناقصة (PATCH /hr/workers/:id، PATCH /products/:id، قراءة ActivityLog)، (5) توحيد شكل pagination، (6) عكس آثار أخرى موصى بها في تقرير التدقيق، (7) تقارير مالية إضافية (P&L/أعمار الذمم)، (8) الجوال: CRUD الموردين/تحرير العملاء/void البيع، تقارير حقيقية (الشاشة الحالية نسخة من اللوحة)، تمرير الصفحات (limit=100 حاليًا)، طباعة الفواتير (pdf/printing معلنان بلا استخدام).
+
+---
+
 ## تحديث خطة التحسينات المعتمدة — الموجة الثالثة GF-IMP-W3 (2026-09-06) — اكتمال الخطة
 
 **الموجة الثالثة GF-IMP-W3 — الميزات والنضج (54 بندًا، منها 50 منفذة بالكود و2 منجزتان مبكرًا):** منفذة على فرع `imp/gf-imp-w3-features-maturity` عبر 5 وكلاء متوازيين + عمل مركزي:
