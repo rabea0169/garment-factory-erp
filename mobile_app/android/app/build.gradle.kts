@@ -7,6 +7,8 @@ plugins {
 android {
     namespace = "com.garmentfactory.garment_factory_erp"
     compileSdk = 37
+    // التطبيق بلا كود أصلي — لا يُستخدم NDK للبناء، والتصريح هنا يمنع إضافة Flutter
+    // من فرض تنزيل NDK كامل (~3.5GB) في بيئات ضيقة المساحة.
     ndkVersion = flutter.ndkVersion
 
     compileOptions {
@@ -32,6 +34,11 @@ android {
             // Signing with the debug keys for now, so `flutter run --release` works.
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+
+    packaging {
+        // كل مكتبات .so مسبقة البناء من Flutter/الإضافات — لا حاجة لتجريد رموز عبر NDK
+        jniLibs.keepDebugSymbols += listOf("**/*.so")
     }
 }
 
