@@ -585,6 +585,93 @@ async function main() {
       select: { id: true },
     }));
   console.log('Default CASH treasury ensured:', treasury.id);
+
+  // 8. audit-GL (P1): القيد الافتتاحي للبذرة — قبل هذا كان الدفتر المحاسبي
+  //    يبدأ صفرًا بينما المخزون الفعلي 7,005 EGP (خامات 6,825 + 180)، فينحرف
+  //    ميزان المراجعة الأولي عن الواقع. الآن: Dr INVENTORY / Cr OWNERS_EQUITY.
+  //    الجارِد: entryCode فريد JE-SEED-OPENING-001 → لا يتكرر عند إعادة
+  //    البذرة ولا يُنشأ على قاعدة قائمة أنشأت القيد سابقًا. يُربط بالفترة
+  //    المالية المفتوحة أعلاه (متطلب ACC-3). مخزون التام seed بتكلفة 0
+  //    (موثق: يحتاج اعتماد تكلفة افتتاحية) فلا بند له.
+  const openingPeriod = await prisma.fiscalPeriod.findFirst({
+    where: { status: 'OPEN' },
+    orderBy: { startDate: 'asc' },
+    select: { id: true },
+  });
+  const openingMaterialValue = 6825 + 180; // RM-001 + RM-002 من بنود البذرة
+  const openingJournal = await prisma.journalEntry.findFirst({
+    where: { code: 'JE-SEED-OPENING-001' },
+    select: { id: true },
+  });
+  if (!openingJournal) {
+    await prisma.journalEntry.create({
+      data: {
+        code: 'JE-SEED-OPENING-001',
+        description: 'قيد افتتاحي: رصيد الخامات الأولي (بذرة)',
+        reference: 'SEED-OPENING',
+        isAuto: false,
+        createdById: admin.id,
+        fiscalPeriodId: openingPeriod?.id,
+        lines: {
+          create: [
+            {
+              debitAccountId: CHART_OF_ACCOUNTS.INVENTORY,
+              creditAccountId: CHART_OF_ACCOUNTS.OWNERS_EQUITY,
+              amount: openingMaterialValue,
+              description: 'قيمة خامات RM-001/RM-002 الافتتاحية',
+            },
+          ],
+        },
+      },
+    });
+    console.log(
+      `Opening GL entry seeded: Dr INVENTORY / Cr OWNERS_EQUITY = ${openingMaterialValue} EGP`,
+    );
+  } else {
+    console.log('Opening GL entry already exists (skipped)');
+  }
+
+  // 9. audit-GL (P1): تمويل الخزينة الافتتاحي (اختياري بمتغير بيئة) — بدون
+  //    تمويل أولي يرفض أول سند صرف/سلفة/رواتب (E3: رصيد سالب ممنوع).
+  //    SEED_TREASURY_OPENING>0 → JE-SEED-OPENING-002 (Dr CASH / Cr
+  //    OWNERS_EQUITY) + رصيد الخزينة النقدية عند إنشائها فقط. محروس بالمفتاح
+  //    الفريد فلا يتكرر ولا يلمس رصيدًا حيًا.
+  const treasuryOpeningInput = Number(process.env.SEED_TREASURY_OPENING ?? 0);
+  if (Number.isFinite(treasuryOpeningInput) && treasuryOpeningInput > 0) {
+    const treasuryJournal = await prisma.journalEntry.findFirst({
+      where: { code: 'JE-SEED-OPENING-002' },
+      select: { id: true },
+    });
+    if (!treasuryJournal) {
+      await prisma.journalEntry.create({
+        data: {
+          code: 'JE-SEED-OPENING-002',
+          description: 'قيد افتتاحي: تمويل الخزينة النقدية (رأس مال)',
+          reference: 'SEED-OPENING-TREASURY',
+          isAuto: false,
+          createdById: admin.id,
+          fiscalPeriodId: openingPeriod?.id,
+          lines: {
+            create: [
+              {
+                debitAccountId: CHART_OF_ACCOUNTS.CASH,
+                creditAccountId: CHART_OF_ACCOUNTS.OWNERS_EQUITY,
+                amount: treasuryOpeningInput,
+                description: 'تمويل افتتاحي للخزينة النقدية',
+              },
+            ],
+          },
+        },
+      });
+      await prisma.treasury.update({
+        where: { id: treasury.id },
+        data: { balance: treasuryOpeningInput },
+      });
+      console.log(
+        `Treasury opening funded: ${treasuryOpeningInput} EGP (Dr CASH / Cr OWNERS_EQUITY)`,
+      );
+    }
+  }
 }
 
 main()

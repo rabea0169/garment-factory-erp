@@ -75,6 +75,7 @@ function createWorkflowPrismaMock(): WorkflowPrismaMock {
       create: jest.fn(),
       aggregate: jest.fn(),
       findUnique: jest.fn(),
+      count: jest.fn(),
     },
     productionStageRun: {
       ...base.productionStageRun,

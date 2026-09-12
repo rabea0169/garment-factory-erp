@@ -79,11 +79,13 @@ export function createPrismaMock() {
       findUnique: jest.fn(),
       create: jest.fn(),
       update: jest.fn(),
+      count: jest.fn(),
     },
     productionMaterialConsumption: {
       findMany: jest.fn(),
       create: jest.fn(),
       aggregate: jest.fn(),
+      count: jest.fn(),
     },
     productionCostSnapshot: {
       findFirst: jest.fn(),

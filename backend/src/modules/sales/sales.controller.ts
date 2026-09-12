@@ -5,6 +5,7 @@ import {
   Patch,
   Body,
   Param,
+  ParseUUIDPipe,
   Query,
   Headers,
 } from '@nestjs/common';
@@ -47,7 +48,7 @@ export class SalesController {
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'تحديث بيانات عميل' })
   async updateCustomer(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateCustomerDto,
   ) {
     return this.salesService.updateCustomer(id, body);
@@ -59,7 +60,7 @@ export class SalesController {
   @Roles(UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'ضبط الحد الائتماني وشروط السداد لعميل' })
   async updateCustomerCredit(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateCustomerCreditDto,
     @CurrentUser('id') actorId: string,
   ) {
@@ -109,7 +110,7 @@ export class SalesController {
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'تسجيل مرتجع لأمر بيع مؤكد أو مشحون' })
   async createSalesReturn(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: CreateSalesReturnDto,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
@@ -125,7 +126,7 @@ export class SalesController {
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'إلغاء أمر بيع مسودة' })
   async cancelOrder(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<unknown> {
@@ -136,7 +137,7 @@ export class SalesController {
   @Roles(UserRole.CASHIER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'تأكيد أمر البيع وصرف المخزون' })
   async confirmOrder(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<unknown> {
@@ -158,7 +159,7 @@ export class SalesController {
       'SAL-7: إبطال أمر بيع مؤكد (CONFIRMED بلا مرتجعات) — عكس القيد وإعادة المخزون',
   })
   async voidOrder(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ): Promise<unknown> {
