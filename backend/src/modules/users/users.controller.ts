@@ -4,6 +4,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Patch,
   Post,
   Query,
@@ -71,7 +72,7 @@ export class UsersController {
     description: 'CC-9: مفتاح إعادة محاولة آمنة لتغيير الدور',
   })
   async changeRole(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ChangeUserRoleDto,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
@@ -95,7 +96,7 @@ export class UsersController {
     description: 'CC-9: مفتاح إعادة محاولة آمنة للتعطيل',
   })
   async deactivate(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
@@ -111,7 +112,7 @@ export class UsersController {
     description: 'CC-9: مفتاح إعادة محاولة آمنة للتنشيط',
   })
   async activate(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {

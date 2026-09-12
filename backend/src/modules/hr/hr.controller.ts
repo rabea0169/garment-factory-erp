@@ -4,6 +4,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Post,
   Query,
 } from '@nestjs/common';
@@ -62,7 +63,7 @@ export class HrController {
   @Get('workers/:id')
   @ApiOperation({ summary: 'تفاصيل العامل مع إنتاجه وسلفه' })
   async getWorkerDetails(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     // HR-8 (ب): حقول الهوية (nationalId/phone) لأدوار HR فقط.
     @CurrentUser('role') viewerRole?: UserRole,
   ) {
@@ -161,7 +162,7 @@ export class HrController {
   })
   @ApiOperation({ summary: 'اعتماد كشف راتب مسودة دون ترحيل مالي' })
   async approvePayroll(
-    @Param('id') payrollId: string,
+    @Param('id', new ParseUUIDPipe()) payrollId: string,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
@@ -187,7 +188,7 @@ export class HrController {
       'دفع كشف راتب معتمد وترحيله إلى الخزينة (الخزينة اختيارية عند صافٍ = صفر — HR-4)',
   })
   async payPayroll(
-    @Param('id') payrollId: string,
+    @Param('id', new ParseUUIDPipe()) payrollId: string,
     @Body() body: PayPayrollDto,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
@@ -229,7 +230,7 @@ export class HrController {
     summary: 'HR-6: إبطال مسودة كشف راتب (DRAFT فقط) بـ CAS وتدقيق كامل',
   })
   async cancelPayroll(
-    @Param('id') payrollId: string,
+    @Param('id', new ParseUUIDPipe()) payrollId: string,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {

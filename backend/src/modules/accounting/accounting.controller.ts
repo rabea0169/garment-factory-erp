@@ -4,6 +4,7 @@ import {
   Get,
   Headers,
   Param,
+  ParseUUIDPipe,
   Post,
   Patch,
   Query,
@@ -74,7 +75,7 @@ export class AccountingController {
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'إغلاق فترة مالية' })
   async closeFiscalPeriod(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
   ) {
     return this.accountingService.closeFiscalPeriod(id, userId);
@@ -139,7 +140,7 @@ export class AccountingController {
     summary: 'A9: عكس قيد مالي — قيد عكسي مرتبط بالأصلي (غير تدميري)',
   })
   async reverseJournalEntry(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
     @Body() body: ReverseJournalEntryDto,
     @Headers('idempotency-key') idempotencyKey?: string,
@@ -175,7 +176,7 @@ export class AccountingController {
       'ACC-8: كشف حساب — بنود المفهرسة (مدين/دائن/رصيد جارٍ) من journal_lines',
   })
   async getAccountStatement(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Query() query: AccountStatementQueryDto,
   ) {
     return this.accountingService.getAccountStatement(id, query);

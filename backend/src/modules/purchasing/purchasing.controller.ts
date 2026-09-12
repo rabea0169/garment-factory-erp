@@ -5,6 +5,7 @@ import {
   Body,
   Headers,
   Param,
+  ParseUUIDPipe,
   Put,
   UseGuards,
   Query,
@@ -68,7 +69,7 @@ export class PurchasingController {
   @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Create a partial or complete goods receipt' })
   async createReceipt(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: CreatePurchaseReceiptDto,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
@@ -84,7 +85,10 @@ export class PurchasingController {
   @Put(':id/receive')
   @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Receive purchase order into inventory' })
-  async receive(@Param('id') id: string, @CurrentUser('id') userId: string) {
+  async receive(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser('id') userId: string,
+  ) {
     return this.purchasingService.receiveOrder(id, userId);
   }
 
@@ -99,7 +103,7 @@ export class PurchasingController {
     description: 'PUR-5 (أ): مفتاح ثابت لإعادة إرسال طلب الاعتماد بأمان',
   })
   async approveOrder(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
@@ -119,7 +123,7 @@ export class PurchasingController {
     description: 'PUR-5: مفتاح ثابت لإعادة إرسال طلب الإلغاء بأمان',
   })
   async cancelOrder(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
@@ -134,7 +138,7 @@ export class PurchasingController {
   @Roles(UserRole.INVENTORY_MANAGER, UserRole.GENERAL_MANAGER)
   @ApiOperation({ summary: 'Return purchase order item to supplier' })
   async returnItem(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: ReturnToSupplierDto,
     @CurrentUser('id') userId: string,
     @Headers('idempotency-key') idempotencyKey?: string,

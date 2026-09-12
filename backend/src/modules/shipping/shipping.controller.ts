@@ -4,6 +4,7 @@ import {
   Post,
   Body,
   Param,
+  ParseUUIDPipe,
   Patch,
   Query,
   Headers,
@@ -44,7 +45,7 @@ export class ShippingController {
       'SHP-6: مفتاح ثابت لإعادة إرسال نفس تحديث الحالة بأمان — نفس المفتاح + نفس المحتوى = نفس الاستجابة، ومحتوى مختلف = 409',
   })
   async updateStatus(
-    @Param('id') id: string,
+    @Param('id', new ParseUUIDPipe()) id: string,
     @Body() body: UpdateShipmentStatusDto,
     @CurrentUser('id') actorId: string,
     @Headers('idempotency-key') idempotencyKey?: string,
