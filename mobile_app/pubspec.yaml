@@ -102,3 +102,9 @@ flutter:
     - family: Cairo
       fonts:
         - asset: assets/fonts/Cairo-Variable.ttf
+
+# NOTE: تثبيت path_provider_android على 2.2.10 — الإصدار الأحدث (2.3.x) يسحب
+# jni_flutter ذا الكود الأصلي C++ (يتطلب NDK كامل ~3.5GB + cmake) دون فائدة
+# لهذا التطبيق. 2.2.10 يغطي نفس الواجهة البرمجية بلا كود أصلي.
+dependency_overrides:
+  path_provider_android: 2.2.10
