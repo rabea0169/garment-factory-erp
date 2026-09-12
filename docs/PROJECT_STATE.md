@@ -2,6 +2,37 @@
 
 > هذا الملف هو مصدر الحقيقة لحالة المشروع. يجب تحديثه في نفس commit كلما أُغلقت مهمة، ولا يبدأ أي نموذج مهمة جديدة قبل قراءته.
 
+## الإصدار v1.1.1-uat + استئناف بناء APK بنجاح (2026-09-12 — مساء)
+
+**القرار:** اكتمال التدقيق الشامل ودمجه (#83) → رفع الإصدار إلى **1.1.1+3** (#84) → **تمكين بناء release APK** (#85) → **نشر GitHub Release v1.1.1-uat** بالـ APK.
+
+**سلسلة الدمج (كلها CI أخضر ثم مدمجة):**
+- **#83** `fix/audit-full-p0` → main `ae31fbc` (التدقيق الشامل + إصلاحات P0/P1 + فهارس + مزامنة العقد)
+- **#84** `chore/apk-v1.1.1` → main `f46d07b` (رفع الإصدار إلى 1.1.1+3)
+- **#85** `fix/apk-remove-dead-printer-plugin` → main `c630b95` (تمكين البناء — تفاصيل أدناه)
+- **main CI على `c630b95`: success** · **الإنتاج (Railway):** أعيد النشر تلقائيًا بعد الدموج؛ `/health/ready` = 200 (database: ok) — هجرة `audit_gap_indexes` عبر preDeploy.
+
+**حل عوائق بناء release APK (كان مستحيلًا مع AGP 9.0.1):**
+
+1. **`blue_thermal_printer` 1.2.3 بلا namespace** — غير متوافق مع AGP 9 أصلًا. المكوّن **ميت** (مستورد فقط في `printer_service.dart` غير المستخدم — بند P1 من تدقيق audit-full) → **حُذف مع الخدمة الميتة** (276/276 اختبار جوال بعد الحذف).
+2. **`path_provider_android` 2.3.x يسحب `jni_flutter` بكود C++ أصلي** → يتطلب NDK كامل (~3.5GB تنزيل + فك) — غير عملي وغير ضروري → **`dependency_overrides: path_provider_android: 2.2.10`** (نفس الواجهة بلا كود أصلي؛ حزمة jni اختفت من pubspec.lock تمامًا).
+3. **توزيعة Gradle `-all` (761MB)** → استبدال بـ **`-bin`** (~150MB) في `gradle-wrapper.properties`.
+4. **إعدادات ذاكرة 8GB** في `gradle.properties` → **1536m + workers=1 + بلا daemon + kotlin in-process** — البناء يعمل الآن على أجهزة 4GB RAM.
+5. **`packaging.jniLibs.keepDebugSymbols`** — كل مكتبات `.so` مسبقة البناء من Flutter/الإضافات فلا حاجة لتجريد NDK.
+
+**البناء المنجز والتحقق:**
+- `flutter build apk --release --target-platform android-arm64` → **✓ app-release.apk (185.6MB)**
+- **التحقق بالـ aapt2:** `INTERNET` ✅ (إصلاح P0 من #83 — v1.1.0 كان سيفشل في الاتصال!) + `CAMERA` ✅ + `NFC` ✅ · versionName `1.1.1` / versionCode `3` · minSdk 24 / targetSdk 36
+- flutter analyze: 0 issues · flutter test: 276/276 · backend CI (على #85): 772 unit + 64 e2e + 45 integration كلها خضراء
+- **GitHub Release:** [`v1.1.1-uat`](https://github.com/rabea0169/garment-factory-erp/releases/tag/v1.1.1-uat) — الأصل: `garment-erp-uat-v1.1.1.apk` (arm64-v8a)
+
+**ملاحظات تشغيلية:**
+- التوقيع debug keys (بيئة UAT) — مفتاح إنتاج release signing ما زال مطلوبًا قبل المتاجر (بند Backlog).
+- ⚠️ **v1.1.0-uat يحمل خلل صلاحية INTERNET** — يجب إبلاغ فريق UAT بالترقية إلى v1.1.1 فورًا.
+- بيئة البناء هذه: Flutter 3.47.4 stable + JDK 21 (Temurin محمول — النظام فيه JRE فقط) + Android SDK 37 + NDK **stub** بـ `source.properties` (يمسح flutter المجلد ويمرر installedNdkVersions فتتخطى إضافة Flutter فرض التنزيل).
+
+---
+
 ## تحديث التدقيق الشامل ثلاثي المحاور + إصلاحات P0/P1 (2026-09-12) — audit-full
 
 **النطاق:** تدقيق كامل للخلفية (13 موديولًا / 73+ مسارًا) والجوال (14 ميزة / 17 مسارًا / 8 أدوار) وقاعدة البيانات (50 موديلًا / 39 هجرة / 22 enum) عبر 3 وكلاء متوازين + تحقق مركزي بالبوابات. **قاعدة البيانات: صفر انحراف** بين schema.prisma والهجرات (مُثبت بتشغيل بوابة `prisma migrate diff` نفسها على قاعدة نظيفة — "No difference detected").
