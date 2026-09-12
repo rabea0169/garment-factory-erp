@@ -207,6 +207,33 @@ export class ProductionService {
         );
       }
 
+      // 4. P1 (audit-WO-CANCEL): الإلغاء مسموح فقط من PLANNED — أمر داخل
+      //    مسار العمل نشط رحّل قيود WIP/استهلاك خامات (Dr WIP / Cr INVENTORY)
+      //    ولا مسار لعكسها هنا، فإلغاؤه كان يُضخّم WIP ويُفقد الخامات.
+      if (status === WorkOrderStatus.CANCELLED) {
+        if (existing.status !== WorkOrderStatus.PLANNED) {
+          throw new ConflictException(
+            'لا يمكن إلغاء أمر تشغيل داخل مسار العمل — أكمل الإنتاج (مرحلة PACKING) ' +
+              'أو اطلب عكس القيود من المحاسبة. الإلغاء متاح فقط للأوامر المخططة (PLANNED).',
+          );
+        }
+        // فحص دفاعي: حتى من PLANNED نرفض إن وُجدت مراحل أو استهلاك خامات
+        // (حماية من أي حالة تاريخية غير متسقة).
+        const [stageRuns, consumptions] = await Promise.all([
+          tx.productionStageRun.count({
+            where: { workOrderId: id },
+          }),
+          tx.productionMaterialConsumption.count({
+            where: { workOrderId: id },
+          }),
+        ]);
+        if (stageRuns > 0 || consumptions > 0) {
+          throw new ConflictException(
+            `لا يمكن إلغاء أمر تشغيل له سجل مراحل (${stageRuns}) أو استهلاك خامات (${consumptions}) — عكس القيود يتم عبر المحاسبة.`,
+          );
+        }
+      }
+
       // تحديث الحالة المسموحة (مثل CANCELLED أو PLANNED) — CAS: الشرط على
       // الحالة المقروءة للتو؛ تغيّرها بالتوازي = صفر صفوف = تعارض.
       const updated = await tx.workOrder.updateMany({
