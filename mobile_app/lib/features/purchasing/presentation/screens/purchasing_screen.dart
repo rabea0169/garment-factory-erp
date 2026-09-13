@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/purchasing_cubit.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class PurchasingScreen extends StatelessWidget {
   const PurchasingScreen({super.key, this.cubit});
@@ -15,6 +16,7 @@ class PurchasingScreen extends StatelessWidget {
     final content = Builder(
       builder: (screenContext) => Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('المشتريات والاستلام'),
           actions: [
             IconButton(

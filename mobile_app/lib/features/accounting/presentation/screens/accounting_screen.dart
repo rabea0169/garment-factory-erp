@@ -6,6 +6,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/accounting_cubit.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 /// تسميات أنواع الطرف المقابل (تطابق enum الخادم CUSTOMER/SUPPLIER/WORKER).
 const Map<String, String> _counterpartyTypeLabels = {
@@ -26,6 +27,7 @@ class AccountingScreen extends StatelessWidget {
         length: 4,
         child: Scaffold(
           appBar: AppBar(
+            leading: const GfBackButton(),
             title: const Text('الحسابات والمالية'),
             bottom: const TabBar(
               tabs: [

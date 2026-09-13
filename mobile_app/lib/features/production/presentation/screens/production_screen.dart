@@ -13,6 +13,7 @@ import '../../production_module.dart';
 import '../cubit/production_cubit.dart';
 import '../cubit/production_state.dart';
 import '../widgets/outbox_pending_badge.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class ProductionScreen extends StatelessWidget {
   /// DEV-PQ1/2: حقن اختياري للحوارات والاختبارات — الافتراضي عميل
@@ -47,6 +48,7 @@ class _ProductionView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const GfBackButton(),
         title: const Text('الإنتاج وأوامر التشغيل'),
         actions: [
           // MOB-3: شارة عدد عمليات الطابور المعلّقة (مثل تسجيل إنتاج

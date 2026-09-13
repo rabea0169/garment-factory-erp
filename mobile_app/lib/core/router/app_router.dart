@@ -35,6 +35,7 @@ import '../../features/data_import/presentation/screens/import_screen.dart';
 import '../../features/system/presentation/screens/backup_screen.dart';
 import '../storage/auth_storage.dart';
 import '../security/route_access.dart';
+import '../navigation/back_navigation.dart';
 
 class AppRouter {
   AppRouter._();
@@ -140,158 +141,188 @@ class AppRouter {
       GoRoute(
         path: inventory,
         name: 'inventory',
-        builder: (context, state) => const InventoryScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: InventoryScreen()),
       ),
       GoRoute(
         path: purchasing,
         name: 'purchasing',
-        builder: (context, state) => const PurchasingScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: PurchasingScreen()),
       ),
       GoRoute(
         path: products,
         name: 'products',
-        builder: (context, state) => const ProductsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ProductsScreen()),
       ),
       GoRoute(
         path: quality,
         name: 'quality',
-        builder: (context, state) => const QualityScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: QualityScreen()),
       ),
       GoRoute(
         path: production,
         name: 'production',
-        builder: (context, state) => const ProductionScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ProductionScreen()),
       ),
       GoRoute(
         path: hr,
         name: 'hr',
-        builder: (context, state) => const HrScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: HrScreen()),
       ),
       // MOB-8: كشوف الرواتب (GET /hr/payrolls) مع مرشح حالة.
       GoRoute(
         path: hrPayrolls,
         name: 'hrPayrolls',
-        builder: (context, state) => const PayrollsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: PayrollsScreen()),
       ),
       // MOB-8: نشاط عامل — آخر السلف وآخر الإنتاج (GET /hr/advances |
       // /hr/production مع workerId).
       GoRoute(
         path: '$hrWorkerActivity/:workerId',
         name: 'hrWorkerActivity',
-        builder: (context, state) => WorkerActivityScreen(
-          workerId: state.pathParameters['workerId'] ?? '',
-          workerName: state.uri.queryParameters['name'],
+        builder: (context, state) => BackGuard(
+          child: WorkerActivityScreen(
+            workerId: state.pathParameters['workerId'] ?? '',
+            workerName: state.uri.queryParameters['name'],
+          ),
         ),
       ),
       GoRoute(
         path: sales,
         name: 'sales',
-        builder: (context, state) => const SalesScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: SalesScreen()),
       ),
       GoRoute(
         path: suppliers,
         name: 'suppliers',
-        builder: (context, state) => const SuppliersScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: SuppliersScreen()),
       ),
       GoRoute(
         path: shipping,
         name: 'shipping',
-        builder: (context, state) => const ShippingScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ShippingScreen()),
       ),
       GoRoute(
         path: accounting,
         name: 'accounting',
-        builder: (context, state) => const AccountingScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: AccountingScreen()),
       ),
       GoRoute(
         path: reports,
         name: 'reports',
-        builder: (context, state) => const ReportsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ReportsScreen()),
       ),
       // CC-9: إدارة المستخدمين — قائمة/إنشاء/دور/تعطيل/تنشيط.
       GoRoute(
         path: users,
         name: 'users',
-        builder: (context, state) => const UsersScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: UsersScreen()),
       ),
       // SELIM-ERP W1: مسارات الوحدات المقلدة من Selim ERP.
       GoRoute(
         path: quotations,
         name: 'quotations',
-        builder: (context, state) => const QuotationsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: QuotationsScreen()),
         routes: [
           GoRoute(
             path: 'new',
             name: 'quotationNew',
-            builder: (context, state) => const QuotationFormScreen(),
+            builder: (context, state) =>
+                const BackGuard(child: QuotationFormScreen()),
           ),
         ],
       ),
       GoRoute(
         path: purchaseReturns,
         name: 'purchaseReturns',
-        builder: (context, state) => const PurchaseReturnsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: PurchaseReturnsScreen()),
       ),
       GoRoute(
         path: adjustments,
         name: 'adjustments',
-        builder: (context, state) => const InventoryAdjustmentsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: InventoryAdjustmentsScreen()),
       ),
       GoRoute(
         path: expenses,
         name: 'expenses',
-        builder: (context, state) => const ExpensesScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ExpensesScreen()),
       ),
       GoRoute(
         path: treasury,
         name: 'treasury',
-        builder: (context, state) => const TreasuryScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: TreasuryScreen()),
       ),
       GoRoute(
         path: shifts,
         name: 'shifts',
-        builder: (context, state) => const ShiftsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ShiftsScreen()),
       ),
       GoRoute(
         path: workerReceipts,
         name: 'workerReceipts',
-        builder: (context, state) => const WorkerReceiptsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: WorkerReceiptsScreen()),
       ),
       GoRoute(
         path: payrollStatements,
         name: 'payrollStatements',
-        builder: (context, state) => const PayrollStatementsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: PayrollStatementsScreen()),
       ),
       GoRoute(
         path: cutting,
         name: 'cutting',
-        builder: (context, state) => const CuttingScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: CuttingScreen()),
       ),
       GoRoute(
         path: financialReports,
         name: 'financialReports',
-        builder: (context, state) => const FinancialReportsScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: FinancialReportsScreen()),
       ),
       GoRoute(
         path: printing,
         name: 'printing',
-        builder: (context, state) => const PrintingScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: PrintingScreen()),
       ),
       // SELIM-ERP W2 — نقطة البيع (Cubit يُنشأ داخل الشاشة).
       GoRoute(
         path: pos,
         name: 'pos',
-        builder: (context, state) => const PosScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: PosScreen()),
       ),
       GoRoute(
         path: importWizard,
         name: 'import',
-        builder: (context, state) => const ImportScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: ImportScreen()),
       ),
       GoRoute(
         path: backup,
         name: 'backup',
-        builder: (context, state) => const BackupScreen(),
+        builder: (context, state) =>
+            const BackGuard(child: BackupScreen()),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

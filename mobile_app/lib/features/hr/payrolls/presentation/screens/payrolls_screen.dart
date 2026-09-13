@@ -8,6 +8,7 @@ import '../cubit/payrolls_cubit.dart';
 import '../cubit/payrolls_state.dart';
 import '../widgets/create_payroll_dialog.dart';
 import '../widgets/pay_payroll_dialog.dart';
+import '../../../../../core/navigation/back_navigation.dart';
 
 /// MOB-8 + GF-IMP-W3: شاشة كشوف الرواتب — قائمة كشوف GET /hr/payrolls مع
 /// مرشح حالة (الكل/مسودة/معتمد/مدفوع)، وتحويلها من عرض فقط إلى دورة
@@ -35,7 +36,10 @@ class _PayrollsView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('كشوف الرواتب')),
+      appBar: AppBar(
+        leading: const GfBackButton(),
+        title: const Text('كشوف الرواتب'),
+      ),
       body: Column(
         children: [
           const _PayrollFilterBar(),

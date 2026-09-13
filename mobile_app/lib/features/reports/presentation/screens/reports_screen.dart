@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/reports_cubit.dart';
 import '../cubit/reports_state.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class ReportsScreen extends StatelessWidget {
   const ReportsScreen({super.key});
@@ -14,6 +15,7 @@ class ReportsScreen extends StatelessWidget {
       create: (context) => ReportsCubit()..fetchDashboardStats(),
       child: Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('التقارير والإحصائيات'),
         ),
         body: BlocBuilder<ReportsCubit, ReportsState>(

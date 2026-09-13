@@ -6,6 +6,7 @@ import '../cubit/products_cubit.dart';
 import '../cubit/products_state.dart';
 import 'add_product_screen.dart';
 import '../../../inventory/presentation/cubit/inventory_cubit.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class ProductsScreen extends StatelessWidget {
   const ProductsScreen({super.key});
@@ -16,6 +17,7 @@ class ProductsScreen extends StatelessWidget {
       create: (context) => ProductsCubit()..fetchProducts(),
       child: Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('دليل المنتجات (الكتالوج)'),
           actions: [
             Builder(

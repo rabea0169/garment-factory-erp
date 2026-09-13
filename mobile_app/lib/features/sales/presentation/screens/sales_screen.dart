@@ -7,6 +7,7 @@ import '../../../../core/contacts/contact_import_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
 import '../cubit/sales_cubit.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class SalesScreen extends StatelessWidget {
   const SalesScreen({
@@ -23,6 +24,7 @@ class SalesScreen extends StatelessWidget {
     final content = Builder(
       builder: (screenContext) => Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('المبيعات والعملاء'),
           actions: [
             IconButton(

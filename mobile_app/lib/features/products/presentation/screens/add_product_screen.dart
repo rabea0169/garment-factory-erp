@@ -5,6 +5,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../inventory/presentation/cubit/inventory_cubit.dart';
 import '../../../inventory/presentation/cubit/inventory_state.dart';
 import '../cubit/products_cubit.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class AddProductScreen extends StatefulWidget {
   const AddProductScreen({super.key});
@@ -295,7 +296,10 @@ class _AddProductScreenState extends State<AddProductScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('إضافة منتج جديد')),
+      appBar: AppBar(
+        leading: const GfBackButton(),
+        title: const Text('إضافة منتج جديد'),
+      ),
       body: Form(
         key: _formKey,
         autovalidateMode: AutovalidateMode.onUserInteraction,

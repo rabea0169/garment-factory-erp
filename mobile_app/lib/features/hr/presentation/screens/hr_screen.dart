@@ -12,6 +12,7 @@ import '../cubit/hr_state.dart';
 import '../widgets/create_worker_dialog.dart';
 import '../widgets/record_advance_dialog.dart';
 import '../widgets/worker_nfc_button.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class HrScreen extends StatefulWidget {
   const HrScreen({this.cubit, super.key});
@@ -38,6 +39,7 @@ class _HrScreenState extends State<HrScreen> {
       create: (context) => widget.cubit ?? (HrCubit()..fetchWorkers()),
       child: Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('الموارد البشرية والعمال'),
           actions: [
             // MOB-3: عدد تسجيلات الإنتاج المحفوظة محليًا بانتظار الاتصال.

@@ -5,6 +5,7 @@ import '../../../../core/contacts/contact_import_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
 import '../cubit/suppliers_cubit.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class SuppliersScreen extends StatelessWidget {
   const SuppliersScreen({
@@ -21,6 +22,7 @@ class SuppliersScreen extends StatelessWidget {
     final content = Builder(
       builder: (screenContext) => Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('الموردون'),
           actions: [
             IconButton(
