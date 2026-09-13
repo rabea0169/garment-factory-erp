@@ -14,7 +14,10 @@ import { UserRole } from '@prisma/client';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { Roles } from '../auth/roles.guard';
 import { CreateQuotationDto } from './dto/create-quotation.dto';
-import { QueryQuotationDto, UpdateQuotationStatusDto } from './dto/query-quotation.dto';
+import {
+  QueryQuotationDto,
+  UpdateQuotationStatusDto,
+} from './dto/query-quotation.dto';
 import { QuotationsService } from './quotations.service';
 
 /**
@@ -45,11 +48,7 @@ export class QuotationsController {
   }
 
   @Get('stats')
-  @Roles(
-    UserRole.GENERAL_MANAGER,
-    UserRole.ACCOUNTANT,
-    UserRole.SUPER_ADMIN,
-  )
+  @Roles(UserRole.GENERAL_MANAGER, UserRole.ACCOUNTANT, UserRole.SUPER_ADMIN)
   @ApiOperation({ summary: 'إحصائيات عروض الأسعار حسب الحالة والقيمة' })
   async getStats() {
     return this.quotationsService.getStats();

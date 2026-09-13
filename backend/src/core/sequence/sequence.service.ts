@@ -50,7 +50,10 @@ export class SequenceService {
    *        المستند حتى يتراجع مع فشله فلا تظهر ثقوب).
    * @returns رقم مثل "QUO-0042"
    */
-  async nextNumber(type: string, tx: Prisma.TransactionClient): Promise<string> {
+  async nextNumber(
+    type: string,
+    tx: Prisma.TransactionClient,
+  ): Promise<string> {
     const prefix = SequenceService.PREFIXES[type];
     if (!prefix) {
       throw new Error(`نوع ترقيم غير معروف: ${type}`);

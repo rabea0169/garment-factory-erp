@@ -36,21 +36,18 @@ export class QueryQuotationDto {
 
   @ApiPropertyOptional({ example: '2026-09-01', description: 'من تاريخ' })
   @IsOptional()
-  @IsDateString(
-    {},
-    { message: 'صيغة "من تاريخ" يجب أن تكون ISO 8601' },
-  )
+  @IsDateString({}, { message: 'صيغة "من تاريخ" يجب أن تكون ISO 8601' })
   from?: string;
 
   @ApiPropertyOptional({ example: '2026-09-30', description: 'إلى تاريخ' })
   @IsOptional()
-  @IsDateString(
-    {},
-    { message: 'صيغة "إلى تاريخ" يجب أن تكون ISO 8601' },
-  )
+  @IsDateString({}, { message: 'صيغة "إلى تاريخ" يجب أن تكون ISO 8601' })
   to?: string;
 
-  @ApiPropertyOptional({ example: 'uuid-of-customer', description: 'فلتر العميل' })
+  @ApiPropertyOptional({
+    example: 'uuid-of-customer',
+    description: 'فلتر العميل',
+  })
   @IsOptional()
   @IsUUID(undefined, { message: 'معرف العميل يجب أن يكون UUID صالحًا' })
   customerId?: string;

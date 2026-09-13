@@ -123,7 +123,10 @@ export class CreateQuotationDto {
   @Type(() => QuotationItemInputDto)
   items: QuotationItemInputDto[];
 
-  @ApiPropertyOptional({ example: 'عرض تجريبي لجهة معينة', description: 'ملاحظات' })
+  @ApiPropertyOptional({
+    example: 'عرض تجريبي لجهة معينة',
+    description: 'ملاحظات',
+  })
   @IsOptional()
   @IsString()
   notes?: string;

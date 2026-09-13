@@ -7,7 +7,10 @@ import { Prisma, QuotationStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
-import { CreateQuotationDto, QuotationItemInputDto } from './dto/create-quotation.dto';
+import {
+  CreateQuotationDto,
+  QuotationItemInputDto,
+} from './dto/create-quotation.dto';
 import { QueryQuotationDto } from './dto/query-quotation.dto';
 import { round2 } from '../../core/common/money.util';
 
@@ -65,7 +68,10 @@ export class QuotationsService {
       await this.validateItems(dto.items, tx);
 
       const subtotal = round2(
-        dto.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0),
+        dto.items.reduce(
+          (sum, item) => sum + item.quantity * item.unitPrice,
+          0,
+        ),
       );
       if (dto.discount > subtotal) {
         throw new BadRequestException(
@@ -101,7 +107,10 @@ export class QuotationsService {
             })),
           },
         },
-        include: { items: true, customer: { select: { id: true, name: true, phone: true } } },
+        include: {
+          items: true,
+          customer: { select: { id: true, name: true, phone: true } },
+        },
       });
       return quotation;
     });
@@ -132,7 +141,9 @@ export class QuotationsService {
     const [items, total] = await this.prisma.$transaction([
       this.prisma.quotation.findMany({
         where,
-        include: { customer: { select: { id: true, name: true, phone: true } } },
+        include: {
+          customer: { select: { id: true, name: true, phone: true } },
+        },
         orderBy: { createdAt: 'desc' },
         skip: (page - 1) * limit,
         take: limit,
@@ -148,8 +159,12 @@ export class QuotationsService {
       where: { id },
       include: {
         items: true,
-        customer: { select: { id: true, name: true, phone: true, address: true } },
-        salesOrder: { select: { id: true, code: true, status: true, totalAmount: true } },
+        customer: {
+          select: { id: true, name: true, phone: true, address: true },
+        },
+        salesOrder: {
+          select: { id: true, code: true, status: true, totalAmount: true },
+        },
       },
     });
     if (!quotation) throw new NotFoundException('عرض السعر غير موجود');
@@ -171,7 +186,10 @@ export class QuotationsService {
     return this.prisma.$transaction(async (tx) => {
       await this.validateItems(dto.items, tx);
       const subtotal = round2(
-        dto.items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0),
+        dto.items.reduce(
+          (sum, item) => sum + item.quantity * item.unitPrice,
+          0,
+        ),
       );
       if (dto.discount > subtotal) {
         throw new BadRequestException(
@@ -315,7 +333,9 @@ export class QuotationsService {
         (item) => !variants.some((v) => v.id === item.productVariantId),
       );
       if (missing.length) {
-        throw new BadRequestException('توليفة أو أكثر من بنود العرض غير موجودة');
+        throw new BadRequestException(
+          'توليفة أو أكثر من بنود العرض غير موجودة',
+        );
       }
 
       const code = await tx.salesOrder.count().then((count) => {
@@ -326,7 +346,9 @@ export class QuotationsService {
 
       const subtotal = Number(quotation.subtotal);
       const vatAmount = Number(quotation.vatAmount);
-      const totalAmount = round2(subtotal - Number(quotation.discount) + vatAmount);
+      const totalAmount = round2(
+        subtotal - Number(quotation.discount) + vatAmount,
+      );
 
       const salesOrder = await tx.salesOrder.create({
         data: {
@@ -422,7 +444,9 @@ export class QuotationsService {
         where: { id: { in: variantIds }, isActive: true },
       });
       if (found !== new Set(variantIds).size) {
-        throw new BadRequestException('توليفة في بنود العرض غير موجودة أو غير نشطة');
+        throw new BadRequestException(
+          'توليفة في بنود العرض غير موجودة أو غير نشطة',
+        );
       }
     }
   }

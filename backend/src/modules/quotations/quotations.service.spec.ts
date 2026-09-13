@@ -57,7 +57,7 @@ describe('QuotationsService — قواعد عروض الأسعار (SELIM W1)', 
     prisma = {
       $transaction: jest.fn().mockImplementation(async (arg) => {
         if (typeof arg === 'function') return arg(tx);
-        return [ [], 0 ];
+        return [[], 0];
       }),
       quotation: {
         findUnique: jest.fn(),
@@ -70,10 +70,20 @@ describe('QuotationsService — قواعد عروض الأسعار (SELIM W1)', 
         groupBy: jest.fn().mockResolvedValue([]),
         aggregate: jest.fn().mockResolvedValue({ _sum: { total: null } }),
       },
-      customer: { findFirst: jest.fn().mockResolvedValue({ id: 'cust-1', name: 'شركة النور' }) },
+      customer: {
+        findFirst: jest
+          .fn()
+          .mockResolvedValue({ id: 'cust-1', name: 'شركة النور' }),
+      },
       product: { count: jest.fn().mockResolvedValue(1) },
-      productVariant: { count: jest.fn().mockResolvedValue(1), findMany: jest.fn().mockResolvedValue([]) },
-      salesOrder: { count: jest.fn().mockResolvedValue(0), create: jest.fn().mockResolvedValue({ id: 'so-1' }) },
+      productVariant: {
+        count: jest.fn().mockResolvedValue(1),
+        findMany: jest.fn().mockResolvedValue([]),
+      },
+      salesOrder: {
+        count: jest.fn().mockResolvedValue(0),
+        create: jest.fn().mockResolvedValue({ id: 'so-1' }),
+      },
     };
     Object.assign(tx, prisma);
     sequence = { nextNumber: jest.fn().mockResolvedValue('QUO-0001') };
@@ -184,7 +194,12 @@ describe('QuotationsService — قواعد عروض الأسعار (SELIM W1)', 
       status: QuotationStatus.ACCEPTED,
       customerId: null,
       items: [
-        { productVariantId: 'var-1', quantity: '10', unitPrice: '250', productName: 'تيشيرت' },
+        {
+          productVariantId: 'var-1',
+          quantity: '10',
+          unitPrice: '250',
+          productName: 'تيشيرت',
+        },
       ],
     });
     await expect(service.convert('q-1', 'user-1', 'CASH')).rejects.toThrow(
