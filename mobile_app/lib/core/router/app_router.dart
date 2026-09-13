@@ -16,6 +16,19 @@ import '../../features/shipping/presentation/screens/shipping_screen.dart';
 import '../../features/accounting/presentation/screens/accounting_screen.dart';
 import '../../features/reports/presentation/screens/reports_screen.dart';
 import '../../features/users/presentation/screens/users_screen.dart';
+// SELIM-ERP W1: شاشات الوحدات الجديدة المقلدة من Selim ERP.
+import '../../features/quotations/presentation/screens/quotations_screen.dart';
+import '../../features/quotations/presentation/screens/quotation_form_screen.dart';
+import '../../features/purchase_returns/presentation/screens/purchase_returns_screen.dart';
+import '../../features/inventory_adjustments/presentation/screens/inventory_adjustments_screen.dart';
+import '../../features/expenses/presentation/screens/expenses_screen.dart';
+import '../../features/treasury/presentation/screens/treasury_screen.dart';
+import '../../features/shifts/presentation/screens/shifts_screen.dart';
+import '../../features/worker_receipts/presentation/screens/worker_receipts_screen.dart';
+import '../../features/payroll_statements/presentation/screens/payroll_statements_screen.dart';
+import '../../features/cutting/presentation/screens/cutting_screen.dart';
+import '../../features/financial_reports/presentation/screens/financial_reports_screen.dart';
+import '../../features/printing/presentation/screens/printing_screen.dart';
 import '../storage/auth_storage.dart';
 import '../security/route_access.dart';
 
@@ -41,6 +54,19 @@ class AppRouter {
   static const String reports = '/reports';
   // CC-9: إدارة المستخدمين (SUPER_ADMIN فقط خادميًا).
   static const String users = '/users';
+
+  // SELIM-ERP W1: مسارات الوحدات المقلدة.
+  static const String quotations = '/quotations';
+  static const String purchaseReturns = '/purchase-returns';
+  static const String adjustments = '/adjustments';
+  static const String expenses = '/expenses';
+  static const String treasury = '/treasury';
+  static const String shifts = '/shifts';
+  static const String workerReceipts = '/worker-receipts';
+  static const String payrollStatements = '/payroll-statements';
+  static const String cutting = '/cutting';
+  static const String financialReports = '/financial-reports';
+  static const String printing = '/printing';
 
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static String _initialLocation = login;
@@ -179,6 +205,69 @@ class AppRouter {
         path: users,
         name: 'users',
         builder: (context, state) => const UsersScreen(),
+      ),
+      // SELIM-ERP W1: مسارات الوحدات المقلدة من Selim ERP.
+      GoRoute(
+        path: quotations,
+        name: 'quotations',
+        builder: (context, state) => const QuotationsScreen(),
+        routes: [
+          GoRoute(
+            path: 'new',
+            name: 'quotationNew',
+            builder: (context, state) => const QuotationFormScreen(),
+          ),
+        ],
+      ),
+      GoRoute(
+        path: purchaseReturns,
+        name: 'purchaseReturns',
+        builder: (context, state) => const PurchaseReturnsScreen(),
+      ),
+      GoRoute(
+        path: adjustments,
+        name: 'adjustments',
+        builder: (context, state) => const InventoryAdjustmentsScreen(),
+      ),
+      GoRoute(
+        path: expenses,
+        name: 'expenses',
+        builder: (context, state) => const ExpensesScreen(),
+      ),
+      GoRoute(
+        path: treasury,
+        name: 'treasury',
+        builder: (context, state) => const TreasuryScreen(),
+      ),
+      GoRoute(
+        path: shifts,
+        name: 'shifts',
+        builder: (context, state) => const ShiftsScreen(),
+      ),
+      GoRoute(
+        path: workerReceipts,
+        name: 'workerReceipts',
+        builder: (context, state) => const WorkerReceiptsScreen(),
+      ),
+      GoRoute(
+        path: payrollStatements,
+        name: 'payrollStatements',
+        builder: (context, state) => const PayrollStatementsScreen(),
+      ),
+      GoRoute(
+        path: cutting,
+        name: 'cutting',
+        builder: (context, state) => const CuttingScreen(),
+      ),
+      GoRoute(
+        path: financialReports,
+        name: 'financialReports',
+        builder: (context, state) => const FinancialReportsScreen(),
+      ),
+      GoRoute(
+        path: printing,
+        name: 'printing',
+        builder: (context, state) => const PrintingScreen(),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

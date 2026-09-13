@@ -251,6 +251,184 @@ export function createPrismaMock() {
       updateMany: jest.fn(),
       count: jest.fn(),
     },
+    // SELIM-W1 (استنساخ Selim ERP — الموجة 1): نماذج الموجة الأولى
+    // المضافة — عروض الأسعار، حركات الخزينة، المصروفات، الورديات، سندات
+    // قبض العمال، كشوف الرواتب المجمدة، مرتجعات المشتريات، التسويات
+    // المخزنية، القص والتعبئة، الطباعة، قوالب القيود، والموازنات.
+    // كل نموذج يحمل مجموعة jest.fn() الموحّدة التي تستدعيها مواصفات
+    // الوحدات (findUnique/findFirst/findMany/create/update/updateMany/
+    // delete/count/groupBy/aggregate حسب استخدام كل خدمة) — البنود
+    // المتداخلة (quotation.items وpurchaseReturn.items و...
+    // inventoryAdjustment.items) تُنشأ عبر create النموذج الأب نفسه.
+    // الطرق الإضافية التي تحتاجها نماذج قائمة فعلًا (مثل
+    // salesOrder.aggregate وtreasury.updateMany) تبقى في امتدادات
+    // محلية داخل المواصفات (نمط SalesPrismaMock) حفاظًا على توافق
+    // مواصفات الوحدات الأخرى مع هذا الـ helper المشترك.
+    quotation: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+      groupBy: jest.fn(),
+      aggregate: jest.fn(),
+    },
+    treasuryTransaction: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      groupBy: jest.fn(),
+    },
+    expenseCategory: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      createMany: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    expense: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      aggregate: jest.fn(),
+      groupBy: jest.fn(),
+    },
+    shiftSession: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    workerReceipt: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      groupBy: jest.fn(),
+    },
+    payrollStatement: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+    },
+    purchaseReturn: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    purchaseReturnItem: {
+      findMany: jest.fn(),
+    },
+    inventoryAdjustment: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+    },
+    color: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    sizeGroup: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    cuttingOrder: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+    },
+    cuttingLine: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    pack: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    packComponent: {
+      findMany: jest.fn(),
+    },
+    printTemplate: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+    },
+    printLog: {
+      findUnique: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      delete: jest.fn(),
+    },
+    journalTemplate: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+    },
+    budget: {
+      findUnique: jest.fn(),
+      findFirst: jest.fn(),
+      findMany: jest.fn(),
+      count: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      upsert: jest.fn(),
+      delete: jest.fn(),
+    },
   };
 }
 

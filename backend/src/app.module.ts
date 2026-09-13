@@ -24,6 +24,22 @@ import { FinancialModule } from './core/financial/financial.module';
 import { HealthController } from './common/health.controller';
 import { DashboardModule } from './modules/dashboard/dashboard.module';
 import { UsersModule } from './modules/users/users.module';
+// SELIM-ERP W1: وحدات النسخة المقلدة من Selim ERP — عروض الأسعار،
+// مرتجع المشتريات، تسويات الجرد، المصاريف، حركات الخزينة، الورديات،
+// سندات قبض العمال، كشوف الرواتب المجمدة، القص والتعبئة، الطباعة،
+// قوالب القيود، والتقارير المالية.
+import { QuotationsModule } from './modules/quotations/quotations.module';
+import { PurchaseReturnsModule } from './modules/purchase-returns/purchase-returns.module';
+import { InventoryAdjustmentsModule } from './modules/inventory-adjustments/inventory-adjustments.module';
+import { ExpensesModule } from './modules/expenses/expenses.module';
+import { TreasuryTransactionsModule } from './modules/treasury-transactions/treasury-transactions.module';
+import { ShiftsModule } from './modules/shifts/shifts.module';
+import { WorkerReceiptsModule } from './modules/worker-receipts/worker-receipts.module';
+import { PayrollStatementsModule } from './modules/payroll-statements/payroll-statements.module';
+import { CuttingModule } from './modules/cutting/cutting.module';
+import { PrintingModule } from './modules/printing/printing.module';
+import { JournalTemplatesModule } from './modules/journal-templates/journal-templates.module';
+import { FinancialReportsModule } from './modules/financial-reports/financial-reports.module';
 
 @Module({
   imports: [
@@ -76,6 +92,20 @@ import { UsersModule } from './modules/users/users.module';
     DashboardModule,
     // CC-9 (GF-IMP-W2): إدارة المستخدمين عبر API — SUPER_ADMIN فقط
     UsersModule,
+    // SELIM-ERP W1: الوحدات الجديدة المقلدة من Selim ERP (كل واحدة
+    // مستقلة تمامًا — لا تلمس وحدات قائمة؛ المرجع: docs/SELIM_REPLICATION.md).
+    QuotationsModule,
+    PurchaseReturnsModule,
+    InventoryAdjustmentsModule,
+    ExpensesModule,
+    TreasuryTransactionsModule,
+    ShiftsModule,
+    WorkerReceiptsModule,
+    PayrollStatementsModule,
+    CuttingModule,
+    PrintingModule,
+    JournalTemplatesModule,
+    FinancialReportsModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200

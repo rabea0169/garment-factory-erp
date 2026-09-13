@@ -10,16 +10,19 @@ import '../../../../core/navigation/double_back_exit_guard.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/security/route_access.dart';
 import '../../../../core/widgets/app_feedback.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 import '../../../auth/presentation/cubit/auth_cubit.dart';
 import '../cubit/dashboard_cubit.dart';
 import '../cubit/dashboard_state.dart';
 
 /// لوحة التحكم — مؤشرات حقيقية من `GET /dashboard/stats`.
 ///
-/// تمسح كل البيانات الـ hardcoded السابقة وتعرض:
-/// - 4 بطاقات KPI من ملخص المخزون + إجمالي مبيعات الفترة.
-/// - رسم بياني خطي للإنتاج اليومي الحقيقي.
-/// - قائمة بأعلى 5 عمال إنتاجاً.
+/// SELIM-ERP W1: هيكل الشاشة تحوّل من درج جانبي إلى الهيكل التكيفي
+/// المقلود من Selim ERP (شريط سفلي بخمسة أقسام + درج "المزيد" على
+/// الجوال / NavigationRail على الديسكتوب) + شبكة الإجراءات السريعة
+/// نفس ترتيب Selim (فاتورة بيع / أمر تشغيل / عرض سعر / تسوية / مصروف
+/// / التقارير). المحتوى يظل كما هو: 4 بطاقات KPI + رسم الإنتاج اليومي
+/// + أعلى 5 عمال إنتاجاً.
 ///
 /// الحالات: Loading / Error / Empty / Loaded. لا توجد قيم ثابتة بأي شكل.
 class DashboardScreen extends StatefulWidget {
@@ -53,218 +56,88 @@ class _DashboardScreenState extends State<DashboardScreen> {
       },
       child: BlocProvider<DashboardCubit>(
         create: (_) => DashboardCubit()..fetchStats(),
-        child: Scaffold(
-          appBar: AppBar(
-            title: const Text('لوحة التحكم'),
-            // MOBILE-F03: أيقونات الإشعارات/الحساب معطّلة حتى تُنفّذ مساراتها.
-          ),
-          drawer: _buildDrawer(context),
-          body: BlocBuilder<DashboardCubit, DashboardState>(
-            builder: (context, state) {
-              if (state is DashboardLoading || state is DashboardInitial) {
-                return const AppLoadingView();
-              }
-              if (state is DashboardForbidden) {
-                // DSH-1: دور بلا صلاحية مؤشرات — شاشة ترحيب تفاعلية
-                // بالتنقل السريع بدل شاشة خطأ (هبوط 5 من 8 أدوار).
-                return const _DashboardWelcome();
-              }
-              if (state is DashboardError) {
-                return AppErrorView(
-                  message: state.message,
-                  onRetry: () => context.read<DashboardCubit>().fetchStats(),
-                );
-              }
-              if (state is DashboardEmpty) {
-                return AppEmptyView(
-                  title: 'لا توجد بيانات في الفترة المحددة',
-                  actionLabel: 'إعادة التحميل',
-                  onAction: () => context.read<DashboardCubit>().fetchStats(),
-                );
-              }
-              if (state is DashboardLoaded) {
-                // MOB-3: بيانات من الكاش (لا اتصال) — شارة وضوح أعلى
-                // المحتوى مع استمرار عرض المؤشرات كاملة.
-                return Column(
-                  children: [
-                    if (state.fromCache && state.cachedAt != null)
-                      AppCachedDataBanner(cachedAt: state.cachedAt!),
-                    Expanded(child: _DashboardContent(stats: state.stats)),
-                  ],
-                );
-              }
-              return const SizedBox.shrink();
-            },
-          ),
-          floatingActionButton: FloatingActionButton.extended(
-            onPressed: () => context.push(AppRouter.production),
-            icon: const Icon(Icons.add),
-            label: const Text(
-              'أمر تشغيل جديد',
-              style: TextStyle(fontFamily: 'Cairo'),
-            ),
-          ),
+        child: BlocBuilder<DashboardCubit, DashboardState>(
+          builder: (context, state) {
+            return SelimShellScaffold(
+              title: 'لوحة التحكم',
+              // خروج من الشاشة نفسها — نفس موضع الإعدادات في Selim.
+              actions: [_LogoutButton()],
+              body: _stateBody(context, state),
+              fab: FloatingActionButton.extended(
+                onPressed: () => context.push(AppRouter.production),
+                icon: const Icon(Icons.add),
+                label: const Text(
+                  'أمر تشغيل جديد',
+                  style: TextStyle(fontFamily: 'Cairo'),
+                ),
+              ),
+            );
+          },
         ),
       ),
     );
   }
 
-  Widget _buildDrawer(BuildContext context) {
-    final authState = context.watch<AuthCubit>().state;
-    final user = authState is AuthAuthenticated
-        ? authState.user
-        : const <String, dynamic>{};
-    final role = user['role']?.toString() ?? '';
-    final displayName = _displayValue(user['name'], 'المستخدم');
-    final email = _displayValue(user['email'], 'البريد غير متاح');
-    final menuItems = [
-      _MenuItem('لوحة التحكم', Icons.dashboard_rounded, AppRouter.dashboard),
-      _MenuItem('المخزون', Icons.inventory_2_rounded, AppRouter.inventory),
-      _MenuItem(
-          'كتالوج المنتجات', Icons.checkroom_rounded, AppRouter.products),
-      _MenuItem('الإنتاج', Icons.precision_manufacturing_rounded,
-          AppRouter.production),
-      _MenuItem('الجودة', Icons.verified_rounded, AppRouter.quality),
-      _MenuItem('العمالة والأجور', Icons.people_rounded, AppRouter.hr),
-      _MenuItem(
-          'المبيعات والعملاء', Icons.receipt_long_rounded, AppRouter.sales),
-      _MenuItem('المشتريات والاستلام', Icons.add_business_rounded,
-          AppRouter.purchasing),
-      _MenuItem('الموردون', Icons.business_center_rounded, AppRouter.suppliers),
-      _MenuItem(
-          'الشحن والتوزيع', Icons.local_shipping_rounded, AppRouter.shipping),
-      _MenuItem('الحسابات', Icons.account_tree_rounded, AppRouter.accounting),
-      // CC-9: إدارة المستخدمين — SUPER_ADMIN فقط.
-      _MenuItem(
-          'المستخدمون', Icons.manage_accounts_rounded, AppRouter.users),
-      _MenuItem(
-          'التقارير والطباعة', Icons.bar_chart_rounded, AppRouter.reports),
-    ]
-        // audit-FE (P0): تصفية موحدة حسب الدور من مصدر واحد
-        // (RouteAccess — مرآة سياسات @Roles الخادمية). لاغٍ ما كان
-        // الشرطيّة اليدوية المنفصلة لكل عنصر.
-        .where((item) => RouteAccess.canAccess(item.route, role))
-        .toList();
-
-    return Drawer(
-      child: Column(
+  Widget _stateBody(BuildContext context, DashboardState state) {
+    if (state is DashboardLoading || state is DashboardInitial) {
+      return const AppLoadingView();
+    }
+    if (state is DashboardForbidden) {
+      // DSH-1: دور بلا صلاحية مؤشرات — شاشة ترحيب تفاعلية
+      // بالتنقل السريع بدل شاشة خطأ (هبوط 5 من 8 أدوار).
+      return const _DashboardWelcome();
+    }
+    if (state is DashboardError) {
+      return AppErrorView(
+        message: state.message,
+        onRetry: () => context.read<DashboardCubit>().fetchStats(),
+      );
+    }
+    if (state is DashboardEmpty) {
+      return AppEmptyView(
+        title: 'لا توجد بيانات في الفترة المحددة',
+        actionLabel: 'إعادة التحميل',
+        onAction: () => context.read<DashboardCubit>().fetchStats(),
+      );
+    }
+    if (state is DashboardLoaded) {
+      // MOB-3: بيانات من الكاش (لا اتصال) — شارة وضوح أعلى
+      // المحتوى مع استمرار عرض المؤشرات كاملة.
+      return Column(
         children: [
-          DrawerHeader(
-            decoration: const BoxDecoration(color: AppColors.primary),
-            child: Row(
-              children: [
-                const CircleAvatar(
-                  radius: 30,
-                  backgroundColor: Colors.white,
-                  child: Icon(Icons.factory_rounded,
-                      size: 32, color: AppColors.primary),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        displayName,
-                        style: const TextStyle(
-                          color: Colors.white,
-                          fontFamily: 'Cairo',
-                          fontWeight: FontWeight.w700,
-                          fontSize: 16,
-                        ),
-                      ),
-                      Text(
-                        email,
-                        style: const TextStyle(
-                          color: Colors.white70,
-                          fontFamily: 'Cairo',
-                          fontSize: 12,
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      _RoleBadge(label: _roleLabel(role)),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-          Expanded(
-            child: ListView.builder(
-              padding: EdgeInsets.zero,
-              itemCount: menuItems.length,
-              itemBuilder: (context, index) {
-                final item = menuItems[index];
-                return ListTile(
-                  leading:
-                      Icon(item.icon, color: AppColors.textSecondary, size: 22),
-                  title: Text(item.title,
-                      style:
-                          const TextStyle(fontFamily: 'Cairo', fontSize: 14)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    final currentRoute =
-                        GoRouterState.of(context).matchedLocation;
-                    if (currentRoute != item.route) {
-                      context.push(item.route);
-                    }
-                  },
-                );
-              },
-            ),
-          ),
-          const Divider(),
-          ListTile(
-            leading: const Icon(Icons.logout, color: AppColors.error),
-            title: const Text(
-              'تسجيل الخروج',
-              style: TextStyle(
-                  fontFamily: 'Cairo', color: AppColors.error, fontSize: 14),
-            ),
-            onTap: () async {
-              await context.read<AuthCubit>().logout();
-              if (context.mounted) context.go(AppRouter.login);
-            },
-          ),
-          const SizedBox(height: 8),
+          if (state.fromCache && state.cachedAt != null)
+            AppCachedDataBanner(cachedAt: state.cachedAt!),
+          Expanded(child: _DashboardContent(stats: state.stats)),
         ],
-      ),
+      );
+    }
+    return const SizedBox.shrink();
+  }
+}
+
+/// زر تسجيل الخروج — كان آخر عنصر في الدرو القديم؛ الآن أيقونة أعلى
+/// الشاشة (نفس موضع قائمة الإعدادات في Selim ERP).
+class _LogoutButton extends StatelessWidget {
+  const _LogoutButton();
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: const Icon(Icons.logout_rounded),
+      tooltip: 'تسجيل الخروج',
+      onPressed: () async {
+        await context.read<AuthCubit>().logout();
+        if (context.mounted) context.go(AppRouter.login);
+      },
     );
   }
+}
 
-  static String _displayValue(dynamic value, String fallback) {
-    final text = value?.toString().trim() ?? '';
-    return text.isEmpty ? fallback : text;
-  }
-
-  // أدوار الخادم الفعلية (UserRole في schema.prisma): SUPER_ADMIN,
-  // GENERAL_MANAGER, PRODUCTION_MANAGER, INVENTORY_MANAGER, ACCOUNTANT,
-  // CASHIER, HR_MANAGER, VIEWER. تصفية عناصر الدرو تتم مركزيًا عبر
-  // RouteAccess (audit-FE) — مرآة سياسات @Roles الخادمية.
-
-  static String _roleLabel(String role) {
-    switch (role) {
-      case 'SUPER_ADMIN':
-        return 'مدير النظام';
-      case 'GENERAL_MANAGER':
-        return 'مدير عام';
-      case 'ACCOUNTANT':
-        return 'محاسب';
-      case 'CASHIER':
-        return 'أمين صندوق';
-      case 'HR_MANAGER':
-        return 'مدير الموارد البشرية';
-      case 'INVENTORY_MANAGER':
-        return 'مدير المخزون';
-      case 'PRODUCTION_MANAGER':
-        return 'مدير الإنتاج';
-      case 'VIEWER':
-        return 'مشاهد';
-      default:
-        return role.isEmpty ? 'مستخدم' : role;
-    }
-  }
+/// قراءة قيمة عرض نصية آمنة من خريطة المستخدم (مشتركة بين الشاشة
+/// والمحتوى — كانت static على كلاس الولاية قبل إعادة الهيكلة).
+String _displayValue(dynamic value, String fallback) {
+  final text = value?.toString().trim() ?? '';
+  return text.isEmpty ? fallback : text;
 }
 
 // ---------------------------------------------------------------------------
@@ -347,6 +220,8 @@ class _DashboardContent extends StatelessWidget {
           children: [
             _buildGreetingHeader(context),
             const SizedBox(height: 16),
+            _buildQuickActions(context),
+            const SizedBox(height: 16),
             _buildKpiGrid(context),
             const SizedBox(height: 24),
             _buildProductionChart(context),
@@ -358,15 +233,99 @@ class _DashboardContent extends StatelessWidget {
     );
   }
 
+  /// الإجراءات السريعة — يقلد QuickActions في Selim ERP: شبكة 3 أعمدة
+  /// بأزرار ملونة بنص وصفي. تصفية الأزرار حسب الدور عبر RouteAccess
+  /// (نفس مرآة سياسات الخادم) فلا يظهر للمحاسب زر ينقله لشاشة ممنوعة.
+  Widget _buildQuickActions(BuildContext context) {
+    final authState = context.watch<AuthCubit>().state;
+    final role = authState is AuthAuthenticated
+        ? authState.user['role']?.toString() ?? ''
+        : '';
+    final actions = <(String, String, IconData, Color, String)>[
+      (
+        'فاتورة مبيعات',
+        'بيع جديد لعميل',
+        Icons.receipt_long_rounded,
+        const Color(0xFF00897B),
+        AppRouter.sales,
+      ),
+      (
+        'أمر تشغيل',
+        'بدء إنتاج جديد',
+        Icons.precision_manufacturing_rounded,
+        const Color(0xFFC62828),
+        AppRouter.production,
+      ),
+      (
+        'عرض سعر',
+        'عرض جديد لعميل محتمل',
+        Icons.request_quote_rounded,
+        const Color(0xFF3949AB),
+        AppRouter.quotations,
+      ),
+      (
+        'تسوية جرد',
+        'مطابقة الرصيد الدفتري',
+        Icons.rule_rounded,
+        const Color(0xFF00838F),
+        AppRouter.adjustments,
+      ),
+      (
+        'مصروف',
+        'تسجيل مصروف جديد',
+        Icons.payments_rounded,
+        const Color(0xFFEF5350),
+        AppRouter.expenses,
+      ),
+      (
+        'التقارير',
+        'تقارير شاملة ومالية',
+        Icons.bar_chart_rounded,
+        AppColors.primary,
+        AppRouter.reports,
+      ),
+    ].where((a) => RouteAccess.canAccess(a.$5, role)).toList();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text(
+          'الإجراءات السريعة',
+          style: TextStyle(
+            fontFamily: 'Cairo',
+            fontSize: 15,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 10),
+        GridView.count(
+          crossAxisCount: MediaQuery.sizeOf(context).width > 700 ? 6 : 3,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          mainAxisSpacing: 10,
+          crossAxisSpacing: 10,
+          childAspectRatio: 1.05,
+          children: [
+            for (final (label, description, icon, color, route) in actions)
+              _QuickActionTile(
+                label: label,
+                description: description,
+                icon: icon,
+                color: color,
+                onTap: () => context.push(route),
+              ),
+          ],
+        ),
+      ],
+    );
+  }
+
   Widget _buildGreetingHeader(BuildContext context) {
     final authState = context.watch<AuthCubit>().state;
     final user = authState is AuthAuthenticated
         ? authState.user
         : const <String, dynamic>{};
-    final displayName = _DashboardScreenState._displayValue(
-      user['name'],
-      'المستخدم',
-    );
+    final displayName = _displayValue(user['name'], 'المستخدم');
     // التاريخ يُحسب من DateTime.now() بصيغة عربية عبر intl.
     final now = DateTime.now();
     final dateText = DateFormat.yMMMd('ar').format(now);
@@ -689,32 +648,6 @@ class _DashboardContent extends StatelessWidget {
 // مشاهد الحالات الخاصة (Error / Empty).
 // ---------------------------------------------------------------------------
 
-class _RoleBadge extends StatelessWidget {
-  const _RoleBadge({required this.label});
-
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.2),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Text(
-        label,
-        style: const TextStyle(
-            color: Colors.white, fontFamily: 'Cairo', fontSize: 10),
-      ),
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Data Classes.
-// ---------------------------------------------------------------------------
-
 class _KpiData {
   final String title;
   final String value;
@@ -728,9 +661,72 @@ class _KpiData {
   });
 }
 
-class _MenuItem {
-  final String title;
+/// ب tileSize إجراء سريع — أيقونة داخل مربع ملون + نص + وصف صغير
+/// (نفس شكل أزرار QuickActions في Selim ERP).
+class _QuickActionTile extends StatelessWidget {
+  const _QuickActionTile({
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  final String label;
+  final String description;
   final IconData icon;
-  final String route;
-  const _MenuItem(this.title, this.icon, this.route);
+  final Color color;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: color.withValues(alpha: 0.08),
+      borderRadius: BorderRadius.circular(14),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(14),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.all(8),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsetsDirectional.all(8),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Icon(icon, color: color, size: 22),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                description,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 9.5,
+                  color: Colors.grey.shade600,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
