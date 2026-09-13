@@ -57,6 +57,23 @@ model User {
   shipmentsDelivered   Shipment[]     @relation("ShipmentDeliverer")
   salesReturns         SalesReturn[]
 
+  // SELIM-ERP W1: العلاقات العكسية للنماذج الجديدة (عروض الأسعار،
+  // الخزينة، المصاريف، الورديات، قبض العمال، مرتجع المشتريات، التسويات،
+  // القص، العبوات، سجلات الطباعة، كشوف الرواتب المجمدة).
+  quotationsCreated          Quotation[]           @relation("QuotationCreator")
+  treasuryTransactions       TreasuryTransaction[] @relation("TreasuryTransactionCreator")
+  expensesCreated            Expense[]             @relation("ExpenseCreator")
+  shiftSessionsOpened        ShiftSession[]        @relation("ShiftOpener")
+  workerReceiptsCreated      WorkerReceipt[]       @relation("WorkerReceiptCreator")
+  purchaseReturnsCreated     PurchaseReturn[]      @relation("PurchaseReturnCreator")
+  adjustmentsCreated         InventoryAdjustment[] @relation("AdjustmentCreator")
+  adjustmentsApproved        InventoryAdjustment[] @relation("AdjustmentApprover")
+  cuttingOrdersCreated       CuttingOrder[]        @relation("CuttingCreator")
+  cuttingOrdersReversed      CuttingOrder[]        @relation("CuttingReverser")
+  packsCreated               Pack[]                @relation("PackCreator")
+  printLogs                  PrintLog[]            @relation("PrintLogUser")
+  payrollStatementsApproved  PayrollStatement[]    @relation("PayrollStatementApprover")
+
   // SEC-F04: refresh tokens الصادرة لهذا المستخدم (نشطة أو ملغاة).
   refreshTokens RefreshToken[]
 
@@ -135,6 +152,15 @@ model Product {
   category       String?
   retailPrice    Decimal   @db.Decimal(10, 2)
   wholesalePrice Decimal   @db.Decimal(10, 2)
+  // SELIM-ERP W1: مستويات الأسعار الأربعة (قطاعي/نصف جملة/جملة/B2B) —
+  // يقلد Item prices في Selim ERP. halfWholesalePrice وb2bPrice اختياريان
+  // (nullable) لأن القيمة الافتراضية = wholesalePrice عند الغياب.
+  halfWholesalePrice Decimal? @db.Decimal(10, 2)
+  b2bPrice           Decimal? @db.Decimal(10, 2)
+  // SELIM-ERP W1: حد إعادة الطلب (reorderLevel) — تنبيهات انخفاض المخزون
+  // في لوحة التحكم تقارن الرصيد المتاح بهذا الحد (يقلد Item.reorderLevel).
+  reorderLevel     Decimal? @db.Decimal(10, 4)
+  barcode          String?  @unique
   isActive       Boolean   @default(true)
   // E2: soft-delete — المنتج يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   deletedAt      DateTime?
@@ -144,6 +170,9 @@ model Product {
   season      Season?          @relation(fields: [seasonId], references: [id])
   variants    ProductVariant[]
   bomVersions BomVersion[]
+  // SELIM-ERP W1: بنود عروض الأسعار وأوامر القص على الموديل الرئيسي.
+  quotationItems QuotationItem[]
+  cuttingOrders  CuttingOrder[]   @relation("CuttingProduct")
 
   // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
   @@index([isActive, deletedAt])
@@ -167,6 +196,15 @@ model ProductVariant {
   orderItems         SalesOrderItem[]
   stockLedgerEntries StockLedgerEntry[]
   workOrders         WorkOrder[]
+  // SELIM-ERP W1: رابط بسجل الألوان (اختياري — color يبقى لقطة نصية
+  // للتوافق مع البيانات القديمة)، وعلاقات بنود عروض الأسعار/التسويات/
+  // القص/العبوات.
+  colorId            String?
+  colorRef           Color?              @relation(fields: [colorId], references: [id], onDelete: SetNull)
+  quotationItems     QuotationItem[]
+  adjustmentItems    InventoryAdjustmentItem[]
+  cuttingLines       CuttingLine[]
+  packComponents     PackComponent[]
 
   @@unique([productId, size, color])
   @@map("product_variants")
@@ -238,6 +276,9 @@ model RawMaterial {
   consumptions           MaterialConsumption[]
   productionConsumptions ProductionMaterialConsumption[]
   ledgerEntries          StockLedgerEntry[]
+  // SELIM-ERP W1: بنود مرتجع المشتريات + بنود تسويات الجرد للخامة.
+  purchaseReturnItems    PurchaseReturnItem[]
+  adjustmentItems        InventoryAdjustmentItem[]
 
   @@index([code, isActive])
   @@index([supplierId])
@@ -327,6 +368,9 @@ model Warehouse {
   ledgerEntries          StockLedgerEntry[]
   productionConsumptions ProductionMaterialConsumption[]
   finishedGoodStocks     FinishedGoodStock[]
+  // SELIM-ERP W1: تسويات الجرد وأوامر القص على هذا المخزن.
+  adjustments            InventoryAdjustment[]
+  cuttingOrders          CuttingOrder[]    @relation("CuttingWarehouse")
 
   @@index([type, isActive])
   @@map("warehouses")
@@ -748,6 +792,9 @@ model Worker {
   dailyProduction DailyProduction[]
   advances        WorkerAdvance[]
   payrolls        Payroll[]
+  // SELIM-ERP W1: سندات القبض وأوامر القص للعامل.
+  receipts        WorkerReceipt[]
+  cuttingOrders   CuttingOrder[] @relation("CuttingWorker")
 
   @@map("workers")
 }
@@ -831,6 +878,10 @@ model Payroll {
   createdBy        User?           @relation("PayrollCreator", fields: [createdById], references: [id], onDelete: SetNull)
   approvedBy       User?           @relation("PayrollApprover", fields: [approvedById], references: [id], onDelete: SetNull)
   idempotencyKey   IdempotencyKey? @relation(fields: [idempotencyKeyId], references: [id], onDelete: SetNull)
+  // SELIM-ERP W1: كشف الرواتب المجمع الذي يضم هذا الكشف (SetNull — حذف
+  // الكشف المجمع لا يحذف كشوف العمال المنفردة).
+  payrollStatementId String?
+  payrollStatement   PayrollStatement? @relation(fields: [payrollStatementId], references: [id], onDelete: SetNull)
 
   @@unique([workerId, periodStart, periodEnd])
   @@unique([idempotencyKeyId])
@@ -866,6 +917,8 @@ model Customer {
   salesOrders  SalesOrder[]
   payments     CustomerPayment[]
   salesReturns SalesReturn[]
+  // SELIM-ERP W1: عروض الأسعار المرتبطة بالعميل.
+  quotations   Quotation[]
 
   // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
   @@index([isActive, deletedAt])
@@ -889,6 +942,8 @@ model Supplier {
   purchaseOrders   PurchaseOrder[]
   rawMaterials     RawMaterial[]
   supplierPayments SupplierPayment[]
+  // SELIM-ERP W1: مرتجعات المشتريات للمورد.
+  purchaseReturns  PurchaseReturn[]
 
   // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
   @@index([isActive, deletedAt])
@@ -935,6 +990,8 @@ model SalesOrder {
   payments  CustomerPayment[]
   shipments Shipment[]
   returns   SalesReturn[]
+  // SELIM-ERP W1: عروض الأسعار المحوّلة إلى أمر البيع هذا.
+  quotations Quotation[]
 
   // Cluster 2 — A4/B3: فهرس مركب على (status, createdAt) لاستعلامات الـ dashboard
   @@index([status, createdAt])
@@ -1045,6 +1102,8 @@ model PurchaseOrder {
   items    PurchaseOrderItem[]
   receipts PurchaseReceipt[]
   payments SupplierPayment[]
+  // SELIM-ERP W1: مرتجعات المشتريات الصادرة من أمر الشراء هذا.
+  purchaseReturns PurchaseReturn[]
 
   @@index([supplierId])
   @@index([userId])
@@ -1064,6 +1123,8 @@ model PurchaseOrderItem {
   purchaseOrder PurchaseOrder         @relation(fields: [purchaseOrderId], references: [id])
   rawMaterial   RawMaterial           @relation(fields: [rawMaterialId], references: [id])
   receiptItems  PurchaseReceiptItem[]
+  // SELIM-ERP W1: بنود مرتجع المشتريات الراجعة لهذا البند.
+  purchaseReturnItems PurchaseReturnItem[]
 
   @@index([purchaseOrderId])
   @@index([rawMaterialId])
@@ -1227,6 +1288,8 @@ model Account {
   children    Account[]     @relation("AccountHierarchy")
   debitLines  JournalLine[] @relation("DebitAccount")
   creditLines JournalLine[] @relation("CreditAccount")
+  // SELIM-ERP W1: الميزانيات المخططة على هذا الحساب.
+  budgets    Budget[]
 
   @@index([parentId])
   @@map("accounts")
@@ -1278,6 +1341,13 @@ model JournalEntry {
   // E5: FK to Currency (nullable — defaults to system EGP).
   currency     Currency?      @relation(fields: [currencyId], references: [id])
   vouchers     Voucher[]
+  // SELIM-ERP W1: القيود المرتبطة بحركات الخزينة/المصاريف/قبض العمال/
+  // كشوف الرواتب المجمدة/مرتجعات المشتريات.
+  treasuryTransactions TreasuryTransaction[] @relation("TreasuryTransactionJournal")
+  expenses             Expense[]             @relation("ExpenseJournal")
+  workerReceipts       WorkerReceipt[]       @relation("WorkerReceiptJournal")
+  payrollStatements    PayrollStatement[]    @relation("PayrollStatementJournal")
+  purchaseReturns      PurchaseReturn[]      @relation("PurchaseReturnJournal")
 
   @@unique([reversalOfId])
   @@unique([postingKey])
@@ -1349,6 +1419,9 @@ model Voucher {
   counterpartyType String?
   counterpartyId   String?
 
+  // SELIM-ERP W1: المصاريف المدفوعة عبر هذا السند.
+  expensesPaid Expense[] @relation("ExpenseVoucher")
+
   // SCHEMA-F03: `createdById` is NOT NULL (init migration), so the relation
   //   must be required and `onDelete: Restrict` (matching the init migration's
   //   ON DELETE RESTRICT). Prevents a User with vouchers from being deleted.
@@ -1384,6 +1457,12 @@ model Treasury {
   vouchers Voucher[]
   // E5: FK to Currency (nullable for backfill — future PR makes it required).
   currency Currency? @relation(fields: [currencyId], references: [id])
+  // SELIM-ERP W1: حركات الخزينة (إيداع/سحب/تحويل) الصادرة والواردة،
+  // المصاريف المسحوبة منها، وسندات قبض العمال.
+  treasuryTransactionsFrom TreasuryTransaction[] @relation("TreasuryTransactionSource")
+  treasuryTransactionsTo   TreasuryTransaction[] @relation("TreasuryTransactionTarget")
+  expenses                 Expense[]             @relation("ExpenseTreasury")
+  workerReceipts           WorkerReceipt[]       @relation("WorkerReceiptTreasury")
 
   // Cluster 2 — B5: فهرس على isActive لفلترة الخزائن النشطة
   // E2: composite index على (isActive, deletedAt) — يحل محل الفهرس المنفرد.
@@ -1415,5 +1494,643 @@ model CostCenter {
   code     String  @unique
   isActive Boolean @default(true)
 
+  // SELIM-ERP W1: الميزانيات المخططة على مركز التكلفة هذا.
+  budgets  Budget[]
+
   @@map("cost_centers")
+}
+
+// ============================================================================
+// SELIM-ERP REPLICATION WAVE 1 — نماذج جديدة منسوخة من نظام Selim ERP
+// (مشروع ويب مرجعي) ومُكيّفة مع معمارية هذا المشروع (مستأجر واحد،
+// uuid ids، أدوار UserRole، ومحرك القيود المالي الموحد).
+// كل نموذج يتبع نفس قواعد الكود الحالي: تعليقات عربية تشرح القاعدة
+// التجارية، فهارس مركبة للاستعلامات الشائعة، وOnDelete صارم للجداول
+// المالية (Restrict) لضمان سلسلة التدقيق.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// الترقيم التسلسلي الذري (SEQ) — يقلد Sequence في Selim ERP:
+// "INV-0001" / "PR-0001" / "CUT-00001". upsert ذري بقفل الصف يمنع
+// التكرار تحت التزامن (increment: 1 داخل نفس المعاملة).
+// ---------------------------------------------------------------------------
+model Sequence {
+  id        String   @id @default(uuid())
+  type      String   // QUOTATION | PURCHASE_RETURN | CUTTING_ORDER | PAYROLL_STATEMENT | PACK ...
+  value     Int      @default(0)
+  updatedAt DateTime @updatedAt
+
+  @@unique([type])
+  @@map("sequences")
+}
+
+enum QuotationStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  CONVERTED
+}
+
+// ---------------------------------------------------------------------------
+// عرض السعر (QUO) — يقلد Quotation في Selim ERP: مسودة → مُرسَل →
+// مقبول → مُحوَّل لأمر بيع، مع صلاحية السريان (validUntil) وبنود نصية
+// مرنة (اسم الصنف لقطة + رابط اختياري بالمنتج/التوليفة).
+// ---------------------------------------------------------------------------
+model Quotation {
+  id            String           @id @default(uuid())
+  quotationNo   String           @unique // SEQ-QUOTATION: "QUO-0001"
+  customerId    String?
+  customerName  String // لقطة الاسم — العرض يبقى مقروءًا لو حُذف العميل
+  date          DateTime         @default(now())
+  validUntil    DateTime?
+  subtotal      Decimal          @default(0) @db.Decimal(12, 2)
+  discount      Decimal          @default(0) @db.Decimal(10, 2)
+  vatRate       Decimal          @default(0) @db.Decimal(5, 4)
+  vatAmount     Decimal          @default(0) @db.Decimal(10, 2)
+  total         Decimal          @db.Decimal(12, 2)
+  status        QuotationStatus  @default(DRAFT)
+  notes         String?
+  // التحويل: عند CONVERTED يُخزَّن أمر البيع الناتج (Restrict — لا يُحذف
+  // أمر بيع له عرض مصدر).
+  salesOrderId  String?
+  createdById   String?
+  createdAt     DateTime         @default(now())
+  updatedAt     DateTime         @updatedAt
+
+  customer   Customer?     @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  salesOrder SalesOrder?   @relation(fields: [salesOrderId], references: [id], onDelete: Restrict)
+  createdBy  User?         @relation("QuotationCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items      QuotationItem[]
+
+  @@index([status, date])
+  @@index([customerId])
+  @@index([date])
+  @@map("quotations")
+}
+
+model QuotationItem {
+  id              String  @id @default(uuid())
+  quotationId     String
+  productId       String?
+  productVariantId String?
+  productName     String // لقطة اسم الصنف وقت الإنشاء
+  quantity        Decimal @db.Decimal(10, 4)
+  unitPrice       Decimal @db.Decimal(10, 2)
+  total           Decimal @db.Decimal(12, 2)
+  notes           String?
+
+  quotation     Quotation      @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+  product       Product?       @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+
+  @@index([quotationId])
+  @@index([productId])
+  @@index([productVariantId])
+  @@map("quotation_items")
+}
+
+enum TreasuryTransactionType {
+  DEPOSIT // إيداع
+  WITHDRAWAL // سحب
+  TRANSFER // تحويل بين خزينتين
+}
+
+// ---------------------------------------------------------------------------
+// حركة الخزينة (TRT) — يقلد TreasuryTransaction في Selim ERP: إيداع/سحب/
+// تحويل مع فئة ومرجع اختياري. ترتبط بقيد مالي حقيقي (journalEntryId)
+// وتحدّث رصيد الخزينة داخل نفس المعاملة — لا أثر مالي بلا قيد.
+// ---------------------------------------------------------------------------
+model TreasuryTransaction {
+  id             String                 @id @default(uuid())
+  code           String                 @unique // SEQ: "TRT-0001"
+  treasuryId     String
+  toTreasuryId   String? // للتحويل فقط
+  type           TreasuryTransactionType
+  amount         Decimal                @db.Decimal(10, 2)
+  date           DateTime               @default(now())
+  description    String
+  category       String? // مبيعات | رأس مال | قرض | مصاريف | رواتب | إيجار | أخرى
+  referenceType  String? // PAYMENT | EXPENSE | WORKER_RECEIPT | SHIFT ...
+  referenceId    String?
+  notes          String?
+  journalEntryId String?
+  createdById    String?
+  createdAt      DateTime               @default(now())
+
+  treasury     Treasury       @relation("TreasuryTransactionSource", fields: [treasuryId], references: [id])
+  toTreasury   Treasury?      @relation("TreasuryTransactionTarget", fields: [toTreasuryId], references: [id])
+  journalEntry JournalEntry?  @relation("TreasuryTransactionJournal", fields: [journalEntryId], references: [id])
+  createdBy    User?          @relation("TreasuryTransactionCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([type, date])
+  @@index([treasuryId, date])
+  @@index([date])
+  @@index([referenceType, referenceId])
+  @@map("treasury_transactions")
+}
+
+// ---------------------------------------------------------------------------
+// بنود المصاريف (EXC) — فئات مصاريف يديرها المستخدم (يقلد ExpenseCategory).
+// name فريد — لا ازدواج في البنود.
+// ---------------------------------------------------------------------------
+model ExpenseCategory {
+  id        String   @id @default(uuid())
+  name      String   @unique
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  expenses Expense[]
+
+  @@index([isActive])
+  @@map("expense_categories")
+}
+
+// ---------------------------------------------------------------------------
+// المصروف (EXP) — يقلد Expense في Selim ERP: مبلغ + بند + تاريخ،
+// ويرتبط اختياريًا بالخزينة المسحوب منها وبقيد مالي (لا قيد لا أثر).
+// ---------------------------------------------------------------------------
+model Expense {
+  id             String   @id @default(uuid())
+  categoryId     String
+  categoryName   String // لقطة اسم البند
+  amount         Decimal  @db.Decimal(10, 2)
+  date           DateTime @default(now())
+  notes          String?
+  treasuryId     String?
+  voucherId      String?
+  journalEntryId String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  category     ExpenseCategory @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  treasury     Treasury?       @relation("ExpenseTreasury", fields: [treasuryId], references: [id])
+  voucher      Voucher?        @relation("ExpenseVoucher", fields: [voucherId], references: [id])
+  journalEntry JournalEntry?   @relation("ExpenseJournal", fields: [journalEntryId], references: [id])
+  createdBy    User?           @relation("ExpenseCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([categoryId, date])
+  @@index([date])
+  @@index([treasuryId])
+  @@map("expenses")
+}
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+// ---------------------------------------------------------------------------
+// وردية البيع (SHF) — يقلد ShiftSession في Selim ERP: يفتحها البائع
+// برصيد افتتاحي ويغلقها بعد جرد الصندوق (متوقع مقابل معدود والفرق).
+// فاتورة بيع جديدة تتطلب وردية مفتوحة (نفس قاعدة Selim).
+// ---------------------------------------------------------------------------
+model ShiftSession {
+  id           String      @id @default(uuid())
+  code         String      @unique // SEQ: "SHF-0001"
+  openedById   String
+  openedByName String // لقطة الاسم
+  startTime    DateTime    @default(now())
+  endTime      DateTime?
+  startCash    Decimal     @default(0) @db.Decimal(10, 2)
+  expectedCash Decimal?    @db.Decimal(10, 2)
+  endCash      Decimal?    @db.Decimal(10, 2)
+  difference   Decimal?    @db.Decimal(10, 2)
+  status       ShiftStatus @default(OPEN)
+  notes        String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  openedBy User @relation("ShiftOpener", fields: [openedById], references: [id], onDelete: Restrict)
+
+  @@unique([openedById, status, startTime])
+  @@index([status, startTime])
+  @@index([openedById])
+  @@map("shift_sessions")
+}
+
+// ---------------------------------------------------------------------------
+// سند قبض عامل (WRC) — يقلد WorkerReceipt في Selim ERP: مبلغ يُقبض من
+// العامل (تسوية سلفة/مديونية). يرتبط بقيد مالي + خزينة اختيارية.
+// Restrict لا Cascade — سندات العامل مالية ولا تُحذف بحذفه.
+// ---------------------------------------------------------------------------
+model WorkerReceipt {
+  id             String   @id @default(uuid())
+  code           String   @unique // SEQ: "WRC-0001"
+  workerId       String
+  amount         Decimal  @db.Decimal(10, 2)
+  date           DateTime @default(now())
+  notes          String?
+  treasuryId     String?
+  journalEntryId String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  worker       Worker         @relation(fields: [workerId], references: [id], onDelete: Restrict)
+  treasury     Treasury?      @relation("WorkerReceiptTreasury", fields: [treasuryId], references: [id])
+  journalEntry JournalEntry?  @relation("WorkerReceiptJournal", fields: [journalEntryId], references: [id])
+  createdBy    User?          @relation("WorkerReceiptCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([workerId, date])
+  @@index([date])
+  @@map("worker_receipts")
+}
+
+enum PayrollStatementStatus {
+  DRAFT
+  POSTED
+}
+
+// ---------------------------------------------------------------------------
+// كشف الرواتب المجمع (PSM) — يقلد PayrollStatement في Selim ERP: يجمع
+// كشوف رواتب شهر كامل في مستند واحد (lines/totals JSON snapshot)،
+// يُرحَّل بقيد واحد عند الاعتماد، وكل Payroll مرتبط به يصبح isPaid.
+// ---------------------------------------------------------------------------
+model PayrollStatement {
+  id             String                @id @default(uuid())
+  code           String                @unique // SEQ: "PSM-0001"
+  periodFrom     DateTime              @db.Date
+  periodTo       DateTime              @db.Date
+  status         PayrollStatementStatus @default(DRAFT)
+  lines          Json                  @default("[]") // لقطة صفوف العمال
+  totals         Json                  @default("{}") // {gross, deductions, net}
+  workerCount    Int                   @default(0)
+  approvedById   String?
+  approvedAt     DateTime?
+  notes          String?
+  journalEntryId String?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  approvedBy   User?         @relation("PayrollStatementApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  journalEntry JournalEntry? @relation("PayrollStatementJournal", fields: [journalEntryId], references: [id])
+  payrolls     Payroll[]
+
+  @@unique([periodFrom, periodTo])
+  @@index([status, periodFrom])
+  @@map("payroll_statements")
+}
+
+enum PurchaseReturnStatus {
+  DRAFT
+  POSTED
+}
+
+// ---------------------------------------------------------------------------
+// مرتجع المشتريات (PRR) — يقلد PurchaseReturn في Selim ERP: إرجاع خامات
+// للمورد بخصم من رصيد المورد (credit) أو استرداد نقدي (cash)، مع خيار
+// إرجاع المخزون فعليًا (restockItems=false يخصم دون تحريك الرصيد).
+// القيد العكسي داخل نفس معاملة الإنشاء — لا مرتجع بلا قيد.
+// ---------------------------------------------------------------------------
+model PurchaseReturn {
+  id            String             @id @default(uuid())
+  returnNumber  String             @unique // SEQ: "PRR-0001"
+  purchaseOrderId String           // أمر الشراء الأصل
+  supplierId    String?
+  supplierName  String // لقطة
+  invoiceNo     String?
+  date          DateTime           @default(now())
+  subtotal      Decimal            @default(0) @db.Decimal(12, 2)
+  discountAmount Decimal           @default(0) @db.Decimal(10, 2)
+  taxAmount     Decimal            @default(0) @db.Decimal(10, 2)
+  total         Decimal            @db.Decimal(12, 2)
+  reason        String?
+  restockItems  Boolean            @default(true)
+  refundMethod  String             @default("credit") // credit | cash
+  status        PurchaseReturnStatus @default(POSTED)
+  notes         String?
+  journalEntryId String?
+  createdById   String?
+  createdAt     DateTime           @default(now())
+
+  purchaseOrder PurchaseOrder  @relation(fields: [purchaseOrderId], references: [id], onDelete: Restrict)
+  supplier      Supplier?      @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  journalEntry JournalEntry?   @relation("PurchaseReturnJournal", fields: [journalEntryId], references: [id])
+  createdBy     User?          @relation("PurchaseReturnCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  items         PurchaseReturnItem[]
+
+  @@index([purchaseOrderId])
+  @@index([supplierId, date])
+  @@index([date])
+  @@map("purchase_returns")
+}
+
+model PurchaseReturnItem {
+  id                String  @id @default(uuid())
+  purchaseReturnId  String
+  purchaseOrderItemId String? // البند الأصل (اختياري — قد يُرجع صنف بلا بند أصل)
+  rawMaterialId     String?
+  rawMaterialName   String // لقطة
+  quantity          Decimal @db.Decimal(10, 4)
+  unitPrice         Decimal @db.Decimal(10, 2)
+  unitCost          Decimal  @default(0) @db.Decimal(10, 2) // التكلفة الفعلية للاسترداد
+  total             Decimal @db.Decimal(12, 2)
+  reason            String?
+
+  purchaseReturn  PurchaseReturn    @relation(fields: [purchaseReturnId], references: [id], onDelete: Cascade)
+  purchaseOrderItem PurchaseOrderItem? @relation(fields: [purchaseOrderItemId], references: [id], onDelete: SetNull)
+  rawMaterial     RawMaterial?      @relation(fields: [rawMaterialId], references: [id], onDelete: SetNull)
+
+  @@index([purchaseReturnId])
+  @@index([purchaseOrderItemId])
+  @@index([rawMaterialId])
+  @@map("purchase_return_items")
+}
+
+enum AdjustmentStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+}
+
+// ---------------------------------------------------------------------------
+// تسوية الجرد (ADJ) — يقلد InventoryAdjustment في Selim ERP: مسودة تعداد
+// فعلي مقابل دفتري، لا تلمس المخزون إلا عند الاعتماد (APPROVED) حيث
+// تُنشأ حركات StockLedgerEntry لكل بند. الرفض يحفظ المسودة للتدقيق.
+// ---------------------------------------------------------------------------
+model InventoryAdjustment {
+  id          String            @id @default(uuid())
+  code        String            @unique // SEQ: "ADJ-0001"
+  warehouseId String
+  date        DateTime          @default(now())
+  status      AdjustmentStatus  @default(DRAFT)
+  notes       String?
+  createdById String?
+  approvedById String?
+  approvedAt  DateTime?
+  rejectedReason String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  warehouse  Warehouse                  @relation(fields: [warehouseId], references: [id])
+  createdBy  User?                      @relation("AdjustmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  approvedBy User?                      @relation("AdjustmentApprover", fields: [approvedById], references: [id], onDelete: SetNull)
+  items      InventoryAdjustmentItem[]
+
+  @@index([status, date])
+  @@index([warehouseId, date])
+  @@map("inventory_adjustments")
+}
+
+model InventoryAdjustmentItem {
+  id               String  @id @default(uuid())
+  adjustmentId     String
+  // نفس نمط StockLedgerEntry: إما خام أو توليفة منتج — XOR في طبقة الخدمة.
+  rawMaterialId    String?
+  productVariantId String?
+  itemName         String // لقطة للعرض
+  unit             String // لقطة وحدة القياس
+  systemQty        Decimal @db.Decimal(12, 4)
+  actualQty        Decimal @db.Decimal(12, 4)
+  difference       Decimal @db.Decimal(12, 4) // actual - system
+  unitCost         Decimal @db.Decimal(10, 4)
+  valueDifference  Decimal @db.Decimal(14, 2) // أثر التسوية المالي
+  notes            String?
+
+  adjustment      InventoryAdjustment @relation(fields: [adjustmentId], references: [id], onDelete: Cascade)
+  rawMaterial     RawMaterial?        @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  productVariant  ProductVariant?     @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  @@index([adjustmentId])
+  @@index([rawMaterialId])
+  @@index([productVariantId])
+  @@map("inventory_adjustment_items")
+}
+
+// ---------------------------------------------------------------------------
+// الألوان (CLR) — يقلد Color في Selim ERP: سجل ألوان الشركة بالدرجة
+// الست عشرية، يستخدمه تنويعات المنتجات وخطوط القص.
+// ---------------------------------------------------------------------------
+model Color {
+  id        String   @id @default(uuid())
+  name      String   @unique // أحمر / نبيتي / كحلي …
+  hex       String   // #RRGGBB
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  productVariants ProductVariant[]
+  cuttingLines    CuttingLine[]
+
+  @@index([isActive])
+  @@map("colors")
+}
+
+// ---------------------------------------------------------------------------
+// مجموعات المقاسات (SZG) — يقلد SizeGroup في Selim ERP: "شبابي S M L XL"
+// مرتبة كما أُدخلت، يستخدمها القص لتنظيم الرقصات.
+// ---------------------------------------------------------------------------
+model SizeGroup {
+  id        String   @id @default(uuid())
+  name      String   @unique // شبابي / أطفال / خاص
+  sizes     String[]
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  cuttingLines CuttingLine[]
+
+  @@index([isActive])
+  @@map("size_groups")
+}
+
+enum CuttingOrderStatus {
+  DRAFT
+  ACTIVE // مُفعَّل — خصم الرئيسي وإدخال التوليفات تم
+  REVERSED // معكوس — استُعيدت الحركات
+}
+
+// ---------------------------------------------------------------------------
+// أمر القص (CUT) — يقلد CuttingOrder في Selim ERP: قص رصيد الموديل
+// الرئيسي إلى توليفات (لون×مقاس) عبر رقصات (lays). عند التفعيل:
+// ISSUE من رصيد الموديل وRECEIVE لكل توليفة داخل نفس المعاملة،
+// وأجر القص للعامل يُقيَّد كإنتاج بالقطعة (قطع × أجر القطعة).
+// العكس (REVERSED) يسترجع كل الحركات بدقة من سجلاتها.
+// ---------------------------------------------------------------------------
+model CuttingOrder {
+  id            String             @id @default(uuid())
+  docNumber     String             @unique // SEQ: "CUT-0001"
+  date          DateTime           @default(now())
+  productId     String // الموديل الرئيسي المقصوص
+  warehouseId   String
+  workerId      String?
+  wagePerPiece  Decimal?           @db.Decimal(10, 2) // متوسط مرجّح للعرض
+  wageTotal     Decimal            @default(0) @db.Decimal(10, 2)
+  remnantQty    Decimal            @default(0) @db.Decimal(12, 4) // البواقي — للمتابعة
+  remnantNotes  String?
+  totalPieces   Decimal            @default(0) @db.Decimal(12, 4)
+  totalLays     Decimal            @default(0) @db.Decimal(12, 4)
+  status        CuttingOrderStatus @default(DRAFT)
+  reversedAt    DateTime?
+  reversedById  String?
+  notes         String?
+  createdById   String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  product     Product        @relation("CuttingProduct", fields: [productId], references: [id], onDelete: Restrict)
+  warehouse   Warehouse      @relation("CuttingWarehouse", fields: [warehouseId], references: [id])
+  worker      Worker?        @relation("CuttingWorker", fields: [workerId], references: [id], onDelete: SetNull)
+  reversedBy  User?          @relation("CuttingReverser", fields: [reversedById], references: [id], onDelete: SetNull)
+  createdBy   User?          @relation("CuttingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lines       CuttingLine[]
+
+  @@index([status, date])
+  @@index([productId])
+  @@index([workerId])
+  @@index([date])
+  @@map("cutting_orders")
+}
+
+model CuttingLine {
+  id              String  @id @default(uuid())
+  cuttingOrderId  String
+  colorId         String?
+  color           String? // لقطة اسم اللون
+  sizeGroupId     String?
+  size            String // المقاس (S / M / L …)
+  layCount        Decimal @default(1) @db.Decimal(12, 4) // عدد الرقصات
+  piecesPerLay    Decimal @default(0) @db.Decimal(12, 4)
+  quantity        Decimal @db.Decimal(12, 4) // المجموع المستلم للتوليفة
+  productVariantId String? // التوليفة الناتجة (تُملأ عند التفعيل)
+  notes           String?
+
+  cuttingOrder  CuttingOrder @relation(fields: [cuttingOrderId], references: [id], onDelete: Cascade)
+  colorRef      Color?       @relation(fields: [colorId], references: [id], onDelete: SetNull)
+  sizeGroup     SizeGroup?   @relation(fields: [sizeGroupId], references: [id], onDelete: SetNull)
+  productVariant ProductVariant? @relation(fields: [productVariantId], references: [id], onDelete: SetNull)
+
+  @@index([cuttingOrderId])
+  @@index([productVariantId])
+  @@index([colorId])
+  @@map("cutting_lines")
+}
+
+// ---------------------------------------------------------------------------
+// العبوة (PACK) — يقلد نظام التعبئة في Selim ERP (Item type=pack +
+// PackComponent): كود عبوة (سرية) = مجموعة توليفات بكميات محددة.
+// البناء (build) يخصم المكونات ويرد عبوات جاهزة؛ التفكيك يعكسها.
+// الحركات كلها عبر StockLedgerEntry داخل معاملة واحدة.
+// ---------------------------------------------------------------------------
+model Pack {
+  id          String   @id @default(uuid())
+  code        String   @unique // SEQ: "PACK-0001"
+  name        String
+  notes       String?
+  isActive    Boolean  @default(true)
+  createdById String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  createdBy  User?           @relation("PackCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  components PackComponent[]
+
+  @@index([isActive])
+  @@map("packs")
+}
+
+model PackComponent {
+  id              String  @id @default(uuid())
+  packId          String
+  productVariantId String
+  quantity        Decimal @db.Decimal(12, 4) // الكمية داخل العبوة الواحدة
+
+  pack           Pack           @relation(fields: [packId], references: [id], onDelete: Cascade)
+  productVariant ProductVariant @relation(fields: [productVariantId], references: [id], onDelete: Restrict)
+
+  @@unique([packId, productVariantId])
+  @@index([productVariantId])
+  @@map("pack_components")
+}
+
+// ---------------------------------------------------------------------------
+// قوالب الطباعة (PRT) — يقلد PrintTemplate في Selim ERP: إعدادات JSON
+// لكل مستند×حجم ورق ({ styles, sections, customElements })، مع isDefault
+// لاختيار القالب تلقائيًا عند الطباعة.
+// ---------------------------------------------------------------------------
+model PrintTemplate {
+  id           String   @id @default(uuid())
+  name         String
+  documentType String // INVOICE | PURCHASE | PRODUCTION_ORDER | MATERIAL_ISSUE | RECEIPT | QUOTATION | VOUCHER | CUTTING
+  paperSize    String // 58mm | 80mm | A4 | A5 | A6
+  isDefault    Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  config       Json     @default("{}")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  printLogs PrintLog[]
+
+  @@unique([name, documentType, paperSize])
+  @@index([documentType, isDefault])
+  @@index([paperSize])
+  @@map("print_templates")
+}
+
+// سجل الطباعة (PRL) — يقلد PrintLog: من طبع ماذا ومتى وبأي قالب وكم
+// نسخة وهل هي إعادة طباعة — لتحليل استخدام الطباعة.
+model PrintLog {
+  id             String   @id @default(uuid())
+  userId         String
+  userName       String // لقطة
+  documentType   String
+  documentId     String?
+  documentNumber String? // لقطة رقم المستند
+  templateId     String?
+  templateName   String? // لقطة
+  channel        String // app_pdf | thermal | external
+  paperSize      String?
+  copies         Int      @default(1)
+  isReprint      Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  user   User?         @relation("PrintLogUser", fields: [userId], references: [id], onDelete: SetNull)
+  template PrintTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+
+  @@index([documentType, documentId, createdAt])
+  @@index([userId, createdAt])
+  @@index([createdAt])
+  @@map("print_logs")
+}
+
+// ---------------------------------------------------------------------------
+// قالب القيد (JRT) — يقلد JournalTemplate في Selim ERP: قيود متكررة
+// جاهزة (الإيجار الشهري/رواتب…) بأسطر JSON جاهزة للتعبئة والترحيل.
+// ---------------------------------------------------------------------------
+model JournalTemplate {
+  id                String    @id @default(uuid())
+  name              String    @unique
+  description       String?
+  lines             Json      @default("[]") // [{accountId, debit, credit, description}]
+  isRecurring       Boolean   @default(false)
+  recurrencePattern String?   // monthly | weekly | yearly
+  lastUsedAt        DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  @@index([isRecurring])
+  @@map("journal_templates")
+}
+
+// ---------------------------------------------------------------------------
+// الميزانية (BGT) — يقلد Budget في Selim ERP: مبلغ مخطط لحساب (ومركز
+// تكلفة اختياري) لسنة مالية وفترة، يُقارن بالفعلي في تقارير المحاسبة.
+// ---------------------------------------------------------------------------
+model Budget {
+  id           String   @id @default(uuid())
+  accountId    String
+  costCenterId String?
+  fiscalYear   Int
+  period       String   @default("yearly") // monthly | quarterly | yearly
+  periodIndex  Int      @default(1)
+  amount       Decimal  @default(0) @db.Decimal(14, 2)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  account    Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  costCenter CostCenter? @relation(fields: [costCenterId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, fiscalYear])
+  @@index([fiscalYear])
+  @@map("budgets")
 }
