@@ -39,11 +39,13 @@ GoRouter _router({String initial = '/sales'}) => GoRouter(
   ],
 );
 
-/// محاكاة زر الرجوع الفيزيائي — نفس ما تفعله منصة Android بالنظام
-/// (النمط المعتمد في اختبارات إطار Flutter نفسه).
-Future<void> hardwareBack(WidgetTester tester) async {
-  final dynamic appState = tester.state(find.byType(WidgetsApp));
-  await appState.didPopRoute();
+/// محاكاة زر الرجوع الفيزيائي في تطبيق مبني على Router (go_router):
+/// منصة Android ترسل الرجوع إلى RootBackButtonDispatcher فيستدعي
+/// RouterDelegate.popRoute — وهو الذي يستدعي maybePop على ملاح
+/// go_router ويستشير PopScope. (didPopRoute على WidgetsApp لا يفعل
+/// شيئًا في تطبيقات Router — درس من CI.)
+Future<void> hardwareBack(WidgetTester tester, GoRouter router) async {
+  await router.routerDelegate.popRoute();
   await tester.pumpAndSettle();
 }
 
@@ -56,7 +58,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('sales'), findsOneWidget);
 
-      await hardwareBack(tester);
+      await hardwareBack(tester, router);
       expect(find.text('dashboard'), findsOneWidget);
     },
   );
@@ -72,7 +74,7 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('new-page'), findsOneWidget);
 
-      await hardwareBack(tester);
+      await hardwareBack(tester, router);
       // رجع إلى ما تحته (sales) — لا إلى لوحة التحكم: يثبت أنه pop حقيقي.
       expect(find.text('sales'), findsOneWidget);
     },
