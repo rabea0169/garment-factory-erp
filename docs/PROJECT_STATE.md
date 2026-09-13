@@ -1,6 +1,29 @@
 # PROJECT_STATE — Garment Factory ERP
 
+# PROJECT_STATE — Garment Factory ERP
+
 > هذا الملف هو مصدر الحقيقة لحالة المشروع. يجب تحديثه في نفس commit كلما أُغلقت مهمة، ولا يبدأ أي نموذج مهمة جديدة قبل قراءته.
+
+## الإصدار v1.2.0-uat — نسخة Selim ERP، الموجة الأولى (2026-09-13)
+
+**القرار:** تقليد مشروع Selim ERP المرجعي (ويب Next.js) داخل هذا المشروع **بنفس المكدس** (Flutter موبايل+ديسكتوب + NestJS/Prisma) — بلا تغيير طريقة العمل القائمة، وبقاء كل الميزات السابقة. المرجع الكامل: `docs/SELIM_REPLICATION.md`.
+
+**سلسلة الدمج:**
+- **#86** `feat/selim-erp-replication-wave1` → main `ddbc755` (ثلاثية: schema + باكند + فلتر)
+  - `ffeb431` feat(schema): 23 جدولًا جديدًا + هجرة `20260913000000_selim_erp_wave1_replication`
+  - `13a3c84` feat(api): 12 وحدة باكند (quotations/purchase-returns/inventory-adjustments/expenses/treasury-transactions/shifts/worker-receipts/payroll-statements/cutting+packing/printing/journal-templates/financial-reports) + `SequenceService` ذرية (QUO/PRR/ADJ/TRT/SHF/WRC/PSM/CUT/PACK-0001)
+  - `63ac70e` feat(app): هيكل تكيفي Selim (شريط سفلي+درج المزيد / NavigationRail ≥1000px) + 11 شاشة + مكتبة سليم + لوحة تحكم بإجراءات سريعة
+  - `fa9ce30` fix(lint): مواءمة المواصفات مع createPrismaMock الموحد (133→0)
+- **main CI: success** (backend 924 unit + e2e + integration + drift gate | flutter analyze 0 + 380 tests | perf | secret-scan)
+- **الإنتاج (Railway):** أعيد النشر تلقائيًا؛ `/health/ready` = 200؛ نقاط النهاية الجديدة حية ومتحقق منها (`/quotations/stats`, `/financial-reports/income-statement`, `/printing/templates`)؛ **40 قالب طباعة عربي مهيأ تلقائيًا**.
+- **GitHub Release:** [`v1.2.0-uat`](https://github.com/rabea0169/garment-factory-erp/releases/tag/v1.2.0-uat) — `garment-erp-1.2.0-uat.apk` (arm64-v8a، 187.1MB)
+- **جديد البنية:** سير عمل `.github/workflows/release.yml` يبني APK عند tag `v*` على GitHub Actions (بعد analyze+tests) — يستبدل البناء المحلي المكلف. أول إصدار يُبنى به: v1.2.0-uat نفسه. (يحتاج `permissions: contents: write` — درس وُثق في `bcf1d04`).
+
+**الإصدار:** `1.2.0+4` · **الاختبارات:** backend 924/924 · جوال 380/380 (+104 جديد) · analyze صفر ملاحظات.
+
+**المؤجل للموجة الثانية (مرشح):** تكاملات ETA eInvoice/واتساب/إيميل/بنوك، طباعة حرارية ESC/POS بلوتوث، استيراد Excel/CSV، نسخ احتياطي/استعادة من الواجهة، بيع سريع POS offline، بحث شامل + لوحة أوامر. التفاصيل في نهاية `docs/SELIM_REPLICATION.md`.
+
+---
 
 ## الإصدار v1.1.1-uat + استئناف بناء APK بنجاح (2026-09-12 — مساء)
 
