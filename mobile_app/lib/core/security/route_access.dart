@@ -97,6 +97,83 @@ class RouteAccess {
     '/users': {
       AppRoles.superAdmin,
     },
+
+    // ===== SELIM-ERP W1: قيود الوحدات المقلدة (مرآة @Roles الخادمية) =====
+    // عروض الأسعار: قراءتها GM/ACC/CASHIER وإنشاؤها GM/CASHIER (خادميًا).
+    '/quotations': {
+      AppRoles.generalManager,
+      AppRoles.accountant,
+      AppRoles.cashier,
+      AppRoles.superAdmin,
+    },
+    // مرتجع المشتريات: مسار مالي — ACC/GM/SA.
+    '/purchase-returns': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // تسويات الجرد: INV/ACC/GM.
+    '/adjustments': {
+      AppRoles.inventoryManager,
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // المصاريف: ACC/GM/CASHIER.
+    '/expenses': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.cashier,
+      AppRoles.superAdmin,
+    },
+    // الخزينة: ACC/GM/CASHIER (سندات الصندوق).
+    '/treasury': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.cashier,
+      AppRoles.superAdmin,
+    },
+    // الورديات: CASHIER/GM (نفس أدوار فتح الوردية خادميًا).
+    '/shifts': {
+      AppRoles.cashier,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // سندات قبض العمال: HR/ACC/GM.
+    '/worker-receipts': {
+      AppRoles.hrManager,
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // كشوف الرواتب المجمدة: HR/ACC/GM.
+    '/payroll-statements': {
+      AppRoles.hrManager,
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // القص والتعبئة: PM/INV/GM.
+    '/cutting': {
+      AppRoles.productionManager,
+      AppRoles.inventoryManager,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // التقارير المالية: ACC/GM (نفس قيد الحسابات).
+    '/financial-reports': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // مركز الطباعة: قوالب القراءة عامة، الإدارة ACC/GM — الشاشة تعرض
+    // القوالب والسجل فتُقيد بالمالية والإدارة.
+    '/printing': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.cashier,
+      AppRoles.superAdmin,
+    },
   };
 
   /// هل يملك [role] صلاحية الوصول إلى [location]؟
