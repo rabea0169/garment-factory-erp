@@ -1,0 +1,83 @@
+name: Release APK
+
+# بناء APK الإصدار تلقائيًا من GitHub Actions — بديل قابل للتكرار عن
+# البناء المحلي (كان يتطلب Flutter + JDK + Android SDK بأحجام جيجابايت
+# على جهاز محدود الموارد). يُطلق عند tag بصيغة v* — يبني arm64-v8a
+# (البنية الموزعة في UAT سابقًا) ويرفع APK كمرفق Release.
+# ملاحظة التوقيع: كما في v1.1.1-uat، الـ APK يوقَّع بمفتاح debug
+# الافتراضي (release-config بلا signingConfig) — مفتاح الإنتاج ما زال
+# بندًا مؤجلًا (انظر docs/PROJECT_STATE.md).
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  apk:
+    name: Flutter — Build Release APK (arm64-v8a)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.4'
+          channel: stable
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+        working-directory: mobile_app
+
+      - name: Pub get
+        run: flutter pub get
+        working-directory: mobile_app
+
+      - name: Analyze
+        run: flutter analyze --no-pub
+        working-directory: mobile_app
+
+      - name: Tests
+        run: flutter test --no-pub
+        working-directory: mobile_app
+
+      - name: Build release APK (arm64-v8a)
+        run: flutter build apk --release --target-platform android-arm64
+        working-directory: mobile_app
+
+      - name: Rename APK
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          cp mobile_app/build/app/outputs/flutter-apk/app-release.apk \
+             "garment-erp-${VERSION}.apk"
+          ls -lh "garment-erp-${VERSION}.apk"
+
+      - name: Create GitHub Release + attach APK
+        uses: softprops/action-gh-release@v2
+        with:
+          files: garment-erp-*.apk
+          generate_release_notes: true
+          body: |
+            إصدار garment-factory-erp — نسخة Selim ERP المقلدة (الموجة الأولى).
+
+            **الجديد في v${GITHUB_REF_NAME#v}:**
+            - 23 جدولًا جديدًا: عروض أسعار، مرتجع مشتريات، تسويات جرد، مصاريف،
+              خزينة، ورديات، قبض عمال، كشوف رواتب مجمعة، قص، تعبئة، طباعة...
+            - 12 وحدة API باكند بمنطق Selim (ترقيم تسلسلي + قيود مزدوجة)
+            - واجهة Flutter بهيكل تكيفي يقلد Selim (شريط سفلي + درج المزيد
+              على الموبايل / NavigationRail على الديسكتوب) + 11 شاشة جديدة
+            - لوحة تحكم مرقّمة بإجراءات سريعة
+
+            APK بمعمارية arm64-v8a — التوقيع debug الافتراضي (UAT).
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
