@@ -53,8 +53,11 @@ export function buildReceiptQrPayload(input: ReceiptQrInput): string {
   const settingsVat = (input.vatNumber ?? '').trim();
   const envVat = (process.env.COMPANY_VAT_NUMBER ?? '').trim();
   if (settingsVat.length > 0 || isEtaQrConfigured()) {
-    const sellerName =
-      (input.sellerName ?? process.env.COMPANY_NAME ?? 'شركة غير مسماة').trim();
+    const sellerName = (
+      input.sellerName ??
+      process.env.COMPANY_NAME ??
+      'شركة غير مسماة'
+    ).trim();
     const vatNumber = settingsVat.length > 0 ? settingsVat : envVat;
     const timestamp = input.createdAt.toISOString();
     const total = input.total.toFixed(2);
