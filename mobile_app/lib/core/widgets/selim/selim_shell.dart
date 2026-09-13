@@ -7,6 +7,7 @@ import '../../../features/auth/presentation/cubit/auth_cubit.dart';
 import '../../constants/app_colors.dart';
 import '../../router/app_router.dart';
 import '../../security/route_access.dart';
+import '../search/command_palette.dart';
 import 'selim_more_sheet.dart';
 
 /// الهيكل التكيفي الموحد — نسخة دارت من AppShell في Selim ERP.
@@ -87,6 +88,10 @@ List<SelimDestination> get allDestinations => [
   SelimDestination('التقارير المالية', Icons.assessment_rounded, const Color(0xFF1565C0), AppRouter.financialReports),
   SelimDestination('مركز الطباعة', Icons.print_rounded, const Color(0xFFE65100), AppRouter.printing),
   SelimDestination('المستخدمون', Icons.manage_accounts_rounded, const Color(0xFF37474F), AppRouter.users),
+  // SELIM-ERP W2 — الموجة الثانية: نقطة البيع + الاستيراد + النسخ.
+  SelimDestination('نقطة البيع', Icons.point_of_sale_rounded, const Color(0xFF00897B), AppRouter.pos),
+  SelimDestination('معالج الاستيراد', Icons.upload_file_rounded, const Color(0xFF00838F), AppRouter.importWizard),
+  SelimDestination('النسخ الاحتياطي', Icons.backup_rounded, const Color(0xFF455A64), AppRouter.backup),
 ];
 
 class _MobileShell extends StatelessWidget {
@@ -105,21 +110,38 @@ class _MobileShell extends StatelessWidget {
     final location = router != null
         ? GoRouterState.of(context).matchedLocation
         : '';
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
-        centerTitle: true,
-        actions: actions,
-      ),
-      body: body,
-      floatingActionButton: fab,
-      // المساحة السفلية تحفظ بطاقة الشريط من فوق زر النظام في الأجهزة
-      // الحديثة (safe-area) — نفس pb-[env(safe-area-inset-bottom)] في Selim.
-      bottomNavigationBar: SafeArea(
-        top: false,
-        child: _SelimBottomNav(currentRoute: location),
-      ),
-    );
+    return CallbackShortcuts(
+      // SELIM-ERP W2: Ctrl+K يفتح لوحة الأوامر (نفس CommandPalette في Selim).
+      bindings: <ShortcutActivator, VoidCallback>{
+        const SingleActivator(LogicalKeyboardKey.keyK, control: true):
+            () => showCommandPalette(context),
+      },
+      child: Focus(
+        autofocus: true,
+        child: Scaffold(
+          appBar: AppBar(
+            title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
+            centerTitle: true,
+            actions: [
+              IconButton(
+                tooltip: 'بحث شامل (Ctrl+K)',
+                icon: const Icon(Icons.search_rounded),
+                onPressed: () => showCommandPalette(context),
+              ),
+              ...?actions,
+            ],
+          ),
+            body: body,
+            floatingActionButton: fab,
+            // المساحة السفلية تحفظ بطاقة الشريط من فوق زر النظام في
+            // الأجهزة الحديثة (safe-area) — مثل pb-[env(...)] في Selim.
+            bottomNavigationBar: SafeArea(
+              top: false,
+              child: _SelimBottomNav(currentRoute: location),
+            ),
+          ),
+        ),
+      );
   }
 }
 
@@ -282,7 +304,15 @@ class _WideShell extends StatelessWidget {
       appBar: AppBar(
         title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
         centerTitle: false,
-        actions: actions,
+        actions: [
+          // SELIM-ERP W2: زر البحث الشامل — نفس Ctrl+K (لوحة الأوامر).
+          IconButton(
+            tooltip: 'بحث شامل (Ctrl+K)',
+            icon: const Icon(Icons.search_rounded),
+            onPressed: () => showCommandPalette(context),
+          ),
+          ...?actions,
+        ],
       ),
       // RTL: القضيب الجانبي يظهر يمين الشاشة تلقائيًا في اتجاه عربي.
       body: Row(
