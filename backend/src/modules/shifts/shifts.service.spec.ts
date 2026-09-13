@@ -1,7 +1,10 @@
 import 'reflect-metadata';
 import { ShiftStatus, UserRole } from '@prisma/client';
 import { ShiftsService } from './shifts.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import type { PrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
  * SELIM-ERP W1 — اختبارات خدمة الورديات.
@@ -12,54 +15,94 @@ import { SequenceService } from '../../core/sequence/sequence.service';
  * - المتوقع والفرق يُحسبان على الخادم من مبيعات الوردية النقدية.
  * - الوردية مستند رقابة لا قيدًا محاسبيًا — لا journal البتة.
  */
+
+/** إدخال وسيط لقراءة بيانات إنشاء الوردية (بلا any مسرب — نمط sales spec). */
+interface ShiftSessionCreateCall {
+  data: {
+    code: string;
+    openedByName: string;
+    status: ShiftStatus;
+    startCash: number;
+  };
+}
+
+/** مرشحات تجميع مبيعات الوردية النقدية (userId/paymentType/createdAt). */
+interface SalesOrderAggregateCall {
+  where: {
+    userId: string;
+    paymentType: string;
+    createdAt: { gte: Date };
+  };
+}
+
+/** إدخال وسيط لقراءة بيانات إغلاق الوردية (updateMany الشرطي). */
+interface ShiftSessionUpdateManyCall {
+  where: { id: string; status: ShiftStatus };
+  data: {
+    expectedCash: number;
+    difference: number;
+    endCash: number;
+    status: ShiftStatus;
+  };
+}
+
+/** مرشحات البحث عن الوردية المفتوحة الحالية. */
+interface ShiftSessionFindFirstCall {
+  where: { openedById: string; status: ShiftStatus };
+}
+
+/**
+ * SELIM-W1: امتداد محلي للـ mock الموحد — حساب المتوقع يحتاج
+ * salesOrder.aggregate لمبيعات الوردية النقدية (نمط SalesPrismaMock:
+ * لا نغيّر شكل نماذج قائمة في الـ helper المشترك).
+ */
+type ShiftsPrismaMock = PrismaMock & {
+  salesOrder: PrismaMock['salesOrder'] & { aggregate: jest.Mock };
+};
+
+function createShiftsPrismaMock(): ShiftsPrismaMock {
+  const base = createPrismaMock();
+  return {
+    ...base,
+    salesOrder: { ...base.salesOrder, aggregate: jest.fn() },
+  };
+}
+
 describe('ShiftsService — قواعد الورديات (SELIM W1)', () => {
   let service: ShiftsService;
-  let prisma: {
-    $transaction: jest.Mock;
-    shiftSession: {
-      findFirst: jest.Mock;
-      findUnique: jest.Mock;
-      findMany: jest.Mock;
-      count: jest.Mock;
-      create: jest.Mock;
-      updateMany: jest.Mock;
-    };
-    user: { findUnique: jest.Mock };
-    salesOrder: { aggregate: jest.Mock };
-  };
-  let sequence: { nextNumber: jest.Mock };
+  let prisma: ShiftsPrismaMock;
+  let nextNumber: jest.Mock;
   // tx يشترك مع prisma في نفس الـ mocks (المعاملة تمر على نفس الوكيل).
-  const tx: Record<string, unknown> = {};
+  const tx = {} as unknown as ShiftsPrismaMock;
 
   beforeEach(() => {
-    prisma = {
-      $transaction: jest.fn().mockImplementation(async (arg) => {
-        if (typeof arg === 'function') return arg(tx);
-        return Promise.all(arg);
-      }),
-      shiftSession: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        findUnique: jest.fn().mockResolvedValue(null),
-        findMany: jest.fn().mockResolvedValue([]),
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockResolvedValue({ id: 'shf-1', code: 'SHF-0001' }),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-      user: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'user-1', name: 'كاشير الرئيسي' }),
-      },
-      salesOrder: {
-        aggregate: jest.fn().mockResolvedValue({ _sum: { paidAmount: null } }),
-      },
-    };
-    Object.assign(tx, prisma);
-    sequence = { nextNumber: jest.fn().mockResolvedValue('SHF-0001') };
-    service = new ShiftsService(
-      prisma as never,
-      sequence as unknown as SequenceService,
+    prisma = createShiftsPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (
+        arg: ((client: ShiftsPrismaMock) => Promise<unknown>) | unknown[],
+      ): Promise<unknown> =>
+        typeof arg === 'function' ? arg(tx) : Promise.all(arg),
     );
+    prisma.shiftSession.findFirst.mockResolvedValue(null);
+    prisma.shiftSession.findUnique.mockResolvedValue(null);
+    prisma.shiftSession.findMany.mockResolvedValue([]);
+    prisma.shiftSession.count.mockResolvedValue(0);
+    prisma.shiftSession.create.mockResolvedValue({
+      id: 'shf-1',
+      code: 'SHF-0001',
+    });
+    prisma.shiftSession.updateMany.mockResolvedValue({ count: 1 });
+    prisma.user.findUnique.mockResolvedValue({
+      id: 'user-1',
+      name: 'كاشير الرئيسي',
+    });
+    prisma.salesOrder.aggregate.mockResolvedValue({
+      _sum: { paidAmount: null },
+    });
+    Object.assign(tx, prisma);
+    nextNumber = jest.fn().mockResolvedValue('SHF-0001');
+    const sequence = { nextNumber } as unknown as SequenceService;
+    service = new ShiftsService(prisma as unknown as PrismaService, sequence);
   });
 
   it('يرفض فتح وردية ثانية للمستخدم نفسه', async () => {
@@ -74,8 +117,12 @@ describe('ShiftsService — قواعد الورديات (SELIM W1)', () => {
 
   it('يفتح الوردية بترقيم SHF ولقطة اسم الفاتح', async () => {
     await service.open({ startCash: 100, notes: 'صباحية' }, 'user-1');
-    expect(sequence.nextNumber).toHaveBeenCalledWith('SHIFT_SESSION', tx);
-    const createCall = prisma.shiftSession.create.mock.calls[0][0];
+    expect(nextNumber).toHaveBeenCalledWith('SHIFT_SESSION', tx);
+    const createCall = (
+      prisma.shiftSession.create.mock.calls as unknown as Array<
+        [ShiftSessionCreateCall]
+      >
+    )[0][0];
     expect(createCall.data.code).toBe('SHF-0001');
     expect(createCall.data.openedByName).toBe('كاشير الرئيسي');
     expect(createCall.data.status).toBe(ShiftStatus.OPEN);
@@ -129,11 +176,19 @@ describe('ShiftsService — قواعد الورديات (SELIM W1)', () => {
       { id: 'user-1', role: UserRole.CASHIER },
     );
     // التجميع على مبيعات صاحب الوردية النقدية منذ بدء الوردية فقط.
-    const where = prisma.salesOrder.aggregate.mock.calls[0][0].where;
+    const where = (
+      prisma.salesOrder.aggregate.mock.calls as unknown as Array<
+        [SalesOrderAggregateCall]
+      >
+    )[0][0].where;
     expect(where.userId).toBe('user-1');
     expect(where.paymentType).toBe('CASH');
     expect(where.createdAt.gte).toEqual(new Date('2026-09-01T08:00:00Z'));
-    const updateCall = prisma.shiftSession.updateMany.mock.calls[0][0];
+    const updateCall = (
+      prisma.shiftSession.updateMany.mock.calls as unknown as Array<
+        [ShiftSessionUpdateManyCall]
+      >
+    )[0][0];
     expect(updateCall.where).toEqual({ id: 'shf-1', status: ShiftStatus.OPEN });
     // متوقع = 100 + 500 = 600؛ فرق = 650 − 600 = 50.
     expect(Number(updateCall.data.expectedCash)).toBe(600);
@@ -155,7 +210,11 @@ describe('ShiftsService — قواعد الورديات (SELIM W1)', () => {
       _sum: { paidAmount: null },
     });
     await service.close('shf-1', { endCash: 250 }, { id: 'user-1' });
-    const updateCall = prisma.shiftSession.updateMany.mock.calls[0][0];
+    const updateCall = (
+      prisma.shiftSession.updateMany.mock.calls as unknown as Array<
+        [ShiftSessionUpdateManyCall]
+      >
+    )[0][0];
     expect(Number(updateCall.data.expectedCash)).toBe(250);
     expect(Number(updateCall.data.difference)).toBe(0);
   });
@@ -198,7 +257,11 @@ describe('ShiftsService — قواعد الورديات (SELIM W1)', () => {
     const open = { id: 'shf-open', status: ShiftStatus.OPEN };
     prisma.shiftSession.findFirst.mockResolvedValue(open);
     await expect(service.getCurrent('user-1')).resolves.toEqual(open);
-    const where = prisma.shiftSession.findFirst.mock.calls[1][0].where;
+    const where = (
+      prisma.shiftSession.findFirst.mock.calls as unknown as Array<
+        [ShiftSessionFindFirstCall]
+      >
+    )[1][0].where;
     expect(where.openedById).toBe('user-1');
     expect(where.status).toBe(ShiftStatus.OPEN);
   });

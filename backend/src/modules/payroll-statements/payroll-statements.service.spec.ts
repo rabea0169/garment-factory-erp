@@ -1,9 +1,12 @@
 import 'reflect-metadata';
 import { PayrollStatus, PayrollStatementStatus, Prisma } from '@prisma/client';
 import { PayrollStatementsService } from './payroll-statements.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import type { PrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
  * SELIM-ERP W1 — اختبارات خدمة كشوف الرواتب المجمدة.
@@ -14,26 +17,58 @@ import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
  * - الترحيل: قيد مصروف رواتب/مستحقات/سلف + تعليم الكشوف مدفوعة.
  * - الحذف للمسودة فقط ويفك الربط.
  */
+
+/** إدخال وسيط لقراءة بيانات إنشاء الكشف المجمع (بلا any مسرب — sales). */
+interface PayrollStatementCreateCall {
+  data: {
+    code: string;
+    status: PayrollStatementStatus;
+    workerCount: number;
+    lines: unknown;
+    totals: unknown;
+  };
+}
+
+/** مرشحات تجميع الكشوف (معتمدة/غير مدفوعة/غير مجمّعة/متقاطعة). */
+interface PayrollFindManyCall {
+  where: {
+    status: PayrollStatus;
+    isPaid: boolean;
+    payrollStatementId: null;
+    AND: Array<{
+      periodStart?: { lte: Date };
+      periodEnd?: { gte: Date };
+    }>;
+  };
+}
+
+/** مدخلات القيد المُرحَّل: بنود مدين/دائن بمبالغ رقمية. */
+interface JournalPostingInput {
+  lines: Array<{
+    debitAccountId: string;
+    creditAccountId: string;
+    amount: number;
+  }>;
+}
+
+/** إدخال وسيط لقراءة بيانات ترحيل الكشف (update). */
+interface PayrollStatementUpdateCall {
+  data: {
+    status: PayrollStatementStatus;
+    journalEntryId: string;
+    approvedById: string;
+    approvedAt: Date;
+  };
+}
+
 describe('PayrollStatementsService — كشوف الرواتب المجمدة (SELIM W1)', () => {
   let service: PayrollStatementsService;
-  let prisma: {
-    $transaction: jest.Mock;
-    payroll: { findMany: jest.Mock; updateMany: jest.Mock };
-    payrollStatement: {
-      findUnique: jest.Mock;
-      findMany: jest.Mock;
-      count: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-      delete: jest.Mock;
-    };
-  };
-  let sequence: { nextNumber: jest.Mock };
-  let financial: {
-    postJournalEntryInTx: jest.Mock;
-    reverseJournalEntryInTx: jest.Mock;
-  };
-  const tx: Record<string, unknown> = {};
+  let prisma: PrismaMock;
+  let nextNumber: jest.Mock;
+  let postJournalEntryInTx: jest.Mock;
+  let reverseJournalEntryInTx: jest.Mock;
+  // tx يشترك مع prisma في نفس الـ mocks (المعاملة تمر على نفس الوكيل).
+  const tx = {} as unknown as PrismaMock;
 
   /** كشف فردي معتمد غير مدفوع لعامل واحد (400 إجمالي / 50 خصم / 350 صافي). */
   const approvedPayroll = (id: string) => ({
@@ -69,42 +104,46 @@ describe('PayrollStatementsService — كشوف الرواتب المجمدة (S
   });
 
   beforeEach(() => {
-    prisma = {
-      $transaction: jest.fn().mockImplementation(async (arg) => {
-        if (typeof arg === 'function') return arg(tx);
-        return Promise.all(arg);
+    prisma = createPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (
+        arg: ((client: PrismaMock) => Promise<unknown>) | unknown[],
+      ): Promise<unknown> =>
+        typeof arg === 'function' ? arg(tx) : Promise.all(arg),
+    );
+    prisma.payroll.findMany.mockResolvedValue([approvedPayroll('pr-1')]);
+    prisma.payroll.updateMany.mockResolvedValue({ count: 1 });
+    prisma.payrollStatement.findUnique.mockResolvedValue(null);
+    prisma.payrollStatement.findMany.mockResolvedValue([]);
+    prisma.payrollStatement.count.mockResolvedValue(0);
+    prisma.payrollStatement.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'psm-1',
+        ...data,
       }),
-      payroll: {
-        findMany: jest.fn().mockResolvedValue([approvedPayroll('pr-1')]),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-      },
-      payrollStatement: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        findMany: jest.fn().mockResolvedValue([]),
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockImplementation(async ({ data }) => ({
-          id: 'psm-1',
-          ...data,
-        })),
-        update: jest.fn().mockImplementation(async ({ data }) => ({
-          id: 'psm-1',
-          ...data,
-        })),
-        delete: jest.fn().mockResolvedValue({ id: 'psm-1' }),
-      },
-    };
+    );
+    prisma.payrollStatement.update.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'psm-1',
+        ...data,
+      }),
+    );
+    prisma.payrollStatement.delete.mockResolvedValue({ id: 'psm-1' });
     Object.assign(tx, prisma);
-    sequence = { nextNumber: jest.fn().mockResolvedValue('PSM-0001') };
-    financial = {
-      postJournalEntryInTx: jest
-        .fn()
-        .mockResolvedValue({ entryId: 'je-1', entryCode: 'JE-1' }),
-      reverseJournalEntryInTx: jest.fn().mockResolvedValue({ entryId: 'je-2' }),
-    };
+    nextNumber = jest.fn().mockResolvedValue('PSM-0001');
+    const sequence = { nextNumber } as unknown as SequenceService;
+    postJournalEntryInTx = jest
+      .fn()
+      .mockResolvedValue({ entryId: 'je-1', entryCode: 'JE-1' });
+    reverseJournalEntryInTx = jest.fn().mockResolvedValue({ entryId: 'je-2' });
+    const financial = {
+      postJournalEntryInTx,
+      reverseJournalEntryInTx,
+    } as unknown as FinancialPostingService;
     service = new PayrollStatementsService(
-      prisma as never,
-      sequence as unknown as SequenceService,
-      financial as unknown as FinancialPostingService,
+      prisma as unknown as PrismaService,
+      sequence,
+      financial,
     );
   });
 
@@ -126,8 +165,12 @@ describe('PayrollStatementsService — كشوف الرواتب المجمدة (S
       periodFrom: '2026-09-01',
       periodTo: '2026-09-30',
     });
-    expect(sequence.nextNumber).toHaveBeenCalledWith('PAYROLL_STATEMENT', tx);
-    const createCall = prisma.payrollStatement.create.mock.calls[0][0];
+    expect(nextNumber).toHaveBeenCalledWith('PAYROLL_STATEMENT', tx);
+    const createCall = (
+      prisma.payrollStatement.create.mock.calls as unknown as Array<
+        [PayrollStatementCreateCall]
+      >
+    )[0][0];
     expect(createCall.data.code).toBe('PSM-0001');
     expect(createCall.data.status).toBe(PayrollStatementStatus.DRAFT);
     expect(createCall.data.workerCount).toBe(1);
@@ -158,7 +201,11 @@ describe('PayrollStatementsService — كشوف الرواتب المجمدة (S
       periodFrom: '2026-09-01',
       periodTo: '2026-09-30',
     });
-    const where = prisma.payroll.findMany.mock.calls[0][0].where;
+    const where = (
+      prisma.payroll.findMany.mock.calls as unknown as Array<
+        [PayrollFindManyCall]
+      >
+    )[0][0].where;
     expect(where.status).toBe(PayrollStatus.APPROVED);
     expect(where.isPaid).toBe(false);
     expect(where.payrollStatementId).toBeNull();
@@ -186,14 +233,14 @@ describe('PayrollStatementsService — كشوف الرواتب المجمدة (S
       statementRow(PayrollStatementStatus.DRAFT),
     );
     await service.post('psm-1', 'user-2');
-    const postInput = financial.postJournalEntryInTx.mock.calls[0][1];
+    const postInput = (
+      postJournalEntryInTx.mock.calls as unknown as Array<
+        [unknown, JournalPostingInput]
+      >
+    )[0][1];
     // بنية Selim: Dr SALARIES_EXPENSE (الإجمالي) / Cr SALARIES_PAYABLE
     // (الصافي) + Cr WORKER_ADVANCES (الخصومات).
-    const lines = postInput.lines as {
-      debitAccountId: string;
-      creditAccountId: string;
-      amount: number;
-    }[];
+    const lines = postInput.lines;
     expect(lines).toHaveLength(2);
     expect(lines[0].debitAccountId).toBe(CHART_OF_ACCOUNTS.SALARIES_EXPENSE);
     expect(lines[0].creditAccountId).toBe(CHART_OF_ACCOUNTS.SALARIES_PAYABLE);
@@ -207,9 +254,13 @@ describe('PayrollStatementsService — كشوف الرواتب المجمدة (S
       data: expect.objectContaining({
         isPaid: true,
         status: PayrollStatus.PAID,
-      }),
+      }) as Record<string, unknown>,
     });
-    const updateCall = prisma.payrollStatement.update.mock.calls[0][0];
+    const updateCall = (
+      prisma.payrollStatement.update.mock.calls as unknown as Array<
+        [PayrollStatementUpdateCall]
+      >
+    )[0][0];
     expect(updateCall.data.status).toBe(PayrollStatementStatus.POSTED);
     expect(updateCall.data.journalEntryId).toBe('je-1');
     expect(updateCall.data.approvedById).toBe('user-2');

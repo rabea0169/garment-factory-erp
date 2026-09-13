@@ -1,8 +1,11 @@
 import 'reflect-metadata';
 import { WorkerReceiptsService } from './worker-receipts.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
 import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import type { PrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
  * SELIM-ERP W1 — اختبارات خدمة سندات قبض العمال.
@@ -13,31 +16,45 @@ import { CHART_OF_ACCOUNTS } from '../../core/financial/chart-of-accounts';
  * - القيد: مدين النقدية / دائن سلف العمال داخل نفس المعاملة.
  * - الحذف: عكس القيد + إعادة رصيد الخزينة داخل معاملة واحدة.
  */
+
+/** إدخال وسيط لقراءة بيانات إنشاء السند (بلا any مسرب — نمط sales spec). */
+interface WorkerReceiptCreateCall {
+  data: { code: string; journalEntryId: string; amount: number };
+}
+
+/** مرشحات مجاميع السندات لكل عامل (workerId + نطاق التاريخ). */
+interface WorkerReceiptGroupByCall {
+  where: {
+    workerId: string;
+    date: { gte: Date; lte: Date };
+  };
+}
+
+/**
+ * SELIM-W1: امتداد محلي للـ mock الموحد — خصم الخزينة الشرطي يحتاج
+ * treasury.updateMany (نمط SalesPrismaMock: لا نغيّر شكل نماذج قائمة
+ * في الـ helper المشترك حفاظًا على توافق بقية المواصفات).
+ */
+type WorkerReceiptsPrismaMock = PrismaMock & {
+  treasury: PrismaMock['treasury'] & { updateMany: jest.Mock };
+};
+
+function createWorkerReceiptsPrismaMock(): WorkerReceiptsPrismaMock {
+  const base = createPrismaMock();
+  return {
+    ...base,
+    treasury: { ...base.treasury, updateMany: jest.fn() },
+  };
+}
+
 describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', () => {
   let service: WorkerReceiptsService;
-  let prisma: {
-    $transaction: jest.Mock;
-    worker: { findUnique: jest.Mock };
-    treasury: {
-      findUnique: jest.Mock;
-      updateMany: jest.Mock;
-      update: jest.Mock;
-    };
-    workerReceipt: {
-      findUnique: jest.Mock;
-      findMany: jest.Mock;
-      count: jest.Mock;
-      groupBy: jest.Mock;
-      create: jest.Mock;
-      delete: jest.Mock;
-    };
-  };
-  let sequence: { nextNumber: jest.Mock };
-  let financial: {
-    postJournalEntryInTx: jest.Mock;
-    reverseJournalEntryInTx: jest.Mock;
-  };
-  const tx: Record<string, unknown> = {};
+  let prisma: WorkerReceiptsPrismaMock;
+  let nextNumber: jest.Mock;
+  let postJournalEntryInTx: jest.Mock;
+  let reverseJournalEntryInTx: jest.Mock;
+  // tx يشترك مع prisma في نفس الـ mocks (المعاملة تمر على نفس الوكيل).
+  const tx = {} as unknown as WorkerReceiptsPrismaMock;
 
   const baseDto = {
     workerId: 'worker-1',
@@ -46,51 +63,55 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
   };
 
   beforeEach(() => {
-    prisma = {
-      $transaction: jest.fn().mockImplementation(async (arg) => {
-        if (typeof arg === 'function') return arg(tx);
-        return Promise.all(arg);
-      }),
-      worker: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'worker-1',
-          name: 'عامل القص',
-          isActive: true,
-        }),
-      },
-      treasury: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'tr-1', isActive: true, balance: 1000 }),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        update: jest.fn().mockResolvedValue({ id: 'tr-1' }),
-      },
-      workerReceipt: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        findMany: jest.fn().mockResolvedValue([]),
-        count: jest.fn().mockResolvedValue(0),
-        groupBy: jest.fn().mockResolvedValue([]),
-        create: jest.fn().mockResolvedValue({ id: 'wrc-1', code: 'WRC-0001' }),
-        delete: jest.fn().mockResolvedValue({ id: 'wrc-1' }),
-      },
-    };
+    prisma = createWorkerReceiptsPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (
+        arg:
+          ((client: WorkerReceiptsPrismaMock) => Promise<unknown>) | unknown[],
+      ): Promise<unknown> =>
+        typeof arg === 'function' ? arg(tx) : Promise.all(arg),
+    );
+    prisma.worker.findUnique.mockResolvedValue({
+      id: 'worker-1',
+      name: 'عامل القص',
+      isActive: true,
+    });
+    prisma.treasury.findUnique.mockResolvedValue({
+      id: 'tr-1',
+      isActive: true,
+      balance: 1000,
+    });
+    prisma.treasury.updateMany.mockResolvedValue({ count: 1 });
+    prisma.treasury.update.mockResolvedValue({ id: 'tr-1' });
+    prisma.workerReceipt.findUnique.mockResolvedValue(null);
+    prisma.workerReceipt.findMany.mockResolvedValue([]);
+    prisma.workerReceipt.count.mockResolvedValue(0);
+    prisma.workerReceipt.groupBy.mockResolvedValue([]);
+    prisma.workerReceipt.create.mockResolvedValue({
+      id: 'wrc-1',
+      code: 'WRC-0001',
+    });
+    prisma.workerReceipt.delete.mockResolvedValue({ id: 'wrc-1' });
     Object.assign(tx, prisma);
-    sequence = { nextNumber: jest.fn().mockResolvedValue('WRC-0001') };
-    financial = {
-      postJournalEntryInTx: jest.fn().mockResolvedValue({
-        entryId: 'je-1',
-        entryCode: 'JE-1',
-        linesCount: 1,
-      }),
-      reverseJournalEntryInTx: jest.fn().mockResolvedValue({
-        entryId: 'je-2',
-        reversedEntryId: 'je-1',
-      }),
-    };
+    nextNumber = jest.fn().mockResolvedValue('WRC-0001');
+    const sequence = { nextNumber } as unknown as SequenceService;
+    postJournalEntryInTx = jest.fn().mockResolvedValue({
+      entryId: 'je-1',
+      entryCode: 'JE-1',
+      linesCount: 1,
+    });
+    reverseJournalEntryInTx = jest.fn().mockResolvedValue({
+      entryId: 'je-2',
+      reversedEntryId: 'je-1',
+    });
+    const financial = {
+      postJournalEntryInTx,
+      reverseJournalEntryInTx,
+    } as unknown as FinancialPostingService;
     service = new WorkerReceiptsService(
-      prisma as never,
-      sequence as unknown as SequenceService,
-      financial as unknown as FinancialPostingService,
+      prisma as unknown as PrismaService,
+      sequence,
+      financial,
     );
   });
 
@@ -115,12 +136,12 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
   it('يرفض السند عند عدم كفاية رصيد الخزينة برسالة المتاح', async () => {
     prisma.treasury.updateMany.mockResolvedValue({ count: 0 });
     await expect(
-      service.create({ ...baseDto, treasuryId: 'tr-1' } as never, 'user-1'),
+      service.create({ ...baseDto, treasuryId: 'tr-1' }, 'user-1'),
     ).rejects.toThrow('رصيد الخزينة لا يكفي — المتاح: 1000');
   });
 
   it('يخصم الخزينة بحرس شرطي (balance >= amount) داخل المعاملة', async () => {
-    await service.create({ ...baseDto, treasuryId: 'tr-1' } as never, 'user-1');
+    await service.create({ ...baseDto, treasuryId: 'tr-1' }, 'user-1');
     expect(prisma.treasury.updateMany).toHaveBeenCalledWith({
       where: {
         id: 'tr-1',
@@ -132,8 +153,8 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
   });
 
   it('يقيّد مدين النقدية / دائن سلف العمال ويربط القيد بالسند', async () => {
-    await service.create(baseDto as never, 'user-1');
-    expect(financial.postJournalEntryInTx).toHaveBeenCalledWith(
+    await service.create(baseDto, 'user-1');
+    expect(postJournalEntryInTx).toHaveBeenCalledWith(
       tx,
       expect.objectContaining({
         lines: [
@@ -146,7 +167,11 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
       }),
       'user-1',
     );
-    const createCall = prisma.workerReceipt.create.mock.calls[0][0];
+    const createCall = (
+      prisma.workerReceipt.create.mock.calls as unknown as Array<
+        [WorkerReceiptCreateCall]
+      >
+    )[0][0];
     expect(createCall.data.code).toBe('WRC-0001');
     expect(createCall.data.journalEntryId).toBe('je-1');
     expect(Number(createCall.data.amount)).toBe(250);
@@ -161,11 +186,15 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
       workerId: 'worker-1',
       from: '2026-09-01',
       to: '2026-09-30',
-    } as never);
+    });
     expect(result.workerTotals).toEqual([
       { workerId: 'worker-1', count: 2, total: 500 },
     ]);
-    const where = prisma.workerReceipt.groupBy.mock.calls[0][0].where;
+    const where = (
+      prisma.workerReceipt.groupBy.mock.calls as unknown as Array<
+        [WorkerReceiptGroupByCall]
+      >
+    )[0][0].where;
     expect(where.workerId).toBe('worker-1');
     expect(where.date).toEqual({
       gte: new Date('2026-09-01'),
@@ -182,7 +211,7 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
       journalEntryId: 'je-1',
     });
     const result = await service.remove('wrc-1', 'user-2');
-    expect(financial.reverseJournalEntryInTx).toHaveBeenCalledWith(
+    expect(reverseJournalEntryInTx).toHaveBeenCalledWith(
       tx,
       'je-1',
       'user-2',
@@ -207,7 +236,7 @@ describe('WorkerReceiptsService — سندات قبض العمال (SELIM W1)', 
       journalEntryId: null,
     });
     await service.remove('wrc-1', 'user-2');
-    expect(financial.reverseJournalEntryInTx).not.toHaveBeenCalled();
+    expect(reverseJournalEntryInTx).not.toHaveBeenCalled();
     expect(prisma.treasury.update).not.toHaveBeenCalled();
   });
 

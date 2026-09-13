@@ -1,8 +1,11 @@
 import 'reflect-metadata';
 import { CuttingOrderStatus, Prisma, WarehouseType } from '@prisma/client';
 import { CuttingService } from './cutting.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import type { PrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
  * SELIM-ERP W1 — اختبارات خدمة القص.
@@ -15,57 +18,88 @@ import { InventoryService } from '../inventory/inventory.service';
  * - العكس يرد كل الحركات من دفتر StockLedgerEntry (reference = رقم
  *   المستند) ويحذف سجل الأجر.
  */
+
+/** إدخال وسيط لقراءة بيانات إنشاء أمر القص (بلا any مسرب — نمط sales). */
+interface CuttingOrderCreateCall {
+  data: {
+    totalPieces: number;
+    totalLays: number;
+    wageTotal: number;
+    wagePerPiece: number | null;
+    status: CuttingOrderStatus;
+    // بنود الإنشاء المتداخلة — يُلوّب نوعها عند القراءة حسب الاختبار
+    lines: { create: unknown };
+  };
+}
+
+/** مدخلات صرف المصدر عبر InventoryService (التوليفة/الكمية/المرجع). */
+interface IssueFinishedGoodCall {
+  productVariantId: string;
+  quantity: number;
+  reference: string;
+}
+
+/** بيانات سجل أجر القص (DailyProduction). */
+interface DailyProductionData {
+  workerId: string;
+  piecesCount: number;
+  totalAmount: number;
+  notes: string;
+}
+
+/**
+ * SELIM-W1: امتداد محلي للـ mock الموحد — القص يحتاج طرقًا إضافية
+ * على نماذج قائمة: productVariant.findUnique/count (اختيار/إنشاء
+ * التوليفة الهدف)، finishedGoodStock.findFirst/update (أكبر رصيد +
+ * استرجاع المصدر عند العكس)، وdailyProduction.findFirst/delete
+ * (سجل الأجر) — بنمط SalesPrismaMock: لا نغيّر شكل نماذج قائمة في
+ * الـ helper المشترك حفاظًا على توابق بقية المواصفات.
+ */
+type CuttingPrismaMock = PrismaMock & {
+  productVariant: PrismaMock['productVariant'] & {
+    findUnique: jest.Mock;
+    count: jest.Mock;
+  };
+  finishedGoodStock: PrismaMock['finishedGoodStock'] & {
+    findFirst: jest.Mock;
+    update: jest.Mock;
+  };
+  dailyProduction: PrismaMock['dailyProduction'] & {
+    findFirst: jest.Mock;
+    delete: jest.Mock;
+  };
+};
+
+function createCuttingPrismaMock(): CuttingPrismaMock {
+  const base = createPrismaMock();
+  return {
+    ...base,
+    productVariant: {
+      ...base.productVariant,
+      findUnique: jest.fn(),
+      count: jest.fn(),
+    },
+    finishedGoodStock: {
+      ...base.finishedGoodStock,
+      findFirst: jest.fn(),
+      update: jest.fn(),
+    },
+    dailyProduction: {
+      ...base.dailyProduction,
+      findFirst: jest.fn(),
+      delete: jest.fn(),
+    },
+  };
+}
+
 describe('CuttingService — أوامر القص (SELIM W1)', () => {
   let service: CuttingService;
-  let prisma: {
-    $transaction: jest.Mock;
-    product: { findFirst: jest.Mock };
-    warehouse: { findUnique: jest.Mock };
-    worker: { findUnique: jest.Mock };
-    color: {
-      findMany: jest.Mock;
-      findUnique: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-    };
-    sizeGroup: {
-      findMany: jest.Mock;
-      findUnique: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-    };
-    cuttingOrder: {
-      findUnique: jest.Mock;
-      findMany: jest.Mock;
-      count: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-    };
-    cuttingLine: { update: jest.Mock };
-    productVariant: {
-      findUnique: jest.Mock;
-      create: jest.Mock;
-      count: jest.Mock;
-    };
-    finishedGoodStock: {
-      findFirst: jest.Mock;
-      findUnique: jest.Mock;
-      updateMany: jest.Mock;
-      update: jest.Mock;
-    };
-    stockLedgerEntry: { findMany: jest.Mock; create: jest.Mock };
-    dailyProduction: {
-      create: jest.Mock;
-      findFirst: jest.Mock;
-      delete: jest.Mock;
-    };
-  };
-  let sequence: { nextNumber: jest.Mock };
-  let inventory: {
-    issueFinishedGood: jest.Mock;
-    receiveFinishedGood: jest.Mock;
-  };
-  const tx: Record<string, unknown> = {};
+  let prisma: CuttingPrismaMock;
+  let nextNumber: jest.Mock;
+  let issueFinishedGood: jest.Mock;
+  let receiveFinishedGood: jest.Mock;
+  // tx يشترك مع prisma في نفس الـ mocks (المعاملة تمر على نفس الوكيل).
+  const tx = {} as unknown as CuttingPrismaMock;
 
   const activeOrder = (overrides: Record<string, unknown> = {}) => ({
     id: 'cut-1',
@@ -105,97 +139,91 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
   };
 
   beforeEach(() => {
-    prisma = {
-      $transaction: jest.fn().mockImplementation(async (arg) => {
-        if (typeof arg === 'function') return arg(tx);
-        return Promise.all(arg);
+    prisma = createCuttingPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (
+        arg: ((client: CuttingPrismaMock) => Promise<unknown>) | unknown[],
+      ): Promise<unknown> =>
+        typeof arg === 'function' ? arg(tx) : Promise.all(arg),
+    );
+    prisma.product.findFirst.mockResolvedValue({
+      id: 'prod-1',
+      name: 'تيشيرت بولو',
+    });
+    prisma.warehouse.findUnique.mockResolvedValue({
+      id: 'wh-fg',
+      isActive: true,
+      type: WarehouseType.FINISHED_GOODS,
+    });
+    prisma.worker.findUnique.mockResolvedValue({
+      id: 'worker-1',
+      isActive: true,
+    });
+    prisma.color.findMany.mockResolvedValue([]);
+    prisma.color.findUnique.mockResolvedValue(null);
+    prisma.color.create.mockResolvedValue({ id: 'color-1' });
+    prisma.color.update.mockResolvedValue({ id: 'color-1' });
+    prisma.sizeGroup.findMany.mockResolvedValue([]);
+    prisma.sizeGroup.findUnique.mockResolvedValue(null);
+    prisma.sizeGroup.create.mockResolvedValue({ id: 'sg-1' });
+    prisma.sizeGroup.update.mockResolvedValue({ id: 'sg-1' });
+    prisma.cuttingOrder.findUnique.mockResolvedValue(null);
+    prisma.cuttingOrder.findMany.mockResolvedValue([]);
+    prisma.cuttingOrder.count.mockResolvedValue(0);
+    prisma.cuttingOrder.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'cut-1',
+        ...data,
       }),
-      product: {
-        findFirst: jest
-          .fn()
-          .mockResolvedValue({ id: 'prod-1', name: 'تيشيرت بولو' }),
-      },
-      warehouse: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'wh-fg',
-          isActive: true,
-          type: WarehouseType.FINISHED_GOODS,
-        }),
-      },
-      worker: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'worker-1', isActive: true }),
-      },
-      color: {
-        findMany: jest.fn().mockResolvedValue([]),
-        findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 'color-1' }),
-        update: jest.fn().mockResolvedValue({ id: 'color-1' }),
-      },
-      sizeGroup: {
-        findMany: jest.fn().mockResolvedValue([]),
-        findUnique: jest.fn().mockResolvedValue(null),
-        create: jest.fn().mockResolvedValue({ id: 'sg-1' }),
-        update: jest.fn().mockResolvedValue({ id: 'sg-1' }),
-      },
-      cuttingOrder: {
-        findUnique: jest.fn().mockResolvedValue(null),
-        findMany: jest.fn().mockResolvedValue([]),
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockImplementation(async ({ data }) => ({
-          id: 'cut-1',
-          ...data,
-        })),
-        update: jest.fn().mockImplementation(async ({ data }) => ({
-          id: 'cut-1',
-          ...data,
-        })),
-      },
-      cuttingLine: { update: jest.fn().mockResolvedValue({ id: 'line-1' }) },
-      productVariant: {
-        findUnique: jest
-          .fn()
-          .mockResolvedValue({ id: 'var-target', isActive: true }),
-        create: jest
-          .fn()
-          .mockImplementation(async ({ data }) => ({ id: 'var-new', ...data })),
-        count: jest.fn().mockResolvedValue(0),
-      },
-      finishedGoodStock: {
-        findFirst: jest.fn().mockResolvedValue(null),
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'fgs-1',
-          quantity: 500,
-          unitCost: new Prisma.Decimal(40),
-        }),
-        updateMany: jest.fn().mockResolvedValue({ count: 1 }),
-        update: jest.fn().mockResolvedValue({ id: 'fgs-1' }),
-      },
-      stockLedgerEntry: {
-        findMany: jest.fn().mockResolvedValue([]),
-        create: jest.fn().mockResolvedValue({ id: 'sle-1' }),
-      },
-      dailyProduction: {
-        create: jest.fn().mockResolvedValue({ id: 'dp-1' }),
-        findFirst: jest.fn().mockResolvedValue(null),
-        delete: jest.fn().mockResolvedValue({ id: 'dp-1' }),
-      },
-    };
+    );
+    prisma.cuttingOrder.update.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'cut-1',
+        ...data,
+      }),
+    );
+    prisma.cuttingLine.update.mockResolvedValue({ id: 'line-1' });
+    prisma.productVariant.findUnique.mockResolvedValue({
+      id: 'var-target',
+      isActive: true,
+    });
+    prisma.productVariant.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'var-new',
+        ...data,
+      }),
+    );
+    prisma.productVariant.count.mockResolvedValue(0);
+    prisma.finishedGoodStock.findFirst.mockResolvedValue(null);
+    prisma.finishedGoodStock.findUnique.mockResolvedValue({
+      id: 'fgs-1',
+      quantity: 500,
+      unitCost: new Prisma.Decimal(40),
+    });
+    prisma.finishedGoodStock.updateMany.mockResolvedValue({ count: 1 });
+    prisma.finishedGoodStock.update.mockResolvedValue({ id: 'fgs-1' });
+    prisma.stockLedgerEntry.findMany.mockResolvedValue([]);
+    prisma.stockLedgerEntry.create.mockResolvedValue({ id: 'sle-1' });
+    prisma.dailyProduction.create.mockResolvedValue({ id: 'dp-1' });
+    prisma.dailyProduction.findFirst.mockResolvedValue(null);
+    prisma.dailyProduction.delete.mockResolvedValue({ id: 'dp-1' });
     Object.assign(tx, prisma);
-    sequence = { nextNumber: jest.fn().mockResolvedValue('CUT-0001') };
-    inventory = {
-      issueFinishedGood: jest
-        .fn()
-        .mockResolvedValue({ entryCode: 'SLE-1', unitCost: 40 }),
-      receiveFinishedGood: jest
-        .fn()
-        .mockResolvedValue({ entryCode: 'SLE-2', unitCost: 40 }),
-    };
+    nextNumber = jest.fn().mockResolvedValue('CUT-0001');
+    const sequence = { nextNumber } as unknown as SequenceService;
+    issueFinishedGood = jest
+      .fn()
+      .mockResolvedValue({ entryCode: 'SLE-1', unitCost: 40 });
+    receiveFinishedGood = jest
+      .fn()
+      .mockResolvedValue({ entryCode: 'SLE-2', unitCost: 40 });
+    const inventory = {
+      issueFinishedGood,
+      receiveFinishedGood,
+    } as unknown as InventoryService;
     service = new CuttingService(
-      prisma as never,
-      sequence as unknown as SequenceService,
-      inventory as unknown as InventoryService,
+      prisma as unknown as PrismaService,
+      sequence,
+      inventory,
     );
   });
 
@@ -203,11 +231,15 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
 
   it('يحسب الكميات والإجماليات على الخادم: بند = رقصات × قطع الرقصة', async () => {
     await service.create(
-      { ...baseCreateDto, workerId: 'worker-1', wagePerPiece: 2 } as never,
+      { ...baseCreateDto, workerId: 'worker-1', wagePerPiece: 2 },
       'user-1',
     );
-    expect(sequence.nextNumber).toHaveBeenCalledWith('CUTTING_ORDER', tx);
-    const createCall = prisma.cuttingOrder.create.mock.calls[0][0];
+    expect(nextNumber).toHaveBeenCalledWith('CUTTING_ORDER', tx);
+    const createCall = (
+      prisma.cuttingOrder.create.mock.calls as unknown as Array<
+        [CuttingOrderCreateCall]
+      >
+    )[0][0];
     // بندان: 3×25=75 و2×30=60 → 135 قطعة و5 رقصات؛ أجر 135×2=270.
     expect(Number(createCall.data.totalPieces)).toBe(135);
     expect(Number(createCall.data.totalLays)).toBe(5);
@@ -219,8 +251,12 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
   });
 
   it('لا يحسب أجرًا بلا عامل (أو بلا أجر قطعة)', async () => {
-    await service.create(baseCreateDto as never, 'user-1');
-    const createCall = prisma.cuttingOrder.create.mock.calls[0][0];
+    await service.create(baseCreateDto, 'user-1');
+    const createCall = (
+      prisma.cuttingOrder.create.mock.calls as unknown as Array<
+        [CuttingOrderCreateCall]
+      >
+    )[0][0];
     expect(Number(createCall.data.wageTotal)).toBe(0);
     expect(createCall.data.wagePerPiece).toBeNull();
   });
@@ -231,7 +267,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
         {
           ...baseCreateDto,
           lines: [{ size: 'M', layCount: 1, piecesPerLay: 2.5 }],
-        } as never,
+        },
         'user-1',
       ),
     ).rejects.toThrow('أوامر القص تتطلب قطعًا صحيحة');
@@ -256,7 +292,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
     prisma.product.findFirst.mockResolvedValue({ id: 'prod-1' });
     prisma.worker.findUnique.mockResolvedValue({ id: 'w', isActive: false });
     await expect(
-      service.create({ ...baseCreateDto, workerId: 'w' } as never, 'user-1'),
+      service.create({ ...baseCreateDto, workerId: 'w' }, 'user-1'),
     ).rejects.toThrow('العامل المحدد غير موجود أو غير نشط');
   });
 
@@ -268,11 +304,17 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
         lines: [
           { size: 'M', layCount: 1, piecesPerLay: 10, colorId: 'color-9' },
         ],
-      } as never,
+      },
       'user-1',
     );
-    const lines = prisma.cuttingOrder.create.mock.calls[0][0].data.lines
-      .create as { color: string | null; colorId: string | null }[];
+    const lines = (
+      prisma.cuttingOrder.create.mock.calls as unknown as Array<
+        [CuttingOrderCreateCall]
+      >
+    )[0][0].data.lines.create as {
+      color: string | null;
+      colorId: string | null;
+    }[];
     expect(lines[0].colorId).toBe('color-9');
     expect(lines[0].color).toBe('أحمر');
   });
@@ -307,13 +349,9 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       unitCost: 40,
     });
     await expect(
-      service.activate(
-        'cut-1',
-        { sourceVariantId: 'var-1' } as never,
-        'user-1',
-      ),
+      service.activate('cut-1', { sourceVariantId: 'var-1' }, 'user-1'),
     ).rejects.toThrow('المخزون غير كافٍ — المتاح: 50 والمطلوب: 100');
-    expect(inventory.issueFinishedGood).not.toHaveBeenCalled();
+    expect(issueFinishedGood).not.toHaveBeenCalled();
   });
 
   it('يرفض توليفة مصدر لا تنتمي للموديل', async () => {
@@ -324,11 +362,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       isActive: true,
     });
     await expect(
-      service.activate(
-        'cut-1',
-        { sourceVariantId: 'var-x' } as never,
-        'user-1',
-      ),
+      service.activate('cut-1', { sourceVariantId: 'var-x' }, 'user-1'),
     ).rejects.toThrow('لا تنتمي للموديل المقصوص');
   });
 
@@ -341,8 +375,10 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       productVariantId: 'var-auto',
       quantity: 900,
     });
-    await service.activate('cut-1', {} as never, 'user-1');
-    const issueInput = inventory.issueFinishedGood.mock.calls[0][0];
+    await service.activate('cut-1', {}, 'user-1');
+    const issueInput = (
+      issueFinishedGood.mock.calls as unknown as Array<[IssueFinishedGoodCall]>
+    )[0][0];
     expect(issueInput.productVariantId).toBe('var-auto');
     expect(issueInput.quantity).toBe(100);
     expect(issueInput.reference).toBe('CUT-0001');
@@ -353,7 +389,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
   it('التفعيل يصرف المصدر ويُدخل كل توليفة بتكلفته ويسجل الأجر', async () => {
     prisma.cuttingOrder.findUnique.mockResolvedValue(activeOrder());
     prisma.productVariant.findUnique.mockImplementation(
-      async ({ where }: { where: { id?: string } }) =>
+      ({ where }: { where: { id?: string } }) =>
         where.id
           ? { id: 'var-1', productId: 'prod-1', isActive: true }
           : { id: 'var-target', isActive: true },
@@ -363,14 +399,10 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       quantity: 500,
       unitCost: 40,
     });
-    await service.activate(
-      'cut-1',
-      { sourceVariantId: 'var-1' } as never,
-      'user-1',
-    );
+    await service.activate('cut-1', { sourceVariantId: 'var-1' }, 'user-1');
 
     // (ب) صرف المصدر بكامل القطع.
-    expect(inventory.issueFinishedGood).toHaveBeenCalledWith(
+    expect(issueFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
         productVariantId: 'var-1',
         warehouseId: 'wh-fg',
@@ -381,7 +413,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       tx,
     );
     // (ج) إدخال التوليفة الهدف بتكلفة المصدر نفسها + ربط البند بها.
-    expect(inventory.receiveFinishedGood).toHaveBeenCalledWith(
+    expect(receiveFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
         productVariantId: 'var-target',
         quantity: 100,
@@ -396,7 +428,11 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       data: { productVariantId: 'var-target' },
     });
     // (د) سجل أجر القص للعامل بالقطع الصحيحة.
-    const dp = prisma.dailyProduction.create.mock.calls[0][0].data;
+    const dp = (
+      prisma.dailyProduction.create.mock.calls as unknown as Array<
+        [{ data: DailyProductionData }]
+      >
+    )[0][0].data;
     expect(dp.workerId).toBe('worker-1');
     expect(dp.piecesCount).toBe(100);
     expect(Number(dp.totalAmount)).toBe(250);
@@ -420,7 +456,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       quantity: 900,
     });
     prisma.productVariant.findUnique.mockResolvedValue(null);
-    await service.activate('cut-1', {} as never, 'user-1');
+    await service.activate('cut-1', {}, 'user-1');
     expect(prisma.productVariant.create).toHaveBeenCalledWith({
       data: {
         productId: 'prod-1',
@@ -464,7 +500,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
       },
     ]);
     prisma.finishedGoodStock.findUnique.mockImplementation(
-      async ({
+      ({
         where,
       }: {
         where: { warehouseId_productVariantId: { productVariantId: string } };
@@ -496,7 +532,10 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
     // عكس حركة الصرف (المصدر): استرجاع بذات التكلفة (متوسط مرجح).
     expect(prisma.finishedGoodStock.update).toHaveBeenCalledWith({
       where: { id: 'fgs-1' },
-      data: expect.objectContaining({ quantity: { increment: 100 } }),
+      data: expect.objectContaining({ quantity: { increment: 100 } }) as Record<
+        string,
+        unknown
+      >,
     });
     // حركتا العكس في دفتر الحركات بنفس مرجع المستند.
     const created = prisma.stockLedgerEntry.create.mock.calls as unknown as [
@@ -521,7 +560,7 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
         data: expect.objectContaining({
           status: CuttingOrderStatus.REVERSED,
           reversedById: 'user-2',
-        }),
+        }) as Record<string, unknown>,
       }),
     );
   });
@@ -540,10 +579,10 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
   it('يرفض اسم لون مكررًا والحذف منطقي', async () => {
     prisma.color.findUnique.mockResolvedValue({ id: 'color-1' });
     await expect(
-      service.createColor({ name: 'كحلي', hex: '#1F3A93' } as never),
+      service.createColor({ name: 'كحلي', hex: '#1F3A93' }),
     ).rejects.toThrow('يوجد لون بهذا الاسم بالفعل');
     prisma.color.findUnique.mockResolvedValue(null);
-    await service.createColor({ name: 'كحلي', hex: '#1F3A93' } as never);
+    await service.createColor({ name: 'كحلي', hex: '#1F3A93' });
     expect(prisma.color.create).toHaveBeenCalledWith({
       data: { name: 'كحلي', hex: '#1F3A93', isActive: true },
     });
@@ -558,17 +597,17 @@ describe('CuttingService — أوامر القص (SELIM W1)', () => {
 
   it('يرفض مجموعة مقاسات فارغة أو مكررة والحذف منطقي', async () => {
     await expect(
-      service.createSizeGroup({ name: 'شبابي', sizes: ['  '] } as never),
+      service.createSizeGroup({ name: 'شبابي', sizes: ['  '] }),
     ).rejects.toThrow('قيمًا فارغة');
     prisma.sizeGroup.findUnique.mockResolvedValue({ id: 'sg-1' });
     await expect(
-      service.createSizeGroup({ name: 'شبابي', sizes: ['S'] } as never),
+      service.createSizeGroup({ name: 'شبابي', sizes: ['S'] }),
     ).rejects.toThrow('بهذا الاسم');
     prisma.sizeGroup.findUnique.mockResolvedValue(null);
     await service.createSizeGroup({
       name: 'شبابي',
       sizes: ['S', 'M', 'L'],
-    } as never);
+    });
     expect(prisma.sizeGroup.create).toHaveBeenCalledWith({
       data: { name: 'شبابي', sizes: ['S', 'M', 'L'], isActive: true },
     });

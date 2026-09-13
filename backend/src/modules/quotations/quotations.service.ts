@@ -267,7 +267,7 @@ export class QuotationsService {
     }
     return this.prisma.quotation.update({
       where: { id },
-      data: { status: action as QuotationStatus },
+      data: { status: action },
       include: { items: true },
     });
   }
@@ -409,7 +409,7 @@ export class QuotationsService {
     const stats: Record<string, { count: number; total: number }> = {};
     for (const group of byStatus) {
       stats[group.status] = {
-        count: group._count as number,
+        count: group._count,
         total: Number(group._sum?.total ?? 0),
       };
     }

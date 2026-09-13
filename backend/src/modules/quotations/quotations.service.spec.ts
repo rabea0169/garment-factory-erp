@@ -1,8 +1,11 @@
 import 'reflect-metadata';
 import { QuotationStatus } from '@prisma/client';
 import { QuotationsService } from './quotations.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
 import { FinancialPostingService } from '../../core/financial/financial-posting.service';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import type { PrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
  * SELIM-ERP W1 — اختبارات خدمة عروض الأسعار.
@@ -14,28 +17,35 @@ import { FinancialPostingService } from '../../core/financial/financial-posting.
  * - التحويل يتطلب بروابط SKU كاملة + عميلًا مسجلًا.
  * - الترقيم التسلسلي يُولَّد داخل المعاملة.
  */
+
+/** إدخال وسيط لقراءة بيانات إنشاء العرض (بلا any مسرب — نمط sales spec). */
+interface QuotationCreateCall {
+  data: { subtotal: number; vatAmount: number; total: number };
+}
+
+/**
+ * SELIM-W1: امتداد محلي للـ mock الموحد — التحقق من بنود العرض يحتاج
+ * productVariant.count (نمط SalesPrismaMock: لا نغيّر شكل نماذج قائمة
+ * في الـ helper المشترك حفاظًا على توافق بقية المواصفات).
+ */
+type QuotationsPrismaMock = PrismaMock & {
+  productVariant: PrismaMock['productVariant'] & { count: jest.Mock };
+};
+
+function createQuotationsPrismaMock(): QuotationsPrismaMock {
+  const base = createPrismaMock();
+  return {
+    ...base,
+    productVariant: { ...base.productVariant, count: jest.fn() },
+  };
+}
+
 describe('QuotationsService — قواعد عروض الأسعار (SELIM W1)', () => {
   let service: QuotationsService;
-  let prisma: {
-    $transaction: jest.Mock;
-    quotation: {
-      findUnique: jest.Mock;
-      findFirst: jest.Mock;
-      findMany: jest.Mock;
-      count: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-      delete: jest.Mock;
-      groupBy: jest.Mock;
-      aggregate: jest.Mock;
-    };
-    customer: { findFirst: jest.Mock };
-    product: { count: jest.Mock };
-    productVariant: { count: jest.Mock; findMany: jest.Mock };
-    salesOrder: { count: jest.Mock; create: jest.Mock };
-  };
-  let sequence: { nextNumber: jest.Mock };
-  const tx = {} as unknown as Record<string, unknown>;
+  let prisma: QuotationsPrismaMock;
+  let nextNumber: jest.Mock;
+  // tx يشترك مع prisma في نفس الـ mocks (المعاملة تمر على نفس الوكيل).
+  const tx = {} as unknown as QuotationsPrismaMock;
 
   const baseDto = {
     customerId: 'cust-1',
@@ -54,56 +64,53 @@ describe('QuotationsService — قواعد عروض الأسعار (SELIM W1)', 
   };
 
   beforeEach(() => {
-    prisma = {
-      $transaction: jest.fn().mockImplementation(async (arg) => {
-        if (typeof arg === 'function') return arg(tx);
-        return [[], 0];
-      }),
-      quotation: {
-        findUnique: jest.fn(),
-        findFirst: jest.fn(),
-        findMany: jest.fn().mockResolvedValue([]),
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockResolvedValue({ id: 'q-1' }),
-        update: jest.fn().mockResolvedValue({ id: 'q-1' }),
-        delete: jest.fn().mockResolvedValue({ id: 'q-1' }),
-        groupBy: jest.fn().mockResolvedValue([]),
-        aggregate: jest.fn().mockResolvedValue({ _sum: { total: null } }),
-      },
-      customer: {
-        findFirst: jest
-          .fn()
-          .mockResolvedValue({ id: 'cust-1', name: 'شركة النور' }),
-      },
-      product: { count: jest.fn().mockResolvedValue(1) },
-      productVariant: {
-        count: jest.fn().mockResolvedValue(1),
-        findMany: jest.fn().mockResolvedValue([]),
-      },
-      salesOrder: {
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockResolvedValue({ id: 'so-1' }),
-      },
-    };
+    prisma = createQuotationsPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (
+        arg: ((client: QuotationsPrismaMock) => Promise<unknown>) | unknown[],
+      ): Promise<unknown> =>
+        typeof arg === 'function' ? arg(tx) : Promise.resolve([[], 0]),
+    );
+    prisma.quotation.findMany.mockResolvedValue([]);
+    prisma.quotation.count.mockResolvedValue(0);
+    prisma.quotation.create.mockResolvedValue({ id: 'q-1' });
+    prisma.quotation.update.mockResolvedValue({ id: 'q-1' });
+    prisma.quotation.delete.mockResolvedValue({ id: 'q-1' });
+    prisma.quotation.groupBy.mockResolvedValue([]);
+    prisma.quotation.aggregate.mockResolvedValue({ _sum: { total: null } });
+    prisma.customer.findFirst.mockResolvedValue({
+      id: 'cust-1',
+      name: 'شركة النور',
+    });
+    prisma.product.count.mockResolvedValue(1);
+    prisma.productVariant.count.mockResolvedValue(1);
+    prisma.productVariant.findMany.mockResolvedValue([]);
+    prisma.salesOrder.count.mockResolvedValue(0);
+    prisma.salesOrder.create.mockResolvedValue({ id: 'so-1' });
     Object.assign(tx, prisma);
-    sequence = { nextNumber: jest.fn().mockResolvedValue('QUO-0001') };
+    nextNumber = jest.fn().mockResolvedValue('QUO-0001');
+    const sequence = { nextNumber } as unknown as SequenceService;
     const financial = {} as unknown as FinancialPostingService;
     service = new QuotationsService(
-      prisma as never,
-      sequence as unknown as SequenceService,
+      prisma as unknown as PrismaService,
+      sequence,
       financial,
     );
   });
 
   it('يحسب الإجماليات على الخادم: مجموع + VAT على الصافي', async () => {
     await service.create(baseDto as never, 'user-1');
-    const createCall = prisma.quotation.create.mock.calls[0][0];
+    const createCall = (
+      prisma.quotation.create.mock.calls as unknown as Array<
+        [QuotationCreateCall]
+      >
+    )[0][0];
     // 10 × 250 = 2500، VAT 14% على 2500 = 350، الإجمالي 2850.
     expect(Number(createCall.data.subtotal)).toBe(2500);
     expect(Number(createCall.data.vatAmount)).toBe(350);
     expect(Number(createCall.data.total)).toBe(2850);
     // الترقيم عبر SequenceService داخل المعاملة.
-    expect(sequence.nextNumber).toHaveBeenCalledWith('QUOTATION', tx);
+    expect(nextNumber).toHaveBeenCalledWith('QUOTATION', tx);
   });
 
   it('يرفض الخصم الأكبر من مجموع البنود', async () => {

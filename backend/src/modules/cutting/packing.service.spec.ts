@@ -1,8 +1,11 @@
 import 'reflect-metadata';
 import { Prisma } from '@prisma/client';
 import { PackingService } from './packing.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { SequenceService } from '../../core/sequence/sequence.service';
 import { InventoryService } from '../inventory/inventory.service';
+import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import type { PrismaMock } from '../../../test/helpers/prisma-mock';
 
 /**
  * SELIM-ERP W1 — اختبارات خدمة العبوات.
@@ -14,32 +17,74 @@ import { InventoryService } from '../inventory/inventory.service';
  *   والتكلفة تُسترجع من آخر بناء عند التفكيك.
  * - الحذف يُرفض لأي عبوة لها عمليات بناء.
  */
+
+/** إدخال وسيط لقراءة بيانات إنشاء العبوة (بلا any مسرب — نمط sales). */
+interface PackCreateCall {
+  data: {
+    code: string;
+    name: string;
+    components: { create: unknown };
+  };
+}
+
+/** تفاصيل توثيق البناء/التفكيك في سجل التدقيق. */
+interface ActivityLogDetails {
+  packId: string;
+  count: number;
+  components: Array<{
+    productVariantId: string;
+    quantity: number;
+    unitCost: number;
+  }>;
+}
+
+/** إدخال وسيط لقراءة بيانات سجل التدقيق (PACK_BUILD/PACK_UNPACK). */
+interface ActivityLogCreateCall {
+  data: {
+    action: string;
+    module: string;
+    userId: string;
+    details: ActivityLogDetails;
+  };
+}
+
+/**
+ * SELIM-W1: امتداد محلي للـ mock الموحد — التعبئة تحتاج قراءة سجل
+ * التدقيق (activityLog.findMany/findFirst/count لاشتقاق المتاح) و
+ * productVariant.count للتحقق من المكونات (نمط SalesPrismaMock: لا
+ * نغيّر شكل نماذج قائمة في الـ helper المشترك).
+ */
+type PackingPrismaMock = PrismaMock & {
+  activityLog: PrismaMock['activityLog'] & {
+    findMany: jest.Mock;
+    findFirst: jest.Mock;
+    count: jest.Mock;
+  };
+  productVariant: PrismaMock['productVariant'] & { count: jest.Mock };
+};
+
+function createPackingPrismaMock(): PackingPrismaMock {
+  const base = createPrismaMock();
+  return {
+    ...base,
+    activityLog: {
+      ...base.activityLog,
+      findMany: jest.fn(),
+      findFirst: jest.fn(),
+      count: jest.fn(),
+    },
+    productVariant: { ...base.productVariant, count: jest.fn() },
+  };
+}
+
 describe('PackingService — العبوات (SELIM W1)', () => {
   let service: PackingService;
-  let prisma: {
-    $transaction: jest.Mock;
-    pack: {
-      findUnique: jest.Mock;
-      findMany: jest.Mock;
-      count: jest.Mock;
-      create: jest.Mock;
-      update: jest.Mock;
-    };
-    productVariant: { count: jest.Mock };
-    finishedGoodStock: { findUnique: jest.Mock };
-    activityLog: {
-      findMany: jest.Mock;
-      findFirst: jest.Mock;
-      count: jest.Mock;
-      create: jest.Mock;
-    };
-  };
-  let sequence: { nextNumber: jest.Mock };
-  let inventory: {
-    issueFinishedGood: jest.Mock;
-    receiveFinishedGood: jest.Mock;
-  };
-  const tx: Record<string, unknown> = {};
+  let prisma: PackingPrismaMock;
+  let nextNumber: jest.Mock;
+  let issueFinishedGood: jest.Mock;
+  let receiveFinishedGood: jest.Mock;
+  // tx يشترك مع prisma في نفس الـ mocks (المعاملة تمر على نفس الوكيل).
+  const tx = {} as unknown as PackingPrismaMock;
 
   const packRow = () => ({
     id: 'pack-1',
@@ -63,50 +108,50 @@ describe('PackingService — العبوات (SELIM W1)', () => {
   };
 
   beforeEach(() => {
-    prisma = {
-      $transaction: jest.fn().mockImplementation(async (arg) => {
-        if (typeof arg === 'function') return arg(tx);
-        return Promise.all(arg);
+    prisma = createPackingPrismaMock();
+    prisma.$transaction.mockImplementation(
+      (
+        arg: ((client: PackingPrismaMock) => Promise<unknown>) | unknown[],
+      ): Promise<unknown> =>
+        typeof arg === 'function' ? arg(tx) : Promise.all(arg),
+    );
+    prisma.pack.findUnique.mockResolvedValue(packRow());
+    prisma.pack.findMany.mockResolvedValue([packRow()]);
+    prisma.pack.count.mockResolvedValue(1);
+    prisma.pack.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) => ({
+        id: 'pack-1',
+        ...data,
       }),
-      pack: {
-        findUnique: jest.fn().mockResolvedValue(packRow()),
-        findMany: jest.fn().mockResolvedValue([packRow()]),
-        count: jest.fn().mockResolvedValue(1),
-        create: jest.fn().mockImplementation(async ({ data }) => ({
-          id: 'pack-1',
-          ...data,
-        })),
-        update: jest.fn().mockResolvedValue({ id: 'pack-1' }),
-      },
-      productVariant: { count: jest.fn().mockResolvedValue(2) },
-      finishedGoodStock: {
-        findUnique: jest.fn().mockResolvedValue({
-          id: 'fgs-1',
-          quantity: 500,
-          unitCost: 40,
-        }),
-      },
-      activityLog: {
-        findMany: jest.fn().mockResolvedValue([]),
-        findFirst: jest.fn().mockResolvedValue(null),
-        count: jest.fn().mockResolvedValue(0),
-        create: jest.fn().mockResolvedValue({ id: 'log-1' }),
-      },
-    };
+    );
+    prisma.pack.update.mockResolvedValue({ id: 'pack-1' });
+    prisma.productVariant.count.mockResolvedValue(2);
+    prisma.finishedGoodStock.findUnique.mockResolvedValue({
+      id: 'fgs-1',
+      quantity: 500,
+      unitCost: 40,
+    });
+    prisma.activityLog.findMany.mockResolvedValue([]);
+    prisma.activityLog.findFirst.mockResolvedValue(null);
+    prisma.activityLog.count.mockResolvedValue(0);
+    prisma.activityLog.create.mockResolvedValue({ id: 'log-1' });
     Object.assign(tx, prisma);
-    sequence = { nextNumber: jest.fn().mockResolvedValue('PACK-0001') };
-    inventory = {
-      issueFinishedGood: jest
-        .fn()
-        .mockResolvedValue({ entryCode: 'SLE-1', unitCost: 40 }),
-      receiveFinishedGood: jest
-        .fn()
-        .mockResolvedValue({ entryCode: 'SLE-2', unitCost: 40 }),
-    };
+    nextNumber = jest.fn().mockResolvedValue('PACK-0001');
+    const sequence = { nextNumber } as unknown as SequenceService;
+    issueFinishedGood = jest
+      .fn()
+      .mockResolvedValue({ entryCode: 'SLE-1', unitCost: 40 });
+    receiveFinishedGood = jest
+      .fn()
+      .mockResolvedValue({ entryCode: 'SLE-2', unitCost: 40 });
+    const inventory = {
+      issueFinishedGood,
+      receiveFinishedGood,
+    } as unknown as InventoryService;
     service = new PackingService(
-      prisma as never,
-      sequence as unknown as SequenceService,
-      inventory as unknown as InventoryService,
+      prisma as unknown as PrismaService,
+      sequence,
+      inventory,
     );
   });
 
@@ -119,7 +164,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
             { productVariantId: 'var-1', quantity: 12 },
             { productVariantId: 'var-1', quantity: 6 },
           ],
-        } as never,
+        },
         'user-1',
       ),
     ).rejects.toThrow('كل توليفة تظهر مرة واحدة');
@@ -133,9 +178,11 @@ describe('PackingService — العبوات (SELIM W1)', () => {
   });
 
   it('يولّد PACK-0001 نظاميًا ويتجاهل كود العميل', async () => {
-    await service.create(createDto as never, 'user-1');
-    expect(sequence.nextNumber).toHaveBeenCalledWith('PACK', tx);
-    const createCall = prisma.pack.create.mock.calls[0][0];
+    await service.create(createDto, 'user-1');
+    expect(nextNumber).toHaveBeenCalledWith('PACK', tx);
+    const createCall = (
+      prisma.pack.create.mock.calls as unknown as Array<[PackCreateCall]>
+    )[0][0];
     expect(createCall.data.code).toBe('PACK-0001');
     expect(createCall.data.name).toBe('سرية 12 قطعة');
     const components = createCall.data.components.create as {
@@ -163,7 +210,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
     await expect(
       service.build('pack-1', { warehouseId: 'wh-fg', count: 3 }, 'user-1'),
     ).rejects.toThrow('رصيد المكون غير كافٍ — المتاح: 30 والمطلوب: 36');
-    expect(inventory.issueFinishedGood).not.toHaveBeenCalled();
+    expect(issueFinishedGood).not.toHaveBeenCalled();
   });
 
   it('البناء يخصم كل مكون (كمية × عدد) ويسجل PACK_BUILD بالتكلفة', async () => {
@@ -173,7 +220,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
       'user-1',
     );
     // 12×3=36 و6×3=18 عبر issueFinishedGood بمرجع كود العبوة.
-    expect(inventory.issueFinishedGood).toHaveBeenCalledWith(
+    expect(issueFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
         productVariantId: 'var-1',
         warehouseId: 'wh-fg',
@@ -183,7 +230,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
       'user-1',
       tx,
     );
-    expect(inventory.issueFinishedGood).toHaveBeenCalledWith(
+    expect(issueFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
         productVariantId: 'var-2',
         quantity: 18,
@@ -192,7 +239,11 @@ describe('PackingService — العبوات (SELIM W1)', () => {
       tx,
     );
     // توثيق التدقيق: PACK_BUILD بتفاصيل تحمل الكمية وتكلفة الوحدة.
-    const log = prisma.activityLog.create.mock.calls[0][0].data;
+    const log = (
+      prisma.activityLog.create.mock.calls as unknown as Array<
+        [ActivityLogCreateCall]
+      >
+    )[0][0].data;
     expect(log.action).toBe('PACK_BUILD');
     expect(log.module).toBe('PACKING');
     expect(log.userId).toBe('user-1');
@@ -227,7 +278,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
       { warehouseId: 'wh-fg', count: 2 },
       'user-1',
     );
-    expect(inventory.receiveFinishedGood).toHaveBeenCalledWith(
+    expect(receiveFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
         productVariantId: 'var-1',
         warehouseId: 'wh-fg',
@@ -238,7 +289,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
       'user-1',
       tx,
     );
-    expect(inventory.receiveFinishedGood).toHaveBeenCalledWith(
+    expect(receiveFinishedGood).toHaveBeenCalledWith(
       expect.objectContaining({
         productVariantId: 'var-2',
         quantity: 12,
@@ -247,7 +298,11 @@ describe('PackingService — العبوات (SELIM W1)', () => {
       'user-1',
       tx,
     );
-    const log = prisma.activityLog.create.mock.calls[0][0].data;
+    const log = (
+      prisma.activityLog.create.mock.calls as unknown as Array<
+        [ActivityLogCreateCall]
+      >
+    )[0][0].data;
     expect(log.action).toBe('PACK_UNPACK');
     expect(log.details.count).toBe(2);
     expect(result.unpackedCount).toBe(2);
@@ -282,7 +337,7 @@ describe('PackingService — العبوات (SELIM W1)', () => {
         details: { packId: 'pack-1', count: 2 },
       },
     ]);
-    const result = await service.listPacks({} as never);
+    const result = await service.listPacks({});
     expect(result.items[0].availableCount).toBe(3);
     expect(result.total).toBe(1);
   });
