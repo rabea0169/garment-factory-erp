@@ -174,6 +174,28 @@ class RouteAccess {
       AppRoles.cashier,
       AppRoles.superAdmin,
     },
+
+    // ===== SELIM-ERP W2: قيود الموجة الثانية (مرآة @Roles الخادمية) =====
+    // نقطة البيع: CASHIER/GM/SA (POS_ROLES الخادمية).
+    '/pos': {
+      AppRoles.cashier,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // معالج الاستيراد: اتحاد أدوار إنشاء الكيانات الأربعة (الخادم يفحص
+    // الكيان المحدد بدقة — هذا حاجز التنقل الأول).
+    '/import': {
+      AppRoles.generalManager,
+      AppRoles.productionManager,
+      AppRoles.cashier,
+      AppRoles.hrManager,
+      AppRoles.inventoryManager,
+      AppRoles.superAdmin,
+    },
+    // النسخ الاحتياطي/الاستعادة: SUPER_ADMIN فقط (SYSTEM الخادمية).
+    '/backup': {
+      AppRoles.superAdmin,
+    },
   };
 
   /// هل يملك [role] صلاحية الوصول إلى [location]؟

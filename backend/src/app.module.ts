@@ -40,6 +40,11 @@ import { CuttingModule } from './modules/cutting/cutting.module';
 import { PrintingModule } from './modules/printing/printing.module';
 import { JournalTemplatesModule } from './modules/journal-templates/journal-templates.module';
 import { FinancialReportsModule } from './modules/financial-reports/financial-reports.module';
+// SELIM-ERP W2 — الموجة الثانية: بحث شامل + نقطة بيع + استيراد + نسخ احتياطي.
+import { SearchModule } from './modules/search/search.module';
+import { PosModule } from './modules/pos/pos.module';
+import { DataImportModule } from './modules/data-import/data-import.module';
+import { SystemModule } from './modules/system/system.module';
 
 @Module({
   imports: [
@@ -106,6 +111,11 @@ import { FinancialReportsModule } from './modules/financial-reports/financial-re
     PrintingModule,
     JournalTemplatesModule,
     FinancialReportsModule,
+    // SELIM-ERP W2 — الموجة الثانية (بحث/POS/استيراد/نسخ احتياطي).
+    SearchModule,
+    PosModule,
+    DataImportModule,
+    SystemModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200

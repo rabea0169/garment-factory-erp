@@ -54,6 +54,7 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
       Icons.account_balance_rounded,
       const Color(0xFF00695C),
       [
+        _MoreItem('نقطة البيع', Icons.point_of_sale_rounded, const Color(0xFF00897B), AppRouter.pos),
         _MoreItem('عروض الأسعار', Icons.request_quote_rounded, const Color(0xFF3949AB), AppRouter.quotations),
         _MoreItem('مرتجع المشتريات', Icons.assignment_return_rounded, const Color(0xFFE65100), AppRouter.purchaseReturns),
         _MoreItem('الخزينة', Icons.account_balance_wallet_rounded, const Color(0xFF00897B), AppRouter.treasury),
@@ -86,6 +87,8 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
       Icons.admin_panel_settings_rounded,
       const Color(0xFF37474F),
       [
+        _MoreItem('معالج الاستيراد', Icons.upload_file_rounded, const Color(0xFF00838F), AppRouter.importWizard),
+        _MoreItem('النسخ الاحتياطي', Icons.backup_rounded, const Color(0xFF37474F), AppRouter.backup),
         _MoreItem('مركز الطباعة', Icons.print_rounded, const Color(0xFFE65100), AppRouter.printing),
         _MoreItem('المستخدمون', Icons.manage_accounts_rounded, const Color(0xFF37474F), AppRouter.users),
         _MoreItem('الشحن والتوزيع', Icons.local_shipping_rounded, const Color(0xFF00695C), AppRouter.shipping),

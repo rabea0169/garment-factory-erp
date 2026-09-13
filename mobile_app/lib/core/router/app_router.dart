@@ -29,6 +29,10 @@ import '../../features/payroll_statements/presentation/screens/payroll_statement
 import '../../features/cutting/presentation/screens/cutting_screen.dart';
 import '../../features/financial_reports/presentation/screens/financial_reports_screen.dart';
 import '../../features/printing/presentation/screens/printing_screen.dart';
+// SELIM-ERP W2 — نقطة البيع + الاستيراد + النسخ الاحتياطي.
+import '../../features/pos/presentation/screens/pos_screen.dart';
+import '../../features/data_import/presentation/screens/import_screen.dart';
+import '../../features/system/presentation/screens/backup_screen.dart';
 import '../storage/auth_storage.dart';
 import '../security/route_access.dart';
 
@@ -67,6 +71,10 @@ class AppRouter {
   static const String cutting = '/cutting';
   static const String financialReports = '/financial-reports';
   static const String printing = '/printing';
+  // SELIM-ERP W2 — مسارات الموجة الثانية.
+  static const String pos = '/pos';
+  static const String importWizard = '/import';
+  static const String backup = '/backup';
 
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static String _initialLocation = login;
@@ -268,6 +276,22 @@ class AppRouter {
         path: printing,
         name: 'printing',
         builder: (context, state) => const PrintingScreen(),
+      ),
+      // SELIM-ERP W2 — نقطة البيع (Cubit يُنشأ داخل الشاشة).
+      GoRoute(
+        path: pos,
+        name: 'pos',
+        builder: (context, state) => const PosScreen(),
+      ),
+      GoRoute(
+        path: importWizard,
+        name: 'import',
+        builder: (context, state) => const ImportScreen(),
+      ),
+      GoRoute(
+        path: backup,
+        name: 'backup',
+        builder: (context, state) => const BackupScreen(),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(
