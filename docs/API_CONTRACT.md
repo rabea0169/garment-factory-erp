@@ -4,6 +4,42 @@
 
 **Base URL:** `http://<host>:3005` (PORT من البيئة — ADR-0004) · **Docs:** `/api/docs` · **Auth:** `Authorization: Bearer <JWT>`
 
+## SELIM-ERP W2 — نقاط النهاية الجديدة (v1.3.0)
+
+### البحث الشامل
+| Method | Path | Roles | الوصف |
+|---|---|---|---|
+| GET | `/search?q=` | كل موثّق (تصفية داخلية) | بحث عبر 9 أنواع بحد 5 لكل نوع — المجموعات تُصفى بدور المستخدم (INV-2 للمالية) |
+
+**الاستجابة**: `{ query, groups: [{ type, hits: [{ type, id, title, subtitle, code }] }] }`
+
+### نقطة البيع (POS)
+| Method | Path | Roles | الوصف |
+|---|---|---|---|
+| GET | `/pos/barcode/:code` | CASHIER/GM/SA | حل الباركود (توليفة ثم باركود المنتج) بأسعار المستويين |
+| GET | `/pos/catalog?limit=&search=` | CASHIER/GM/SA | كتالوج التوليفات + المتاح من WH-FG (يُخزن للـ offline) |
+| POST | `/pos/quick-sale` | CASHIER/GM/SA | بيع نقدي ذري: أمر CONFIRMED + صرف مخزون + قيد GL + سند قبض آلي + إيصار (يدعم `Idempotency-Key`) |
+
+**جسم البيع**: `{ customerId?, items: [{ productVariantId, quantity }], discount?, priceLevel: RETAIL|WHOLESALE, notes? }`
+**الرد**: إيصار كامل `{ orderId, code, customerName, items[], subtotal, discount, vatRate, vatAmount, total, paid, createdAt, qrPayload, source: 'pos' }` — qrPayload = TLV base64 عند ضبط COMPANY_VAT_NUMBER وإلا نص عربي.
+
+### معالج الاستيراد
+| Method | Path | Roles | الوصف |
+|---|---|---|---|
+| GET | `/import/entities` | كل موثّق | وصف الكيانات الأربعة وأعمدتها (يستخدمه معالج الجوال) |
+| POST | `/import/preview?entity=` | اتحاد أدوار الإنشاء (multipart) | تحليل CSV/XLSX + تحقق صف-بصف بلا كتابة |
+| POST | `/import/commit` | اتحاد أدوار الإنشاء + `Idempotency-Key` | تنفيذ الصفوف الصالحة داخل معاملة (تحقق خادمي مجدد) |
+
+الكيانات: `products` (GM/PM/SA)، `customers` (CASHIER/GM/SA)، `suppliers` (INV/GM/SA)، `workers` (HR/GM/SA) — تحقق دقيق للكيان المحدد داخل الخدمة.
+
+### النظام (النسخ الاحتياطي)
+| Method | Path | Roles | الوصف |
+|---|---|---|---|
+| GET | `/system/backup` | SUPER_ADMIN | تصدير JSON كامل بترتيب FK (73 جدولًا) + ActivityLog |
+| GET | `/system/backup/summary` | SUPER_ADMIN | عدد الجداول والصفوف الحالية |
+| POST | `/system/restore` | SUPER_ADMIN (multipart) | استعادة كاملة: TRUNCATE CASCADE + إدراج بترتيب FK داخل معاملة — يتطلب حقل `confirm: "استعادة"` |
+
+
 ## قواعد التحقق الموحدة (GF-0004)
 
 | القاعدة | أمثلة مرفوضة بـ 400 |
