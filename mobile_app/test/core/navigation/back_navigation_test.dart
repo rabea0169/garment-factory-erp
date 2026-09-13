@@ -114,7 +114,7 @@ void main() {
       MaterialApp(
         home: Directionality(
           textDirection: TextDirection.rtl,
-          child: const Scaffold(appBar: AppBar(leading: GfBackButton())),
+          child: Scaffold(appBar: AppBar(leading: GfBackButton())),
         ),
       ),
     );
@@ -127,7 +127,7 @@ void main() {
       MaterialApp(
         home: Directionality(
           textDirection: TextDirection.ltr,
-          child: const Scaffold(appBar: AppBar(leading: GfBackButton())),
+          child: Scaffold(appBar: AppBar(leading: GfBackButton())),
         ),
       ),
     );
