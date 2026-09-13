@@ -92,7 +92,9 @@ describe('ExportsService — التصدير (SELIM W3)', () => {
     expect(filename).toMatch(/^customers_\d{4}-\d{2}-\d{2}\.xlsx$/);
 
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    await workbook.xlsx.load(
+      buffer as unknown as Parameters<ExcelJS.Workbook['xlsx']['load']>[0],
+    );
     expect(workbook.worksheets.map((ws) => ws.name)).toEqual([
       'معلومات المصنع',
       'العملاء',
