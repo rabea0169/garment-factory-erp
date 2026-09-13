@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/selim/format.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 /// نموذج إنشاء مرتجع مشتريات (SELIM-ERP W1) — يفتح كنموذج ملء الشاشة
 /// من الزر العائم في شاشة المرتجعات.
@@ -114,6 +115,7 @@ class _PurchaseReturnFormScreenState extends State<PurchaseReturnFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const GfBackButton(),
         title: const Text('مرتجع مشتريات جديد'),
         actions: [
           IconButton(

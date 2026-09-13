@@ -8,6 +8,7 @@ import '../../constants/app_colors.dart';
 import '../../router/app_router.dart';
 import '../../security/route_access.dart';
 import '../search/command_palette.dart';
+import '../../navigation/back_navigation.dart';
 import 'selim_more_sheet.dart';
 
 /// الهيكل التكيفي الموحد — نسخة دارت من AppShell في Selim ERP.
@@ -120,6 +121,12 @@ class _MobileShell extends StatelessWidget {
         autofocus: true,
         child: Scaffold(
           appBar: AppBar(
+            // زر الرجوع الظاهر — يختفي في لوحة التحكم (هي جذر التطبيق).
+            // GfBackButton يعود خطوة إن وُجدت، وإلى لوحة التحكم إن كانت
+            // الشاشة قاع المكدس (وصلت عبر go من الشريط/الدرج).
+            leading: location == AppRouter.dashboard
+                ? null
+                : const GfBackButton(),
             title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
             centerTitle: true,
             actions: [
@@ -302,6 +309,10 @@ class _WideShell extends StatelessWidget {
     final all = allDestinations.where((d) => RouteAccess.canAccess(d.route, role)).toList();
     return Scaffold(
       appBar: AppBar(
+        // زر الرجوع الظاهر (ديسكتوب/ويب) — نفس سلوك الهيكل الجوالي.
+        leading: location == AppRouter.dashboard
+            ? null
+            : const GfBackButton(),
         title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
         centerTitle: false,
         actions: [

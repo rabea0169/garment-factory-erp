@@ -8,6 +8,7 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/quality_cubit.dart';
 import '../cubit/quality_state.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class QualityScreen extends StatelessWidget {
   /// DEV-PQ3: حقن اختياري — [cubit] و[dio] يُستخدمان في اختبارات الـ
@@ -22,6 +23,7 @@ class QualityScreen extends StatelessWidget {
     final content = Builder(
       builder: (screenContext) => Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('مراقبة الجودة'),
           actions: [
             IconButton(

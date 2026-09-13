@@ -7,6 +7,7 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/shipping_cubit.dart';
 import '../cubit/shipping_state.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class ShippingScreen extends StatelessWidget {
   const ShippingScreen({super.key, this.cubit});
@@ -18,6 +19,7 @@ class ShippingScreen extends StatelessWidget {
     final content = Builder(
       builder: (screenContext) => Scaffold(
         appBar: AppBar(
+          leading: const GfBackButton(),
           title: const Text('الشحن والتوصيل'),
           actions: [
             IconButton(

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 /// نموذج إنشاء مسودة تسوية جرد (SELIM-ERP W1) — يفتح كنموذج ملء الشاشة
 /// من الزر العائم في شاشة التسويات.
@@ -97,6 +98,7 @@ class _InventoryAdjustmentFormScreenState extends State<InventoryAdjustmentFormS
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const GfBackButton(),
         title: const Text('تسوية جرد جديدة'),
         actions: [
           IconButton(

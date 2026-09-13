@@ -8,6 +8,7 @@ import '../cubit/users_cubit.dart';
 import '../cubit/users_state.dart';
 import '../widgets/change_role_dialog.dart';
 import '../widgets/create_user_dialog.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 /// CC-9: شاشة إدارة المستخدمين — قائمة (GET /users)، إنشاء (POST
 /// /users)، تغيير دور (PATCH /users/:id/role)، وتعطيل/تنشيط (PATCH
@@ -35,6 +36,7 @@ class _UsersView extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const GfBackButton(),
         title: const Text('المستخدمون'),
         actions: [
           Builder(

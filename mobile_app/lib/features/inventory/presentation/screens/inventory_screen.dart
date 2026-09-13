@@ -7,6 +7,7 @@ import '../../../../core/services/barcode_scanner_launcher.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 class InventoryScreen extends StatelessWidget {
   const InventoryScreen({super.key, this.cubit, this.scannerLauncher});
@@ -68,6 +69,7 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const GfBackButton(),
         title: const Text('المخزون'),
         bottom: TabBar(
           controller: _tabController,

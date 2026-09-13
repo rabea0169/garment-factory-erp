@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/selim/format.dart';
+import '../../../../core/navigation/back_navigation.dart';
 
 /// نموذج إنشاء عرض سعر (SELIM-ERP W1).
 ///
@@ -84,6 +85,7 @@ class _QuotationFormScreenState extends State<QuotationFormScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        leading: const GfBackButton(),
         title: const Text('عرض سعر جديد'),
         actions: [
           IconButton(icon: const Icon(Icons.save_rounded), tooltip: 'حفظ', onPressed: _save),

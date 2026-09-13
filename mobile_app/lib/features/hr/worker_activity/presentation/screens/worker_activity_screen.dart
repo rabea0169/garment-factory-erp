@@ -6,6 +6,7 @@ import '../../../../../core/constants/app_colors.dart';
 import '../../../../../core/widgets/app_feedback.dart';
 import '../cubit/worker_activity_cubit.dart';
 import '../cubit/worker_activity_state.dart';
+import '../../../../../core/navigation/back_navigation.dart';
 
 /// MOB-8: شاشة نشاط العامل — تبويبان: آخر السلف وآخر إنتاج العامل
 /// (أبسط تمثيل قائمة). تُفتح من بطاقة العامل في شاشة الموارد البشرية.
@@ -39,6 +40,7 @@ class WorkerActivityScreen extends StatelessWidget {
         length: 2,
         child: Scaffold(
           appBar: AppBar(
+            leading: const GfBackButton(),
             title: Text('نشاط العامل${_titleSuffix()}'),
             bottom: const TabBar(
               tabs: [
