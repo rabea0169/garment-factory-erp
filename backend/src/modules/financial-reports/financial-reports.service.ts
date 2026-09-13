@@ -830,4 +830,279 @@ export class FinancialReportsService {
       to: new Date(Date.UTC(fiscalYear + 1, 0, 1).valueOf() - 1),
     };
   }
+
+  // ------------------------------------------------------------------
+  // SELIM-ERP W3 — كشوف حساب العميل/المورد (Party Statements)
+  // (نقل من /api/reports/customer-statement وsupplier-statement و
+  // /api/customer-report/[id] وsupplier-report/[id] في Selim ERP).
+  // ------------------------------------------------------------------
+
+  /** حركة واحدة في كشف الحساب (مدين/دائن من منظور الطرف). */
+  private static partyMovement(
+    date: Date,
+    type: 'INVOICE' | 'RECEIPT' | 'RETURN',
+    ref: string,
+    description: string,
+    debit: number,
+    credit: number,
+  ) {
+    return { date, type, ref, description, debit, credit };
+  }
+
+  /**
+   * كشف حساب العميل: رصيد افتتاحي + حركات الفترة (فواتير مؤكدة مدين،
+   * سندات قبض دائن، مرتجعات بيع دائن) + رصيد ختامي — نفس مصادر تحديث
+   * customer.balance في FinancialPostingService (SAL-1).
+   */
+  async getCustomerStatement(customerId: string, from?: string, to?: string) {
+    const customer = await this.prisma.customer.findFirst({
+      where: { id: customerId, deletedAt: null },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        phone: true,
+        balance: true,
+      },
+    });
+    if (!customer) {
+      throw new NotFoundException('العميل غير موجود');
+    }
+
+    const { fromDate, toDate } = this.statementRange(from, to);
+    const [orders, payments, returns] = await Promise.all([
+      this.prisma.salesOrder.findMany({
+        where: {
+          customerId,
+          status: { in: ['CONFIRMED', 'SHIPPED'] },
+          createdAt: { lte: toDate },
+        },
+        select: { code: true, totalAmount: true, createdAt: true },
+      }),
+      this.prisma.customerPayment.findMany({
+        where: { customerId, date: { lte: toDate } },
+        select: { amount: true, date: true },
+      }),
+      this.prisma.salesReturn.findMany({
+        where: { customerId, createdAt: { lte: toDate } },
+        select: { code: true, totalAmount: true, createdAt: true },
+      }),
+    ]);
+
+    const movementsRaw = [
+      ...orders.map((o) =>
+        FinancialReportsService.partyMovement(
+          o.createdAt,
+          'INVOICE',
+          o.code,
+          'فاتورة بيع',
+          Number(o.totalAmount),
+          0,
+        ),
+      ),
+      ...payments.map((p) =>
+        FinancialReportsService.partyMovement(
+          p.date,
+          'RECEIPT',
+          'سند قبض',
+          'سند قبض',
+          0,
+          Number(p.amount),
+        ),
+      ),
+      ...returns.map((r) =>
+        FinancialReportsService.partyMovement(
+          r.createdAt,
+          'RETURN',
+          r.code,
+          'مرتجع بيع',
+          0,
+          Number(r.totalAmount),
+        ),
+      ),
+    ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    return this.buildStatement({
+      party: {
+        type: 'customer',
+        ...customer,
+        currentBalance: Number(customer.balance),
+      },
+      movementsRaw,
+      fromDate,
+      toDate,
+    });
+  }
+
+  /**
+   * كشف حساب المورد: رصيد افتتاحي + حركات الفترة (استلامات مشتريات
+   * مدين علينا، سندات صرف دائن، مرتجعات مشتريات دائن) — نفس مصادر
+   * تحديث supplier.balance في FinancialPostingService (receipt +/return -).
+   */
+  async getSupplierStatement(supplierId: string, from?: string, to?: string) {
+    const supplier = await this.prisma.supplier.findFirst({
+      where: { id: supplierId, deletedAt: null },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        phone: true,
+        balance: true,
+      },
+    });
+    if (!supplier) {
+      throw new NotFoundException('المورد غير موجود');
+    }
+
+    const { fromDate, toDate } = this.statementRange(from, to);
+    const [receipts, payments, returns] = await Promise.all([
+      this.prisma.purchaseReceipt.findMany({
+        where: { purchaseOrder: { supplierId }, receivedAt: { lte: toDate } },
+        select: {
+          code: true,
+          receivedAt: true,
+          items: {
+            select: {
+              quantity: true,
+              purchaseOrderItem: { select: { unitCost: true } },
+            },
+          },
+        },
+      }),
+      this.prisma.supplierPayment.findMany({
+        where: { supplierId, date: { lte: toDate } },
+        select: { amount: true, date: true },
+      }),
+      this.prisma.purchaseReturn.findMany({
+        where: { supplierId, date: { lte: toDate } },
+        select: { returnNumber: true, total: true, date: true },
+      }),
+    ]);
+
+    const movementsRaw = [
+      ...receipts.map((r) => {
+        const total = round2(
+          r.items.reduce(
+            (s, i) =>
+              s + Number(i.quantity) * Number(i.purchaseOrderItem.unitCost),
+            0,
+          ),
+        );
+        return FinancialReportsService.partyMovement(
+          r.receivedAt,
+          'INVOICE',
+          r.code,
+          'استلام مشتريات',
+          total,
+          0,
+        );
+      }),
+      ...payments.map((p) =>
+        FinancialReportsService.partyMovement(
+          p.date,
+          'RECEIPT',
+          'سند صرف',
+          'سند صرف للمورد',
+          0,
+          Number(p.amount),
+        ),
+      ),
+      ...returns.map((r) =>
+        FinancialReportsService.partyMovement(
+          r.date,
+          'RETURN',
+          r.returnNumber,
+          'مرتجع مشتريات',
+          0,
+          Number(r.total),
+        ),
+      ),
+    ].sort((a, b) => a.date.getTime() - b.date.getTime());
+
+    return this.buildStatement({
+      party: {
+        type: 'supplier',
+        ...supplier,
+        currentBalance: Number(supplier.balance),
+      },
+      movementsRaw,
+      fromDate,
+      toDate,
+    });
+  }
+
+  /** نطاق كشف الحساب: from/to بتواريخ بسيطة (to يُمدّد لنهاية اليوم). */
+  private statementRange(from?: string, to?: string) {
+    const toDate = to
+      ? new Date(`${to.slice(0, 10)}T23:59:59.999Z`)
+      : new Date();
+    const fromDate = from
+      ? new Date(`${from.slice(0, 10)}T00:00:00.000Z`)
+      : new Date(0);
+    if (Number.isNaN(fromDate.getTime()) || Number.isNaN(toDate.getTime())) {
+      throw new BadRequestException('نطاق تاريخ غير صالح');
+    }
+    if (fromDate > toDate) {
+      throw new BadRequestException('تاريخ البداية يجب ألا يتجاوز النهاية');
+    }
+    return { fromDate, toDate };
+  }
+
+  /** تجميع الحركات: افتتاحي + حركات الفترة برصيد جارٍ + ختامي. */
+  private buildStatement(input: {
+    party: Record<string, unknown> & { currentBalance: number };
+    movementsRaw: Array<{
+      date: Date;
+      type: 'INVOICE' | 'RECEIPT' | 'RETURN';
+      ref: string;
+      description: string;
+      debit: number;
+      credit: number;
+    }>;
+    fromDate: Date;
+    toDate: Date;
+  }) {
+    let opening = 0;
+    const movements: Array<{
+      date: Date;
+      type: string;
+      ref: string;
+      description: string;
+      debit: number;
+      credit: number;
+      balanceAfter: number;
+    }> = [];
+    let running = 0;
+    let debitTotal = 0;
+    let creditTotal = 0;
+
+    for (const m of input.movementsRaw) {
+      const net = m.debit - m.credit;
+      if (m.date < input.fromDate) {
+        opening = round2(opening + net);
+        continue;
+      }
+      running = round2(running + net);
+      debitTotal = round2(debitTotal + m.debit);
+      creditTotal = round2(creditTotal + m.credit);
+      movements.push({
+        ...m,
+        balanceAfter: round2(opening + running),
+      });
+    }
+
+    return {
+      party: input.party,
+      from: input.fromDate.toISOString(),
+      to: input.toDate.toISOString(),
+      openingBalance: opening,
+      totals: {
+        debit: debitTotal,
+        credit: creditTotal,
+        count: movements.length,
+      },
+      closingBalance: round2(opening + running),
+      movements,
+    };
+  }
 }

@@ -22,8 +22,13 @@ describe('FinancialReportsService — حسابات التقارير (SELIM W1)',
     journalLine: { groupBy: jest.Mock };
     salesOrder: { aggregate: jest.Mock; findMany: jest.Mock };
     purchaseOrder: { findMany: jest.Mock };
-    customer: { findMany: jest.Mock };
-    supplier: { findMany: jest.Mock };
+    customer: { findMany: jest.Mock; findFirst: jest.Mock };
+    supplier: { findMany: jest.Mock; findFirst: jest.Mock };
+    customerPayment: { findMany: jest.Mock };
+    salesReturn: { findMany: jest.Mock };
+    supplierPayment: { findMany: jest.Mock };
+    purchaseReturn: { findMany: jest.Mock };
+    purchaseReceipt: { findMany: jest.Mock };
     budget: {
       findMany: jest.Mock;
       findFirst: jest.Mock;
@@ -59,8 +64,19 @@ describe('FinancialReportsService — حسابات التقارير (SELIM W1)',
         findMany: jest.fn().mockResolvedValue([]),
       },
       purchaseOrder: { findMany: jest.fn().mockResolvedValue([]) },
-      customer: { findMany: jest.fn().mockResolvedValue([]) },
-      supplier: { findMany: jest.fn().mockResolvedValue([]) },
+      customer: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      supplier: {
+        findMany: jest.fn().mockResolvedValue([]),
+        findFirst: jest.fn().mockResolvedValue(null),
+      },
+      customerPayment: { findMany: jest.fn().mockResolvedValue([]) },
+      salesReturn: { findMany: jest.fn().mockResolvedValue([]) },
+      supplierPayment: { findMany: jest.fn().mockResolvedValue([]) },
+      purchaseReturn: { findMany: jest.fn().mockResolvedValue([]) },
+      purchaseReceipt: { findMany: jest.fn().mockResolvedValue([]) },
       budget: {
         findMany: jest.fn().mockResolvedValue([]),
         findFirst: jest.fn().mockResolvedValue(null),
@@ -556,5 +572,116 @@ describe('FinancialReportsService — حسابات التقارير (SELIM W1)',
     // إيراد فعلي = 1800 دائن − 100 مدين = 1700؛ التباين 300.
     expect(report.rows[0].actual).toBe(1700);
     expect(report.rows[0].variance).toBe(300);
+  });
+
+  // ----------------------------------------------------------------
+  // SELIM-ERP W3 — كشوف حساب العميل/المورد
+  // ----------------------------------------------------------------
+
+  it('W3 كشف حساب عميل: افتتاحي + حركات الفترة برصيد جارٍ + ختامي', async () => {
+    prisma.customer.findFirst.mockResolvedValue({
+      id: 'c-1',
+      code: 'CUST-001',
+      name: 'عميل القاهرة',
+      phone: '01000000000',
+      balance: '600',
+    });
+    const jan = (day: number) =>
+      new Date('2026-01-' + String(day).padStart(2, '0') + 'T10:00:00Z');
+    prisma.salesOrder.findMany.mockResolvedValue([
+      { code: 'SO-1', totalAmount: '500', createdAt: jan(5) }, // قبل الفترة
+      {
+        code: 'SO-2',
+        totalAmount: '300',
+        createdAt: new Date('2026-02-10T10:00:00Z'),
+      },
+    ]);
+    prisma.customerPayment.findMany.mockResolvedValue([
+      { amount: '200', date: new Date('2026-02-15T10:00:00Z') },
+    ]);
+    prisma.salesReturn.findMany.mockResolvedValue([]);
+
+    const statement = await service.getCustomerStatement(
+      'c-1',
+      '2026-02-01',
+      '2026-02-28',
+    );
+
+    expect(statement.openingBalance).toBe(500); // فاتورة قبل الفترة فقط
+    expect(statement.movements.map((m: { ref: string }) => m.ref)).toEqual([
+      'SO-2',
+      'سند قبض',
+    ]);
+    expect(statement.totals.debit).toBe(300);
+    expect(statement.totals.credit).toBe(200);
+    expect(statement.closingBalance).toBe(600); // 500 + 300 - 200
+    expect(statement.movements[1].balanceAfter).toBe(600);
+    expect(statement.party.currentBalance).toBe(600);
+  });
+
+  it('W3 كشف حساب عميل: عميل غير موجود → NotFound', async () => {
+    prisma.customer.findFirst.mockResolvedValue(null);
+    await expect(
+      service.getCustomerStatement('missing', '2026-02-01', '2026-02-28'),
+    ).rejects.toThrow('العميل غير موجود');
+  });
+
+  it('W3 كشف حساب عميل: نطاق معكوس → BadRequest', async () => {
+    prisma.customer.findFirst.mockResolvedValue({ id: 'c-1', balance: '0' });
+    await expect(
+      service.getCustomerStatement('c-1', '2026-02-28', '2026-02-01'),
+    ).rejects.toThrow('تاريخ البداية');
+  });
+
+  it('W3 كشف حساب مورد: استلام (كمية×تكلفة) مدين + سند صرف ومرتجع دائن', async () => {
+    prisma.supplier.findFirst.mockResolvedValue({
+      id: 's-1',
+      code: 'SUPP-001',
+      name: 'مورد أقمشة',
+      phone: '01100000000',
+      balance: '900',
+    });
+    prisma.purchaseReceipt.findMany.mockResolvedValue([
+      {
+        code: 'PR-1',
+        receivedAt: new Date('2026-03-05T10:00:00Z'),
+        items: [
+          {
+            quantity: '10',
+            purchaseOrderItem: { unitCost: '50' },
+          },
+          {
+            quantity: '5',
+            purchaseOrderItem: { unitCost: '40' },
+          },
+        ],
+      },
+    ]);
+    prisma.supplierPayment.findMany.mockResolvedValue([
+      { amount: '100', date: new Date('2026-03-20T10:00:00Z') },
+    ]);
+    prisma.purchaseReturn.findMany.mockResolvedValue([
+      {
+        returnNumber: 'PRR-1',
+        total: '100',
+        date: new Date('2026-03-25T10:00:00Z'),
+      },
+    ]);
+
+    const statement = await service.getSupplierStatement(
+      's-1',
+      '2026-03-01',
+      '2026-03-31',
+    );
+
+    // الاستلام = 10×50 + 5×40 = 700 مدين.
+    expect(statement.totals.debit).toBe(700);
+    expect(statement.totals.credit).toBe(200);
+    expect(statement.closingBalance).toBe(500);
+    expect(statement.movements.map((m: { ref: string }) => m.ref)).toEqual([
+      'PR-1',
+      'سند صرف',
+      'PRR-1',
+    ]);
   });
 });

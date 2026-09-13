@@ -1,6 +1,10 @@
 import { Injectable } from '@nestjs/common';
 import { UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import {
+  containsFieldConditions,
+  namePrefixConditions,
+} from '../../common/utils/arabic-search.util';
 
 /**
  * SELIM-ERP W2 — خدمة البحث الشامل عابر الأقسام.
@@ -24,6 +28,29 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 /** حد النتائج لكل نوع كيان — نفس سلوك لوحة الأوامر في Selim. */
 const PER_TYPE_LIMIT = 5;
+
+/**
+ * SELIM-ERP W3 — مطابقة عربية موحّدة (محرك arabic-search):
+ * حقل الأسماء يطابق «بالبداية أو بداية كلمة» عبر المتغيرات الإملائية
+ * (احمد/أحمد/إحمد…)، وحقول الأكواد/الهاتف/الباركود تبحث «يحتوي» بالنص
+ * كما كُتب + نسخة الأرقام الغربية (٠١٢ → 012).
+ * شرط واحد على الأقل مضمون دائمًا (OR الفارغ يكسر Prisma).
+ */
+function nameWhere(query: string, field = 'name'): Record<string, unknown>[] {
+  const conditions = namePrefixConditions(field, query).map(
+    (c) => c as Record<string, unknown>,
+  );
+  if (conditions.length > 0) return conditions;
+  return [{ [field]: { contains: query, mode: 'insensitive' } }];
+}
+
+function fieldWhere(query: string, field: string): Record<string, unknown>[] {
+  const conditions = containsFieldConditions(field, query).map(
+    (c) => c as Record<string, unknown>,
+  );
+  if (conditions.length > 0) return conditions;
+  return [{ [field]: { contains: query, mode: 'insensitive' } }];
+}
 
 /** أقل طول للاستعلام — 2 حرف يمنع الاستعلامات المفرطة المطابقة. */
 const MIN_QUERY_LENGTH = 2;
@@ -55,7 +82,24 @@ export class SearchService {
     if (query.length < MIN_QUERY_LENGTH) {
       return { query, groups: [] };
     }
-    const contains = { contains: query, mode: 'insensitive' as const };
+
+    // شروط مطابقة عربية موحّدة لكل كيان (أسماء بالبداية/بداية كلمة،
+    // أكواد/هواتف/باركود بالاحتواء مع نسخ الأرقام الغربية).
+    const customerOr = [
+      ...nameWhere(query),
+      ...fieldWhere(query, 'code'),
+      ...fieldWhere(query, 'phone'),
+    ];
+    const productOr = [
+      ...nameWhere(query),
+      ...fieldWhere(query, 'code'),
+      ...fieldWhere(query, 'barcode'),
+    ];
+    const quotationOr = [
+      ...fieldWhere(query, 'quotationNo'),
+      ...nameWhere(query, 'customerName'),
+    ];
+    const codeOr = (field: string) => fieldWhere(query, field);
 
     // مجموعات مستقلة — Promise.all آمن (كل استعلام قراءة مستقلة).
     const tasks: { type: string; hits: Promise<SearchHit[]> }[] = [];
@@ -66,7 +110,7 @@ export class SearchService {
       hits: this.prisma.customer
         .findMany({
           where: {
-            OR: [{ name: contains }, { code: contains }, { phone: contains }],
+            OR: customerOr,
             deletedAt: null,
           },
           select: {
@@ -92,7 +136,7 @@ export class SearchService {
       hits: this.prisma.product
         .findMany({
           where: {
-            OR: [{ name: contains }, { code: contains }, { barcode: contains }],
+            OR: productOr,
             isActive: true,
             deletedAt: null,
           },
@@ -119,7 +163,7 @@ export class SearchService {
       hits: this.prisma.quotation
         .findMany({
           where: {
-            OR: [{ quotationNo: contains }, { customerName: contains }],
+            OR: quotationOr,
           },
           select: {
             id: true,
@@ -157,7 +201,7 @@ export class SearchService {
         type: 'salesOrder',
         hits: this.prisma.salesOrder
           .findMany({
-            where: { code: contains },
+            where: { OR: codeOr('code') },
             select: { id: true, code: true, totalAmount: true, status: true },
             take: PER_TYPE_LIMIT,
             orderBy: { createdAt: 'desc' },
@@ -189,7 +233,7 @@ export class SearchService {
         type: 'purchaseOrder',
         hits: this.prisma.purchaseOrder
           .findMany({
-            where: { code: contains },
+            where: { OR: codeOr('code') },
             select: { id: true, code: true, totalAmount: true, status: true },
             take: PER_TYPE_LIMIT,
             orderBy: { createdAt: 'desc' },
@@ -211,7 +255,7 @@ export class SearchService {
         hits: this.prisma.supplier
           .findMany({
             where: {
-              OR: [{ name: contains }, { code: contains }, { phone: contains }],
+              OR: customerOr,
               isActive: true,
               deletedAt: null,
             },
@@ -240,7 +284,7 @@ export class SearchService {
         type: 'workOrder',
         hits: this.prisma.workOrder
           .findMany({
-            where: { code: contains },
+            where: { OR: codeOr('code') },
             select: { id: true, code: true, status: true, quantity: true },
             take: PER_TYPE_LIMIT,
             orderBy: { createdAt: 'desc' },
@@ -271,7 +315,9 @@ export class SearchService {
         type: 'worker',
         hits: this.prisma.worker
           .findMany({
-            where: { OR: [{ name: contains }, { code: contains }] },
+            where: {
+              OR: [...nameWhere(query), ...fieldWhere(query, 'code')],
+            },
             select: { id: true, name: true, code: true },
             take: PER_TYPE_LIMIT,
             orderBy: { createdAt: 'desc' },
@@ -295,7 +341,7 @@ export class SearchService {
         type: 'treasury',
         hits: this.prisma.treasury
           .findMany({
-            where: { name: contains, isActive: true },
+            where: { OR: nameWhere(query), isActive: true },
             select: { id: true, name: true, balance: true, type: true },
             take: PER_TYPE_LIMIT,
             orderBy: { createdAt: 'desc' },

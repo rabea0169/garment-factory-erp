@@ -94,4 +94,29 @@ describe('SearchService — البحث الشامل (SELIM W2)', () => {
       )[0][0].take,
     ).toBe(5);
   });
+
+  it('SELIM-ERP W3: تطبيع عربي — «احمد» يبحث أيضًا بأشكال الهمزة (أحمد/إحمد/آحمد)', async () => {
+    await service.search('احمد', UserRole.CASHIER);
+    const whereArg = (
+      prisma.customer.findMany.mock.calls[0] as [
+        { where: { OR: Array<Record<string, { startsWith?: string }>> } },
+      ]
+    )[0].where;
+    const startswithValues = whereArg.OR.flatMap(
+      (c) => Object.values(c)[0]?.startsWith ?? [],
+    );
+    expect(startswithValues).toContain('احمد');
+    expect(startswithValues).toContain('أحمد');
+    // الأرقام الهندية في الهاتف تتحول لغربية في شروط code/phone
+    await service.search('٠١٠', UserRole.CASHIER);
+    const phoneWhere = (
+      prisma.customer.findMany.mock.calls[1] as [
+        { where: { OR: Array<Record<string, { contains?: string }>> } },
+      ]
+    )[0].where;
+    const containsValues = phoneWhere.OR.flatMap(
+      (c) => Object.values(c)[0]?.contains ?? [],
+    );
+    expect(containsValues).toContain('010');
+  });
 });

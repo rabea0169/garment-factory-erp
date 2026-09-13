@@ -69,6 +69,7 @@ function createHrPrismaMock(): HrPrismaMock {
     attendance: {
       create: jest.fn(),
       findFirst: jest.fn(),
+      findMany: jest.fn(),
     },
     dailyProduction: {
       create: jest.fn(),

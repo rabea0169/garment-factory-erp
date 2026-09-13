@@ -26,6 +26,7 @@ export function createPrismaMock() {
       update: jest.fn(),
       updateMany: jest.fn(),
       count: jest.fn(),
+      aggregate: jest.fn(),
     },
     rawMaterial: {
       findMany: jest.fn(),
@@ -117,7 +118,7 @@ export function createPrismaMock() {
       count: jest.fn(),
       aggregate: jest.fn(),
     },
-    activityLog: { create: jest.fn() },
+    activityLog: { create: jest.fn(), findMany: jest.fn(), count: jest.fn() },
     // SEC-F04: refreshToken mock — findUnique (for refresh/logout), create (for new token), update (for revoke)
     refreshToken: {
       findUnique: jest.fn(),
@@ -158,12 +159,13 @@ export function createPrismaMock() {
       create: jest.fn(),
       count: jest.fn(),
     },
+    // SELIM-ERP W3: التنبيهات الذكية — حضور اليوم (قراءة) وسجل التدقيق.
     dailyProduction: {
       create: jest.fn(),
       findMany: jest.fn(),
       aggregate: jest.fn(),
     },
-    attendance: { create: jest.fn() },
+    attendance: { create: jest.fn(), findMany: jest.fn() },
     workerAdvance: {
       create: jest.fn(),
       aggregate: jest.fn(),
@@ -225,6 +227,7 @@ export function createPrismaMock() {
       create: jest.fn(),
       update: jest.fn(),
       count: jest.fn(),
+      aggregate: jest.fn(),
     },
     supplier: {
       findMany: jest.fn(),
@@ -294,6 +297,27 @@ export function createPrismaMock() {
       createMany: jest.fn(),
       update: jest.fn(),
       delete: jest.fn(),
+    },
+    // SELIM-ERP W3: مراكز التكلفة (CRUD في المحاسبة).
+    costCenter: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn(),
+    },
+    // SELIM-ERP W3: إعدادات المصنع + الأجهزة (توسيع وحدة system).
+    factorySettings: {
+      findUnique: jest.fn(),
+      findUniqueOrThrow: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+    },
+    device: {
+      upsert: jest.fn(),
+      updateMany: jest.fn(),
+      findMany: jest.fn(),
     },
     expense: {
       findUnique: jest.fn(),

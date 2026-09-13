@@ -15,6 +15,9 @@ export interface DashboardStats {
   sales: Array<{ period: string; amount: number; netOfTax: number }>;
   production: Array<{ period: string; pieces: number }>;
   topWorkers: Array<{ workerId: string; name: string; pieces: number }>;
+  /** SELIM-ERP W3: مصاريف الفترة مجمّعة حسب البند (نفس expensesByCategory
+   * في /api/dashboard/charts عند Selim — تغذية رسم دائري في لوحة التحكم). */
+  expensesByCategory: Array<{ category: string; amount: number }>;
   inventory: {
     totalMaterials: number;
     lowStockMaterials: number;
@@ -119,12 +122,14 @@ export class DashboardService {
       return cached.data;
     }
 
-    const [sales, production, topWorkers, inventory] = await Promise.all([
-      this.getSalesSeries(range),
-      this.getProductionSeries(range),
-      this.getTopWorkers(range),
-      this.getInventorySummary(),
-    ]);
+    const [sales, production, topWorkers, inventory, expensesByCategory] =
+      await Promise.all([
+        this.getSalesSeries(range),
+        this.getProductionSeries(range),
+        this.getTopWorkers(range),
+        this.getInventorySummary(),
+        this.getExpensesByCategory(range),
+      ]);
 
     const stats: DashboardStats = {
       filters: {
@@ -136,6 +141,7 @@ export class DashboardService {
       production,
       topWorkers,
       inventory,
+      expensesByCategory,
       definitions: {
         sales:
           'الإيراد الشهري المعروض (amount) = SUM(totalAmount) لأوامر البيع غير الملغاة مطروحًا منها مرتجعات البيع المؤكدة في الشهر نفسه (sales_returns المُرحّلة عند الإنشاء)؛ netOfTax = SUM(totalAmount) - SUM(vatAmount) — القيمة قبل ضريبة القيمة المضافة بجانب الإجمالي. النطاق الأعلى حصري حتى نهاية اليوم الأخير (DSH-4).',
@@ -145,6 +151,8 @@ export class DashboardService {
           'أعلى خمسة عمال حسب مجموع piecesCount في DailyProduction داخل الفترة.',
         inventory:
           'الخامات تُعد من جدول raw_materials مباشرة (مواد مميزة لا صفوف رصيد)، النقص من currentStock <= minStockLevel، وأنواع المنتج التام = COUNT(DISTINCT productVariantId) من أرصدة finished_good_stocks الموجبة — عد الأنواع بتمييز المتغير لا بصفوف الأرصدة (DSH-5).',
+        expensesByCategory:
+          'SELIM-ERP W3: SUM(amount) من المصاريف حسب categoryName داخل الفترة (النطاق الأعلى حصري — DSH-4) — مرآة expensesByCategory في /api/dashboard/charts عند Selim.',
       },
     };
 
@@ -302,5 +310,22 @@ export class DashboardService {
       lowStockMaterials: Number(lowStockRows[0]?.count ?? 0),
       totalFinishedGoodsTypes: Number(finishedGoodsTypesRows[0]?.count ?? 0),
     };
+  }
+
+  /** SELIM-ERP W3: مصاريف الفترة حسب البند (نفس expensesByCategory في Selim). */
+  private async getExpensesByCategory(
+    range: DashboardDateRange,
+  ): Promise<Array<{ category: string; amount: number }>> {
+    const rows = await this.prisma.expense.groupBy({
+      by: ['categoryName'],
+      where: { date: { gte: range.from, lt: range.toExclusive } },
+      _sum: { amount: true },
+    });
+    return rows
+      .map((r) => ({
+        category: r.categoryName || 'غير مصنف',
+        amount: round2(Number(r._sum.amount ?? 0)),
+      }))
+      .sort((a, b) => b.amount - a.amount);
   }
 }

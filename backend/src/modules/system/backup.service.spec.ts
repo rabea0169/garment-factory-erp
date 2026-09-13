@@ -8,6 +8,7 @@ import {
 } from './backup.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { createPrismaMock } from '../../../test/helpers/prisma-mock';
+import { FactorySettingsService } from './factory-settings.service';
 
 /**
  * SELIM-ERP W2 — اختبارات النسخ الاحتياطي/الاستعادة:
@@ -29,7 +30,7 @@ describe('BackupService — النسخ الاحتياطي (SELIM W2)', () => {
   let prisma: ReturnType<typeof createPrismaMock>;
   const tx = {} as unknown as ReturnType<typeof createPrismaMock>;
 
-  /** موك موسّع: يضيف/يوحّد مندوبي كل الجداول الـ 73 مع قيم افتراضية. */
+  /** موك موسّع: يضيف/يوحّد مندوبي كل الجداول الـ 75 مع قيم افتراضية. */
   function createBackupMock(): ReturnType<typeof createPrismaMock> {
     const base = createPrismaMock() as unknown as Record<string, unknown>;
     for (const spec of BACKUP_ORDER) {
@@ -58,7 +59,15 @@ describe('BackupService — النسخ الاحتياطي (SELIM W2)', () => {
         arg(tx),
     );
     Object.assign(tx, prisma);
-    service = new BackupService(prisma as unknown as PrismaService);
+    // W3: موك خفيف لإعدادات المصنع — markBackupDone تُستدعى بعد التصدير
+    // (لا ننقل سلوك فشلها إلى فشل النسخة — تجاهل مقصود).
+    const factorySettings = {
+      markBackupDone: jest.fn().mockResolvedValue(undefined),
+    } as unknown as FactorySettingsService;
+    service = new BackupService(
+      prisma as unknown as PrismaService,
+      factorySettings,
+    );
   });
 
   it('بوابة التغطية: BACKUP_ORDER يغطي كل موديلات schema مرة واحدة', () => {
@@ -88,6 +97,21 @@ describe('BackupService — النسخ الاحتياطي (SELIM W2)', () => {
         }) as Record<string, unknown>,
       }) as Record<string, unknown>,
     );
+  });
+
+  it('createBackup (W3): يسجّل آخر نسخة ناجحة لإعدادات المصنع (تذكير التنبيهات)', async () => {
+    await service.createBackup('user-1');
+    // markBackupDone استُدعيت مرة — يغذي تنبيه «مر أسبوع بلا نسخة».
+    const factorySettingsMock = (
+      service as unknown as {
+        factorySettings: { markBackupDone: jest.Mock };
+      }
+    ).factorySettings;
+    expect(factorySettingsMock.markBackupDone).toHaveBeenCalledTimes(1);
+    // وفشلها لا يفشل التصدير (التقاط مقصود في الخدمة).
+    factorySettingsMock.markBackupDone.mockRejectedValueOnce(new Error('x'));
+    const backup = await service.createBackup('user-1');
+    expect(backup.meta.formatVersion).toBe(1);
   });
 
   it('يرفض الاستعادة بلا عبارة التأكيد المكتوبة', async () => {
