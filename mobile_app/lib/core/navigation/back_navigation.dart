@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
-import '../../router/app_router.dart';
+import '../router/app_router.dart';
 
 /// سلوك «زر الرجوع» الموحد للتطبيق — العودة الذكية إلى لوحة التحكم.
 ///

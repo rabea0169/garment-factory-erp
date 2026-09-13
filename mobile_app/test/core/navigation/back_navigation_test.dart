@@ -20,19 +20,19 @@ GoRouter _router({String initial = '/sales'}) => GoRouter(
     ),
     GoRoute(
       path: '/sales',
-      builder: (_, __) => const BackGuard(
+      builder: (_, __) => BackGuard(
         child: Scaffold(body: Text('sales')),
       ),
     ),
     GoRoute(
       path: '/new',
-      builder: (_, __) => const BackGuard(
+      builder: (_, __) => BackGuard(
         child: Scaffold(body: Text('new-page')),
       ),
     ),
     GoRoute(
       path: '/back-btn',
-      builder: (_, __) => const BackGuard(
+      builder: (_, __) => BackGuard(
         child: Scaffold(appBar: AppBar(leading: GfBackButton())),
       ),
     ),
