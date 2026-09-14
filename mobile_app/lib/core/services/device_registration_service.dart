@@ -76,19 +76,19 @@ class DeviceRegistrationService {
           'deviceId': id,
           'userAgent': 'Flutter/${defaultTargetPlatform.name}',
           'platform': defaultTargetPlatform.name,
-          'language': language ?? platformDispatcher.locale.languageCode,
-          'screenWidth': platformDispatcher.views.first.physicalSize.width
+          'language': language ?? PlatformDispatcher.instance.locale.languageCode,
+          'screenWidth': PlatformDispatcher.instance.views.first.physicalSize.width
                   .toInt() >
               0
-              ? (platformDispatcher.views.first.physicalSize.width /
-                      platformDispatcher.views.first.devicePixelRatio)
+              ? (PlatformDispatcher.instance.views.first.physicalSize.width /
+                      PlatformDispatcher.instance.views.first.devicePixelRatio)
                   .round()
               : null,
-          'screenHeight': platformDispatcher.views.first.physicalSize.height
+          'screenHeight': PlatformDispatcher.instance.views.first.physicalSize.height
                   .toInt() >
               0
-              ? (platformDispatcher.views.first.physicalSize.height /
-                      platformDispatcher.views.first.devicePixelRatio)
+              ? (PlatformDispatcher.instance.views.first.physicalSize.height /
+                      PlatformDispatcher.instance.views.first.devicePixelRatio)
                   .round()
               : null,
           'isMobile': !kIsWeb &&

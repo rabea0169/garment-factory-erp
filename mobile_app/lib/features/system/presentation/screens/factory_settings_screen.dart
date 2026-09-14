@@ -225,7 +225,7 @@ class _FactorySettingsScreenState extends State<FactorySettingsScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           Card(
-            color: AppColors.primary.withOpacity(0.08),
+            color: AppColors.primary.withValues(alpha: 0.08),
             child: Padding(
               padding: const EdgeInsets.all(12),
               child: Row(
@@ -314,7 +314,7 @@ class _FactorySettingsScreenState extends State<FactorySettingsScreen> {
                 style: TextStyle(fontFamily: 'Cairo', fontSize: 12),
               ),
               value: _enableInvoiceQr,
-              activeColor: AppColors.primary,
+              activeThumbColor: AppColors.primary,
               onChanged: _readOnly
                   ? null
                   : (value) => setState(() => _enableInvoiceQr = value),
@@ -327,7 +327,7 @@ class _FactorySettingsScreenState extends State<FactorySettingsScreen> {
                 max: 100,
                 divisions: 100,
                 label: '${_taxRate.round()}%',
-                activeColor: AppColors.primary,
+                activeTrackColor: AppColors.primary,
                 onChanged: _readOnly
                     ? null
                     : (value) => setState(() => _taxRate = value),

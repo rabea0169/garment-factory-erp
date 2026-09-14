@@ -84,7 +84,7 @@ class _EntityExportButtonsState extends State<EntityExportButtons> {
           if (canExportEntity(entity, role)) entity,
       ];
 
-  Future<void> _export(BuildContext context, String entity, bool excel) async {
+  Future<void> _export(String entity, bool excel) async {
     if (_busy) return;
     setState(() {
       _busy = true;
@@ -158,9 +158,9 @@ class _EntityExportButtonsState extends State<EntityExportButtons> {
                   busy: _busy && _busyEntity == entity,
                   onExcel: _busy
                       ? null
-                      : () => _export(sheetContext, entity, true),
+                      : () => _export(entity, true),
                   onWord:
-                      _busy ? null : () => _export(sheetContext, entity, false),
+                      _busy ? null : () => _export(entity, false),
                 ),
               const SizedBox(height: 12),
             ],

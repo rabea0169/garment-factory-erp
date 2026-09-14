@@ -12,6 +12,10 @@ class FakeOutbox extends OutboxService {
     required String path,
     required Map<String, dynamic> body,
     String? idempotencyKey,
+    bool isFinancial = false,
+    String? title,
+    String? description,
+    num? amount,
   }) async {
     final entry = OutboxEntry(
       id: 'fake-${_entries.length + 1}',

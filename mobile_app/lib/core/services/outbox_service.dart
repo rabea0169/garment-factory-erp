@@ -27,6 +27,9 @@ enum OutboxStatus { pending, failed }
 /// - حد المحاولات 5 (نفس DEFAULT_MAX_ATTEMPTS في المرجع).
 /// - التغييرات (إدراج/حذف/تحديث حالة) تُعلن عبر [notifyListeners] —
 ///   الشاشات تستمع عبر ListenableBuilder.
+/// نتيجة إرسال واحدة (مستوى أعلى — لا يسمح Dart بالتعداد داخل الأصناف).
+enum _SendOutcome { sent, rejected, networkError }
+
 class OutboxService extends ChangeNotifier {
   OutboxService({HiveInterface? hive, Dio? dio, Uuid? uuid})
       : _hive = hive ?? Hive,
@@ -202,9 +205,6 @@ class OutboxService extends ChangeNotifier {
       _draining = false;
     }
   }
-
-  /// نتيجة إرسال واحدة.
-  enum _SendOutcome { sent, rejected, networkError }
 
   String? _lastErrorMessage;
 

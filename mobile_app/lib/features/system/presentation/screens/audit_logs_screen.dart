@@ -117,7 +117,7 @@ class _AuditLogsScreenState extends State<AuditLogsScreen> {
                 margin: const EdgeInsets.symmetric(vertical: 4),
                 child: ListTile(
                   leading: CircleAvatar(
-                    backgroundColor: AppColors.primary.withOpacity(0.12),
+                    backgroundColor: AppColors.primary.withValues(alpha: 0.12),
                     child: Text(
                       log.userName.isEmpty ? '؟' : log.userName.characters.first,
                       style: const TextStyle(fontFamily: 'Cairo'),

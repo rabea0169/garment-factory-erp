@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
-import '../../../../core/services/file_download_service.dart';
 import '../../../../core/services/statement_pdf_service.dart';
 import '../../../../core/widgets/selim/format.dart';
 import '../../../../core/widgets/selim/selim_shell.dart';

@@ -56,7 +56,7 @@ class _ImportScreenState extends State<ImportScreen> {
             IconButton(
               tooltip: 'تنزيل قالب الاستيراد',
               icon: const Icon(Icons.download_rounded),
-              onPressed: () => _downloadTemplate(context),
+              onPressed: _downloadTemplate,
             ),
           ],
           body: _body(context, state),
@@ -67,7 +67,7 @@ class _ImportScreenState extends State<ImportScreen> {
 
   /// SELIM-ERP W3: تنزيل قالب XLSX بأوراق الكيانات الأربعة (نفس
   /// import/template في Selim) — يُشارك ملف القالب للجهة المختارة.
-  Future<void> _downloadTemplate(BuildContext context) async {
+  Future<void> _downloadTemplate() async {
     try {
       await FileDownloadService.instance.downloadAndShare(
         '/import/template',

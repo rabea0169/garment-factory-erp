@@ -76,7 +76,7 @@ class AuditLogsError extends AuditLogsState {
 /// تصفية بالوحدة/الفعل. الرؤية خادمية (الإداري يرى الكل، البقية
 /// مدخلاتهم).
 class AuditLogsCubit extends Cubit<AuditLogsState> {
-  AuditLogsCubit({Dio? dio}) : state = AuditLogsInitial() {
+  AuditLogsCubit({Dio? dio}) : super(AuditLogsInitial()) {
     _dio = dio ?? ApiClient.instance.dio;
   }
 
@@ -100,6 +100,9 @@ class AuditLogsCubit extends Cubit<AuditLogsState> {
       );
       final data = response.data;
       if (data is! Map) throw Exception('استجابة سجل غير صالحة');
+      // data هنا Map<dynamic,dynamic> — نمرّره عبر map() ليصبح
+      // Map<String,dynamic> كما تتوقع integer().
+      final typed = ApiParsing.map(data, context: 'سجل التدقيق');
       final logs = <AuditLogEntry>[];
       for (final row in (data['logs'] as List? ?? [])) {
         if (row is Map) {
@@ -114,7 +117,7 @@ class AuditLogsCubit extends Cubit<AuditLogsState> {
         AuditLogsLoaded(
           AuditLogsPage(
             logs: logs,
-            total: ApiParsing.integer(data, 'total', context: 'سجل التدقيق'),
+            total: ApiParsing.integer(typed, 'total', context: 'سجل التدقيق'),
             pageNumber: page,
             pageSize: pageSize,
           ),

@@ -35,7 +35,7 @@ class _CostCentersScreenState extends State<CostCentersScreen> {
           title: 'مراكز التكلفة',
           fab: FloatingActionButton.extended(
             onPressed: state is CostCentersLoaded && !state.pendingAction
-                ? () => _showCreateDialog(context, cubit)
+                ? () => _showCreateDialog(cubit)
                 : null,
             icon: const Icon(Icons.add),
             label: const Text('مركز جديد'),
@@ -82,7 +82,7 @@ class _CostCentersScreenState extends State<CostCentersScreen> {
           child: ListTile(
             leading: CircleAvatar(
               backgroundColor: center.isActive
-                  ? AppColors.primary.withOpacity(0.12)
+                  ? AppColors.primary.withValues(alpha: 0.12)
                   : Colors.grey.shade300,
               child: Text(
                 center.code,
@@ -104,7 +104,6 @@ class _CostCentersScreenState extends State<CostCentersScreen> {
             ),
             trailing: PopupMenuButton<String>(
               onSelected: (value) => _onMenu(
-                context,
                 context.read<CostCentersCubit>(),
                 center,
                 value,
@@ -131,14 +130,13 @@ class _CostCentersScreenState extends State<CostCentersScreen> {
   }
 
   Future<void> _onMenu(
-    BuildContext context,
     CostCentersCubit cubit,
     CostCenterEntry center,
     String action,
   ) async {
     switch (action) {
       case 'rename':
-        await _showRenameDialog(context, cubit, center);
+        await _showRenameDialog(cubit, center);
         break;
       case 'toggle':
         final ok = await cubit
@@ -164,10 +162,7 @@ class _CostCentersScreenState extends State<CostCentersScreen> {
     );
   }
 
-  Future<void> _showCreateDialog(
-    BuildContext context,
-    CostCentersCubit cubit,
-  ) async {
+  Future<void> _showCreateDialog(CostCentersCubit cubit) async {
     final code = TextEditingController();
     final name = TextEditingController();
     final ok = await showDialog<bool>(
@@ -217,7 +212,6 @@ class _CostCentersScreenState extends State<CostCentersScreen> {
   }
 
   Future<void> _showRenameDialog(
-    BuildContext context,
     CostCentersCubit cubit,
     CostCenterEntry center,
   ) async {

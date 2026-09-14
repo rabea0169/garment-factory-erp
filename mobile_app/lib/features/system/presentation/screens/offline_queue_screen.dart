@@ -46,7 +46,7 @@ class OfflineQueueScreen extends StatelessWidget {
           }
           return Column(
             children: [
-              _summaryBar(outbox),
+              _summaryBar(context, outbox),
               Expanded(
                 child: ListView.builder(
                   padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
@@ -62,14 +62,14 @@ class OfflineQueueScreen extends StatelessWidget {
     );
   }
 
-  Widget _summaryBar(OutboxService outbox) {
+  Widget _summaryBar(BuildContext context, OutboxService outbox) {
     final total = outbox.pendingCount;
     final failed = outbox.failedCount;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       color: failed > 0
-          ? AppColors.error.withOpacity(0.08)
-          : AppColors.primary.withOpacity(0.06),
+          ? AppColors.error.withValues(alpha: 0.08)
+          : AppColors.primary.withValues(alpha: 0.06),
       child: Row(
         children: [
           Icon(
@@ -143,7 +143,7 @@ class _QueueCard extends StatelessWidget {
     final failed = entry.status == OutboxStatus.failed;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
-      color: failed ? AppColors.error.withOpacity(0.04) : null,
+      color: failed ? AppColors.error.withValues(alpha: 0.04) : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -202,7 +202,7 @@ class _QueueCard extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(8),
                 decoration: BoxDecoration(
-                  color: AppColors.error.withOpacity(0.08),
+                  color: AppColors.error.withValues(alpha: 0.08),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
