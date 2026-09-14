@@ -5,7 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/network/api_client.dart';
-import '../../parties/presentation/widgets/party_details_sheet.dart';
+import '../../../parties/presentation/widgets/party_details_sheet.dart';
 import '../../../../core/contacts/contact_import_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
@@ -588,7 +588,7 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
     ]);
     final customers = results[0].cast<dynamic>();
     final products = results[1].cast<dynamic>();
-    final branches = results[2] as List<Map<String, dynamic>>;
+    final branches = results[2];
     final variants = <Map<String, dynamic>>[];
     for (final product in products) {
       if (product is! Map) continue;

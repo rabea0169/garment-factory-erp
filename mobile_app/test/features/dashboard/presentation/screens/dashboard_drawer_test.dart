@@ -20,13 +20,13 @@ void main() {
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
-    final authCubit = AuthCubit()
-      ..emit(AuthAuthenticated(<String, dynamic>{
-        'id': 'u-1',
-        'name': 'مستخدم تجريبي',
-        'email': 'user@factory.com',
-        'role': role,
-      }));
+    final user = <String, dynamic>{
+      'id': 'u-1',
+      'name': 'مستخدم تجريبي',
+      'email': 'user@factory.com',
+      'role': role,
+    };
+    final authCubit = AuthCubit()..emit(AuthAuthenticated(user));
     addTearDown(authCubit.close);
     await tester.pumpWidget(
       MaterialApp(
@@ -40,9 +40,10 @@ void main() {
     // فتح درج «كل الأقسام» مباشرة (نفس ما يفعله زر المزيد في الشريط).
     // لا ننتظر مستقبل الدرج — لا يكتمل إلا عند الإغلاق.
     // ignore: unawaited_futures
+    // W4: الدرج صار يستقبل المستخدم كاملًا (صلاحيات فعالة) لا الدور فقط.
     showSelimMoreSheet(
       tester.element(find.byType(Scaffold).first),
-      role: role,
+      user: user,
     );
     await tester.pumpAndSettle();
   }

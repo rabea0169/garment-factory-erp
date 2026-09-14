@@ -1,5 +1,3 @@
-import 'route_access.dart';
-
 /// SELIM-ERP W4 — الصلاحيات الفعالة في الجوال (نقل hasPermission من
 /// المرجع frontend-permissions.ts): الدور خط الأساس، والصلاحيات الصريحة
 /// على المستخدم (من عمود users.permissions عبر /auth/me) **تضيف** وصولًا
@@ -9,6 +7,8 @@ import 'route_access.dart';
 /// login//me بنفس منطق permissions.domain) — الدور يُستعمل احتياطًا عند
 /// غيابه (جلسات مخزنة قبل الموجة الرابعة أو وضع لا-اتصالي).
 library;
+
+import 'route_access.dart';
 
 /// صف صلاحية كما يصل من الخادم.
 class PermissionRow {

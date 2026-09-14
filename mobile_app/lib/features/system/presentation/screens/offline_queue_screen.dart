@@ -67,7 +67,6 @@ class OfflineQueueScreen extends StatelessWidget {
     final failed = outbox.failedCount;
     // SELIM-ERP W4: التعارضات أولوية العرض (بيانات تغيّرت خادميًا).
     final conflicts = outbox.conflictCount;
-    final needsDecision = failed + conflicts;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       color: conflicts > 0

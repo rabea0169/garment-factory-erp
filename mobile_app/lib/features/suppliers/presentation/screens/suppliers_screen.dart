@@ -8,7 +8,7 @@ import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
 import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/suppliers_cubit.dart';
-import '../../parties/presentation/widgets/party_details_sheet.dart';
+import '../../../parties/presentation/widgets/party_details_sheet.dart';
 import '../../../../core/navigation/back_navigation.dart';
 
 class SuppliersScreen extends StatelessWidget {

@@ -95,8 +95,12 @@ describe('Branches + UserPermissions (e2e) — SELIM-ERP W4', () => {
       },
     );
     prisma.companyBranch.findMany.mockResolvedValue([]);
-    prisma.companyBranch.create.mockImplementation(({ data }: never) =>
-      Promise.resolve({ id: 'aaaaaaaa-0000-4000-8000-000000000003', ...data }),
+    prisma.companyBranch.create.mockImplementation(
+      ({ data }: { data: Record<string, unknown> }) =>
+        Promise.resolve({
+          id: 'aaaaaaaa-0000-4000-8000-000000000003',
+          ...data,
+        }),
     );
     prisma.companyBranch.update.mockImplementation(
       ({ data }: { data: Record<string, unknown> }) =>
@@ -242,16 +246,17 @@ describe('Branches + UserPermissions (e2e) — SELIM-ERP W4', () => {
     });
 
     it('PUT صلاحيات موجهة للأدمن تعمل وتُنقّى الصفوف الدخيلة', async () => {
-      prisma.user.update.mockImplementation(({ data }: never) =>
-        Promise.resolve({
-          id: CASHIER,
-          name: 'كاشير',
-          email: 'cashier@factory.com',
-          role: UserRole.CASHIER,
-          isActive: true,
-          createdAt: new Date(),
-          permissions: data.permissions,
-        }),
+      prisma.user.update.mockImplementation(
+        ({ data }: { data: { permissions: unknown } }) =>
+          Promise.resolve({
+            id: CASHIER,
+            name: 'كاشير',
+            email: 'cashier@factory.com',
+            role: UserRole.CASHIER,
+            isActive: true,
+            createdAt: new Date(),
+            permissions: data.permissions,
+          }),
       );
       const res = await request(app.getHttpServer())
         .put(`/users/${CASHIER}/permissions`)

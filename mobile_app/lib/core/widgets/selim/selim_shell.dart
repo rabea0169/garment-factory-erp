@@ -7,7 +7,6 @@ import '../../../features/auth/presentation/cubit/auth_cubit.dart';
 import '../../../features/system/presentation/widgets/alerts_bell.dart';
 import '../../constants/app_colors.dart';
 import '../../router/app_router.dart';
-import '../../security/route_access.dart';
 import '../../security/effective_permissions.dart';
 import '../search/command_palette.dart';
 import '../../navigation/back_navigation.dart';

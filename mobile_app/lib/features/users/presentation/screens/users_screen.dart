@@ -1,10 +1,9 @@
 import 'package:flutter/material.dart';
-
-import '../../auth/presentation/cubit/auth_cubit.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/widgets/app_feedback.dart';
+import '../../../auth/presentation/cubit/auth_cubit.dart';
 import '../../domain/user_roles.dart';
 import '../cubit/users_cubit.dart';
 import '../cubit/users_state.dart';
