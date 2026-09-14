@@ -81,11 +81,14 @@ class FactorySettings {
 
 /// مخزن مؤقت للإعدادات — جلب مرة واحدة لكل جلسة (فشل صامت: قيم env).
 class FactorySettingsCache {
-  FactorySettingsCache({Dio? dio}) : _dio = dio ?? ApiClient.instance.dio;
+  FactorySettingsCache({Dio? dio}) : _injectedDio = dio;
 
   static final FactorySettingsCache instance = FactorySettingsCache();
 
-  final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   FactorySettings? _cached;
   Future<FactorySettings>? _inFlight;

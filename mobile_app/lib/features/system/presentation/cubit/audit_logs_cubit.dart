@@ -76,11 +76,14 @@ class AuditLogsError extends AuditLogsState {
 /// تصفية بالوحدة/الفعل. الرؤية خادمية (الإداري يرى الكل، البقية
 /// مدخلاتهم).
 class AuditLogsCubit extends Cubit<AuditLogsState> {
-  AuditLogsCubit({Dio? dio}) : super(AuditLogsInitial()) {
-    _dio = dio ?? ApiClient.instance.dio;
-  }
+  AuditLogsCubit({Dio? dio})
+      : _injectedDio = dio,
+        super(AuditLogsInitial());
 
-  late final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   int _page = 1;
   static const int pageSize = 50;

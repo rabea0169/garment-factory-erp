@@ -60,11 +60,12 @@ class DevicesError extends DevicesState {
 
 /// SELIM-ERP W3 — cubit الأجهزة (GET /system/devices — قائمة ADMIN+).
 class DevicesCubit extends Cubit<DevicesState> {
-  DevicesCubit({Dio? dio}) : super(DevicesInitial()) {
-    _dio = dio ?? ApiClient.instance.dio;
-  }
+  DevicesCubit({Dio? dio}) : _injectedDio = dio, super(DevicesInitial());
 
-  late final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   Future<void> load() async {
     emit(DevicesLoading());

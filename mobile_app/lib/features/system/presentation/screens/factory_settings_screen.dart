@@ -21,7 +21,13 @@ String? logoDataUrlFromBytes(List<int> bytes, String? mimeType) {
   if (bytes.isEmpty) return null;
   final type = (mimeType ?? 'image/png').toLowerCase();
   final normalized = type == 'image/jpg' ? 'image/jpeg' : type;
-  if (!normalized.startsWith('image/')) return null;
+  // نفس قائمة الخادم (assertValidLogo): png/jpeg/webp فقط — يمنع
+  // svg وكل نوع آخر يبدأ بـ image/ لكنه ليس صورة نقطية آمنة.
+  if (normalized != 'image/png' &&
+      normalized != 'image/jpeg' &&
+      normalized != 'image/webp') {
+    return null;
+  }
   return 'data:$normalized;base64,${base64Encode(bytes)}';
 }
 

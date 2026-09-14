@@ -327,11 +327,14 @@ void main() {
       expect(outbox.pendingEntries.single.attempts, 2);
     });
 
-    test('deleteOne يحذف العنصر ويعلن التغيير؛ clearFailed يمسح الفاشلة فقط',
+    test('deleteOne يحذف الفاشل؛ clearFailed يمسح الفاشلة فقط',
         () async {
       final outbox = newOutbox();
       await outbox.init();
+      // فاشل (رفض 400 يُعلّم ويمرّ) + معلق (فشل شبكة يوقف الجولة عنده —
+      // يبقى معلقًا بانتظار عودة الاتصال).
       adapter.statusByPath['/a'] = 400;
+      adapter.failStatusFor.add('/b');
 
       final failedEntry = await outbox.enqueue(
         method: 'POST',
@@ -346,7 +349,10 @@ void main() {
         idempotencyKey: 'k-p',
       );
       await outbox.drain();
+      // الصندوق: الفاشل يبقى (بقرار المستخدم) + المعلّق بانتظار الشبكة.
+      // pendingCount = إجمالي الصندوق (معلّق + فاشل) — نفس دلالة اللوحة.
       expect(outbox.failedCount, 1);
+      expect(outbox.pendingCount, 2);
 
       // حذف فردي للفاشل.
       final removed = await outbox.deleteOne(failedEntry!.id);
@@ -354,16 +360,19 @@ void main() {
       expect(outbox.pendingCount, 1);
       expect(outbox.pendingEntries.single.id, pendingEntry!.id);
 
-      // إضافة فاشل آخر ثم clearFailed.
+      // فاشل آخر: إعادة محاولة فردية (retryOne يرسل العنصر وحده —
+      // بلا مساس بترتيب الطابور ولا بالمعلّق قبله).
       adapter.statusByPath['/c'] = 400;
-      await outbox.enqueue(
+      final another = await outbox.enqueue(
         method: 'POST',
         path: '/c',
         body: const {},
         idempotencyKey: 'k-f2',
       );
-      await outbox.drain();
+      final retried = await outbox.retryOne(another!.id);
+      expect(retried, isFalse);
       expect(outbox.failedCount, 1);
+
       final cleared = await outbox.clearFailed();
       expect(cleared, 1);
       // المعلّق الأصلي لم يُمس.

@@ -171,12 +171,14 @@ class PartyStatementError extends PartyStatementState {
 /// customer-statement/:id أو supplier-statement/:id).
 class PartyStatementCubit extends Cubit<PartyStatementState> {
   PartyStatementCubit({Dio? dio, this.isCustomer = true})
-      : super(PartyStatementInitial()) {
-    _dio = dio ?? ApiClient.instance.dio;
-  }
+      : _injectedDio = dio,
+        super(PartyStatementInitial());
 
   final bool isCustomer;
-  late final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   Future<void> load(
     String partyId, {

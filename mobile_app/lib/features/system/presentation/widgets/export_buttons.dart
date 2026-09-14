@@ -63,11 +63,14 @@ const Map<String, String> kExportEntityLabels = {
   'purchases': 'المشتريات',
 };
 
-/// هل يظهر تصدير هذا الكيان لهذا الدور؟ (SUPER_ADMIN دائمًا — كالخادم).
+/// هل يظهر تصدير هذا الكيان لهذا الدور؟
+///
+/// كيان غير معروف → false للجميع (الخادم يرفضه 400)؛ SUPER_ADMIN يرى كل
+/// الكيانات المعروفة (كحاجز الدور الخادمي).
 bool canExportEntity(String entity, String? role) {
-  if (role == 'SUPER_ADMIN') return true;
   final allowed = kExportEntityRoles[entity];
   if (allowed == null) return false;
+  if (role == 'SUPER_ADMIN') return true;
   return role != null && allowed.contains(role);
 }
 
@@ -173,7 +176,11 @@ class _EntityExportButtonsState extends State<EntityExportButtons> {
   @override
   Widget build(BuildContext context) {
     // إخفاء ذاتي حين لا يملك الدور أي كيان مصرّح به (الخادم يظل الحَكَم).
-    final authState = context.watch<AuthCubit>().state;
+    // maybeOf: الشاشات المُختبرة بلا AuthCubit (اختبارات الوحدات) ترى
+    // الزر مخفيًا بدل انهيار ProviderNotFoundException — والدور نادرًا
+    // ما يتغير أثناء جلسة قائمة، فالقراءة تكتفي.
+    final authCubit = BlocProvider.maybeOf<AuthCubit>(context);
+    final authState = authCubit?.state;
     final role =
         authState is AuthAuthenticated ? authState.user['role']?.toString() : null;
     final allowed = _allowedFor(role);

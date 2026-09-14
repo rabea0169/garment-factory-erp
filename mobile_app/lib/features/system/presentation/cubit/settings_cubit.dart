@@ -147,11 +147,14 @@ class SettingsError extends SettingsState {
 
 /// SELIM-ERP W3 — cubit إعدادات المصنع (GET/POST /system/factory-settings).
 class SettingsCubit extends Cubit<SettingsState> {
-  SettingsCubit({Dio? dio}) : super(SettingsInitial()) {
-    _dio = dio ?? ApiClient.instance.dio;
-  }
+  SettingsCubit({Dio? dio})
+      : _injectedDio = dio,
+        super(SettingsInitial());
 
-  late final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   Future<void> load() async {
     emit(SettingsLoading());

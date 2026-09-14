@@ -78,11 +78,13 @@ class AlertsError extends AlertsState {
 /// جرس التطبيق يستمع للحالة: العدد فوق الأيقونة + اللوحة السفلية عند
 /// الضغط (نفس AlertsPanel + جرس Header في المرجع).
 class AlertsCubit extends Cubit<AlertsState> {
-  AlertsCubit({Dio? dio}) : super(AlertsInitial()) {
-    _dio = dio ?? ApiClient.instance.dio;
-  }
+  AlertsCubit({Dio? dio}) : _injectedDio = dio, super(AlertsInitial());
 
-  late final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient
+  /// (نمط OutboxService/BackupCubit في الموجة الثانية).
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   Future<void> load() async {
     emit(AlertsLoading());

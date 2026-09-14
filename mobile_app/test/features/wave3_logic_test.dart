@@ -41,7 +41,7 @@ void main() {
     });
 
     test('يحافظ على ترتيب الحركات عبر الصفحات', () {
-      final rows = List.generate(50, _m);
+      final rows = List.generate(50, (i) => _m(i + 1));
       final pages = chunkStatementRows(rows);
       expect(pages.first.first.ref, 'INV-1');
       expect(pages.last.last.ref, 'INV-50');

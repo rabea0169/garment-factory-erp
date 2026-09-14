@@ -15,7 +15,7 @@ import '../network/api_client.dart';
 class DeviceRegistrationService {
   DeviceRegistrationService({HiveInterface? hive, Dio? dio, Uuid? uuid})
       : _hive = hive ?? Hive,
-        _dio = dio ?? ApiClient.instance.dio,
+        _injectedDio = dio,
         _uuid = uuid ?? const Uuid();
 
   static final DeviceRegistrationService instance =
@@ -25,7 +25,10 @@ class DeviceRegistrationService {
   static const String deviceIdKey = 'device_id';
 
   final HiveInterface _hive;
-  final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
   final Uuid _uuid;
 
   String? _cachedDeviceId;

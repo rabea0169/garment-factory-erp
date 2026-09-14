@@ -54,11 +54,14 @@ class CostCentersError extends CostCentersState {
 
 /// SELIM-ERP W3 — cubit مراكز التكلفة (CRUD /accounting/cost-centers).
 class CostCentersCubit extends Cubit<CostCentersState> {
-  CostCentersCubit({Dio? dio}) : super(CostCentersInitial()) {
-    _dio = dio ?? ApiClient.instance.dio;
-  }
+  CostCentersCubit({Dio? dio})
+      : _injectedDio = dio,
+        super(CostCentersInitial());
 
-  late final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient.
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   Future<void> load() async {
     emit(CostCentersLoading());

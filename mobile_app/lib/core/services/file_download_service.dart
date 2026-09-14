@@ -14,12 +14,15 @@ import '../network/api_client.dart';
 /// - مشاركة الملف عبر مشاركة النظام (share_plus) — كما يفعل
 ///   ExcelExportButton في Selim من المتصفح.
 class FileDownloadService {
-  FileDownloadService({Dio? dio})
-      : _dio = dio ?? ApiClient.instance.dio;
+  FileDownloadService({Dio? dio}) : _injectedDio = dio;
 
   static final FileDownloadService instance = FileDownloadService();
 
-  final Dio _dio;
+  final Dio? _injectedDio;
+
+  /// يُحل عند أول نداء — بيئات الاختبار قد لا تهيئ ApiClient
+  /// (نمط الموجة الثانية في OutboxService/BackupCubit).
+  Dio get _dio => _injectedDio ?? ApiClient.instance.dio;
 
   /// ينزّل [path] (مثل /export/excel/customers) ويعيد الملف المحفوظ.
   ///
