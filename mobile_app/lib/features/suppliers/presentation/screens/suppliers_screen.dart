@@ -8,6 +8,7 @@ import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
 import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/suppliers_cubit.dart';
+import '../../parties/presentation/widgets/party_details_sheet.dart';
 import '../../../../core/navigation/back_navigation.dart';
 
 class SuppliersScreen extends StatelessWidget {
@@ -85,6 +86,20 @@ class SuppliersScreen extends StatelessWidget {
                                 ? null
                                 : () => context.push(
                                       '${AppRouter.supplierStatement}/${supplier['id']}',
+                                    ),
+                          ),
+                          // SELIM-ERP W4: بطاقة الطرف (تفاصيل المورد).
+                          IconButton(
+                            tooltip: 'بطاقة المورد',
+                            icon: const Icon(Icons.info_outline),
+                            onPressed: supplier['id'] == null
+                                ? null
+                                : () => showPartyDetailsSheet(
+                                      context,
+                                      party: Map<String, dynamic>.from(
+                                        supplier,
+                                      ),
+                                      isCustomer: false,
                                     ),
                           ),
                           Text(

@@ -223,7 +223,65 @@ class RouteAccess {
       AppRoles.inventoryManager,
       AppRoles.superAdmin,
     },
+
+    // ===== SELIM-ERP W4: قيود الموجة الرابعة (مرآة @Roles الخادمية) =====
+    // إدارة الفروع: الكتابة GM/SA خادميًا — الشاشة إدارية فتُقيَّد بهما
+    // (القراءة للمنتقي متاحة للجميع من نماذج البيع/الشراء بلا شاشة).
+    '/branches': {
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
   };
+
+  /// خريطة المسار → مورد الصلاحية (المرآة الجوالية لموارد الخادم) —
+  /// تُستخدم لفتح مسار فشل فحص الدور بمنح صريح READ (W4).
+  static const Map<String, String> _routeResources = {
+    '/inventory': 'inventory',
+    '/quality': 'quality',
+    '/hr': 'hr',
+    '/accounting': 'accounting',
+    '/cost-centers': 'accounting',
+    '/reports': 'reports',
+    '/users': 'users',
+    '/quotations': 'quotations',
+    '/purchase-returns': 'purchase-returns',
+    '/adjustments': 'inventory-adjustments',
+    '/expenses': 'expenses',
+    '/treasury': 'treasury',
+    '/shifts': 'shifts',
+    '/worker-receipts': 'worker-receipts',
+    '/payroll-statements': 'payroll-statements',
+    '/cutting': 'cutting',
+    '/financial-reports': 'financial-reports',
+    '/printing': 'printing',
+    '/pos': 'pos',
+    '/import': 'data-import',
+    '/backup': 'backup',
+    '/devices': 'devices',
+    '/branches': 'branches',
+    '/statement/customer': 'financial-reports',
+    '/statement/supplier': 'financial-reports',
+  };
+
+  /// مورد الصلاحية لمسار معلن (بأطول بادئة مطابقة) — null إن كان مسارًا
+  /// حرًا غير مقيد (كل الموثّقين أصلًا فلا حاجة لمنح).
+  static String? resourceOfRoute(String location) {
+    String? bestMatch;
+    for (final route in _routeResources.keys) {
+      final normalized = route.contains('/:')
+          ? route.substring(0, route.indexOf('/:'))
+          : route;
+      if (location == route ||
+          location.startsWith('$normalized/') ||
+          location == normalized) {
+        if (bestMatch == null || route.length > bestMatch.length) {
+          bestMatch = route;
+        }
+      }
+    }
+    if (bestMatch == null) return null;
+    return _routeResources[bestMatch];
+  }
 
   /// هل يملك [role] صلاحية الوصول إلى [location]؟
   ///

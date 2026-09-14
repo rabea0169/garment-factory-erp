@@ -8,6 +8,7 @@ import '../../../features/system/presentation/widgets/alerts_bell.dart';
 import '../../constants/app_colors.dart';
 import '../../router/app_router.dart';
 import '../../security/route_access.dart';
+import '../../security/effective_permissions.dart';
 import '../search/command_palette.dart';
 import '../../navigation/back_navigation.dart';
 import 'selim_more_sheet.dart';
@@ -162,10 +163,10 @@ class _SelimBottomNav extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final role = _roleOf(context);
+    final user = _userOf(context);
     final destinations =
         _primaryDestinations
-            .where((d) => RouteAccess.canAccess(d.route, role))
+            .where((d) => canAccessWithUser(d.route, user))
             .toList();
     return Container(
       decoration: BoxDecoration(
@@ -260,7 +261,7 @@ class _MoreButton extends StatelessWidget {
       onTap: () {
         HapticFeedback.selectionClick();
         // الدور يُحل مسبقًا هنا (تحت شجرة المزود) ويمرر للدرج.
-        showSelimMoreSheet(context, role: _roleOf(context));
+        showSelimMoreSheet(context, user: _userOf(context));
       },
       child: Padding(
         padding: const EdgeInsetsDirectional.symmetric(vertical: 7),
@@ -308,8 +309,8 @@ class _WideShell extends StatelessWidget {
     final location = router != null
         ? GoRouterState.of(context).matchedLocation
         : '';
-    final role = _roleOf(context);
-    final all = allDestinations.where((d) => RouteAccess.canAccess(d.route, role)).toList();
+    final user = _userOf(context);
+    final all = allDestinations.where((d) => canAccessWithUser(d.route, user)).toList();
     return Scaffold(
       appBar: AppBar(
         // زر الرجوع الظاهر (ديسكتوب/ويب) — نفس سلوك الهيكل الجوالي.
@@ -389,13 +390,14 @@ bool _isSameSection(String location, String section) {
   return location == section || location.startsWith('$section/');
 }
 
-String _roleOf(BuildContext context) {
+Map<String, dynamic>? _userOf(BuildContext context) {
   final authState = context.watch<AuthCubit>().state;
   if (authState is AuthAuthenticated) {
-    return authState.user['role']?.toString() ?? '';
+    return authState.user;
   }
-  return '';
+  return null;
 }
+
 
 class SelimDestination {
   const SelimDestination(this.label, this.icon, this.color, this.route);

@@ -76,6 +76,7 @@ class PurchasingCubit extends Cubit<PurchasingState> {
     DateTime? dueDate,
     String? notes,
     required List<Map<String, dynamic>> items,
+    String? branchId,
   }) async {
     await ApiClient.instance.dio.post(
       '/purchasing',
@@ -85,6 +86,8 @@ class PurchasingCubit extends Cubit<PurchasingState> {
         if (dueDate != null) 'dueDate': dueDate.toUtc().toIso8601String(),
         if (notes != null && notes.isNotEmpty) 'notes': notes,
         'items': items,
+        // SELIM-ERP W4 (SPRINT 93): الفرع الصادر — اختياري.
+        if (branchId != null && branchId.isNotEmpty) 'branchId': branchId,
       },
       options: Options(headers: {'Idempotency-Key': _uuid.v4()}),
     );

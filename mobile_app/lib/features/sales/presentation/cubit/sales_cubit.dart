@@ -118,12 +118,15 @@ class SalesCubit extends Cubit<SalesState> {
     required String paymentType,
     required double discount,
     required List<Map<String, dynamic>> items,
+    String? branchId,
   }) async {
     await ApiClient.instance.dio.post('/sales/orders', data: {
       'customerId': customerId,
       'paymentType': paymentType,
       'discount': discount,
       'items': items,
+      // SELIM-ERP W4 (SPRINT 93): الفرع المُصدِر — اختياري.
+      if (branchId != null && branchId.isNotEmpty) 'branchId': branchId,
     });
     await fetchOrders();
   }

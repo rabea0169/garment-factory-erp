@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+
+import '../../auth/presentation/cubit/auth_cubit.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
@@ -7,6 +9,7 @@ import '../../domain/user_roles.dart';
 import '../cubit/users_cubit.dart';
 import '../cubit/users_state.dart';
 import '../widgets/change_role_dialog.dart';
+import '../widgets/user_permissions_dialog.dart';
 import '../widgets/create_user_dialog.dart';
 import '../../../../core/navigation/back_navigation.dart';
 
@@ -131,6 +134,38 @@ class _UserCardState extends State<_UserCard> {
 
   bool get _isActive => widget.user['isActive'] == true;
 
+  /// SELIM-ERP W4: هل البطاقة ليست حسابك أنت؟ (حماية حبس النفس —
+  /// الخادم يرفض 409 كذلك؛ هذا منع مسبق في الواجهة).
+  bool get _isNotSelf {
+    // قراءة قابلة للاختفاء (read<AuthCubit?>) — شاشة الاختبار تُبنى بلا
+    // AuthCubit في الشجرة فنعاملها كأن المستخدم ليس صاحب البطاقة.
+    final authCubit = context.read<AuthCubit?>();
+    final authState = authCubit?.state;
+    if (authState is! AuthAuthenticated) return true;
+    return authState.user['id']?.toString() != _id;
+  }
+
+  /// SELIM-ERP W4: حوار الصلاحيات التفصيلية (مصفوفة مورد × إجراء).
+  /// لا يُعرض لحسابك الشخصي — الخادم يرفض 409 (حماية حبس النفس) ونحن
+  /// نمنعه في الواجهة أصلًا كي لا يصل المستخدم لرسالة خطأ أصلًا.
+  Future<void> _editPermissions() async {
+    final id = _id;
+    if (id == null) return;
+    final changed = await showDialog<bool>(
+      context: context,
+      builder: (_) => UserPermissionsDialog(
+        userId: id,
+        userName: _name.isEmpty ? 'المستخدم' : _name,
+        userRole: _role,
+      ),
+    );
+    if (changed == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حفظ الصلاحيات بنجاح')),
+      );
+    }
+  }
+
   Future<void> _changeRole() async {
     final id = _id;
     if (id == null) return;
@@ -221,6 +256,15 @@ class _UserCardState extends State<_UserCard> {
                       label: const Text('تغيير الدور'),
                     ),
                   ),
+                  if (_isNotSelf)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(start: 8),
+                      child: FilledButton.tonalIcon(
+                        onPressed: _isRunning ? null : _editPermissions,
+                        icon: const Icon(Icons.security_rounded, size: 18),
+                        label: const Text('الصلاحيات'),
+                      ),
+                    ),
                   Padding(
                     padding: const EdgeInsetsDirectional.only(start: 8),
                     child: _isActive
