@@ -78,7 +78,7 @@ void main() {
         isMain: true,
       );
       expect(ok, isTrue);
-      final request = adapter.requests.last;
+      final request = adapter.requests[1];
       expect(request.method, 'POST');
       final body = request.data as Map<String, dynamic>;
       expect(body['name'], 'فرع الإسكندرية');
@@ -100,11 +100,14 @@ void main() {
         manager: null,
         isMain: true,
       );
-      final body = adapter.requests.last.data as Map<String, dynamic>;
+      // الطلب ذو الفهرس 1 هو الـ PATCH نفسه (0 = التحميل الأولي،
+      // 2 = إعادة التحميل بعد الحفظ — _save يعيد الجلب دائمًا).
+      final request = adapter.requests[1];
+      final body = request.data as Map<String, dynamic>;
       expect(body['address'], '');
       expect(body['manager'], isNull);
       expect(body['isMain'], isTrue);
-      expect(adapter.requests.last.path, '/branches/b-2');
+      expect(request.path, '/branches/b-2');
     });
   });
 

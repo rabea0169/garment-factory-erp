@@ -463,8 +463,10 @@ void main() {
       final ok = await outbox.retryWithFreshKey(entry!.id);
       expect(ok, isTrue);
       expect(outbox.pendingCount, 0);
-      // الطلب الثاني بمفتاح مختلف عن الأصل (keepLocal بالمرجع).
-      expect(adapter.keys, isNot(contains('k-conflict-3')));
+      // طلبان فقط: drain الأولية (بالمفتاح الأصلي) ثم الإعادة بالمفتاح
+      // الجديد — الأخير مختلف عن الأصل (keepLocal بالمرجع).
+      expect(adapter.keys, hasLength(2));
+      expect(adapter.keys.last, isNot(equals('k-conflict-3')));
       expect(adapter.keys.last, isNot(equals(adapter.keys.first)));
     });
 

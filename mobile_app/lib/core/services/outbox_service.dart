@@ -201,8 +201,13 @@ class OutboxService extends ChangeNotifier {
           notifyListeners();
           continue;
         }
-        // الفاشل لا يُعاد تلقائيًا — قرار المستخدم (retryOne).
-        if (entry.status == OutboxStatus.failed) continue;
+        // الفاشل والمتعارض لا يُعادان تلقائيًا — قرار المستخدم (retryOne /
+        // retryWithFreshKey). المرجع: processQueue يعالج pending فقط
+        // (وفاشلًا غير مالي ضمن محاولاته) — التعارض بشري دائمًا.
+        if (entry.status == OutboxStatus.failed ||
+            entry.status == OutboxStatus.conflict) {
+          continue;
+        }
         final outcome = await _send(entry);
         if (outcome == _SendOutcome.sent) {
           await _box!.delete(storageKey);
