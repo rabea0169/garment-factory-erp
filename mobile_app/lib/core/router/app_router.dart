@@ -10,6 +10,7 @@ import '../../features/quality/presentation/screens/quality_screen.dart';
 import '../../features/hr/presentation/screens/hr_screen.dart';
 import '../../features/hr/payrolls/presentation/screens/payrolls_screen.dart';
 import '../../features/hr/worker_activity/presentation/screens/worker_activity_screen.dart';
+import '../../features/hr/worker_report/presentation/screens/worker_report_screen.dart';
 import '../../features/sales/presentation/screens/sales_screen.dart';
 import '../../features/suppliers/presentation/screens/suppliers_screen.dart';
 import '../../features/shipping/presentation/screens/shipping_screen.dart';
@@ -59,6 +60,7 @@ class AppRouter {
   // MOB-8: شاشة حالة الرواتب + نشاط العامل (سلف/إنتاج).
   static const String hrPayrolls = '/hr/payrolls';
   static const String hrWorkerActivity = '/hr/workers';
+  static const String hrWorkerReport = '/hr/workers/report';
   static const String sales = '/sales';
   static const String suppliers = '/suppliers';
   static const String shipping = '/shipping';
@@ -205,6 +207,18 @@ class AppRouter {
         name: 'hrWorkerActivity',
         builder: (context, state) => BackGuard(
           child: WorkerActivityScreen(
+            workerId: state.pathParameters['workerId'] ?? '',
+            workerName: state.uri.queryParameters['name'],
+          ),
+        ),
+      ),
+      // SELIM-ERP W5: تقرير العامل المجمّع بنطاق تاريخ
+      // (GET /hr/workers/:id/report) — قيود الوصول من بادئة /hr/workers.
+      GoRoute(
+        path: '$hrWorkerReport/:workerId',
+        name: 'hrWorkerReport',
+        builder: (context, state) => BackGuard(
+          child: WorkerReportScreen(
             workerId: state.pathParameters['workerId'] ?? '',
             workerName: state.uri.queryParameters['name'],
           ),
