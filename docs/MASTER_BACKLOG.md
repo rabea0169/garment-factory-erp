@@ -23,8 +23,8 @@
 | ID | النطاق | الحالة |
 |---|---|---|
 | GF-IMP-W1 | الموجة الأولى — تصفير بنود P0 الثلاثة عشر (HR-1, ACC-1, SAL-1, SHP-1, PRD-1, PUR-1, PUR-2, QLT-1, AUTH-1, AUTH-2, INV-1, PROD-1, CC-1) + بوابة توازن ميزان المراجعة | ✅ مدمجة في `main@c1995d3` عبر PR #79 بCI أخضر |
-| GF-IMP-W2 | الموجة الثانية — 44 بند P1 في أربع حزم (جلسات وجوال / عدالة محاسبية وتجارية / صحة إنتاج ومخزون / بنية وأدوات) + الهجرة الموحدة 20260906100000 + موديول users | 🟡 منفذة على `imp/gf-imp-w2-robustness` — تنتظر PR/CI |
-| GF-IMP-W3 | الموجة الثالثة — 54 بندًا (P2 + المؤجلان): offline فعلي بطابور كتابة، ميزان مراجعة وكشف حساب، إبطال أمر مؤكد، إصدارات BOM، إلغاء شحنة، موردون كاملون، هجرة stage | 🟡 منفذة على `imp/gf-imp-w3-features-maturity` — تنتظر PR/CI |
+| GF-IMP-W2 | الموجة الثانية — 44 بند P1 في أربع حزم (جلسات وجوال / عدالة محاسبية وتجارية / صحة إنتاج ومخزون / بنية وأدوات) + الهجرة الموحدة 20260906100000 + موديول users | ✅ مدموجة في main عبر PR #80 (2026-09-06) — الهجرة موجودة في main (تحقق 2026-09-14) |
+| GF-IMP-W3 | الموجة الثالثة — 54 بندًا (P2 + المؤجلان): offline فعلي بطابور كتابة، ميزان مراجعة وكشف حساب، إبطال أمر مؤكد، إصدارات BOM، إلغاء شحنة، موردون كاملون، هجرة stage | ✅ مدموجة في main عبر PR #81 (2026-09-06) — الهجرة موجودة في main (تحقق 2026-09-14) |
 
 **بنود W2 المنفذة (44):** AUTH-3/4/5، MOB-1/2/5، ACC-2/3/9، HR-2/3، SAL-2/3/4، PUR-3/4/5، SHP-2/3/4، QLT-3، PRD-2/3/4/5/9، INV-2/3/4/5، PROD-2/3/5، CC-2 (منجز ضمن PROD-1 في W1)، CC-3/4/5/8/9، DSH-1/2، INF-1/8 + PUR-5(أ) وSHP-3(أ) بالقيم المهاجرية الجديدة. **مؤجلان بحكم الاعتمادية إلى W3:** MOB-3 وPUR-8.
 
@@ -53,7 +53,7 @@
 | ID | المهمة | الملفات الأساسية | التبعيات | معيار القبول | الحالة |
 |---|---|---|---|---|---|
 | GF-REMAINING-008 | ربط barcode وإكمال حالات Flutter وoffline المحدودة | `mobile_app/lib/features/inventory/**`، `core/network/**`، اختبارات Flutter | عقد API مستقر وFlutter CI | زر المسح يفتح scanner حقيقيًا ويرجع SKU؛ حالات loading/empty/error/401/offline مختبرة؛ لا mock صامت | ✅ منفذة على main (الموجة 8): زر مسح في شاشة المخزون عبر `BarcodeScannerLauncher` + `ConnectivityService`/`OfflineBanner` + `InventoryOffline`/`AppOfflineView` + `ApiClient.isNetworkError`؛ 55/55 اختبار Flutter ناجحة وanalyze نظيف |
-| GF-REMAINING-009 | backup/restore وpilot وGo/No-Go | `docs/RELEASE_GATES.md`، runbooks، CI/operations | GF-REMAINING-001 إلى 008 | rehearsal موثق للنسخ والاستعادة، reconciliation على المسارات الذهبية، تدريب، monitoring، وقرار إطلاق موقع | 📅 مخططة |
+| GF-REMAINING-009 | backup/restore وpilot وGo/No-Go | `docs/RELEASE_GATES.md`، runbooks، CI/operations | GF-REMAINING-001 إلى 008 | rehearsal موثق للنسخ والاستعادة، reconciliation على المسارات الذهبية، تدريب، monitoring، وقرار إطلاق موقع | 🟡 **جارية**: بروفة استعادة مستوى التطبيق موثقة PASS (2026-09-14 — بعد إصلاح عيبين في `fix/backup-restore-dr-gate`، راجع BACKUP_RESTORE.md §5) + reconciliation محاسبي منفذ + دليل تدريب `docs/guides/TRAINING_GUIDE.md`. المتبقي: بروفة pg_dump (تحتاج وصول DB من المالك) + UAT الميداني 16/16 على جهاز Android فعلي + monitoring + قرار Go/No-Go |
 
 ## الأرشيف المكتمل
 
