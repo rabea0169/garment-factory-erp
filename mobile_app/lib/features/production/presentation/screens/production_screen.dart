@@ -13,7 +13,7 @@ import '../../production_module.dart';
 import '../cubit/production_cubit.dart';
 import '../cubit/production_state.dart';
 import '../widgets/outbox_pending_badge.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class ProductionScreen extends StatelessWidget {
   /// DEV-PQ1/2: حقن اختياري للحوارات والاختبارات — الافتراضي عميل
@@ -46,10 +46,8 @@ class _ProductionView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('الإنتاج وأوامر التشغيل'),
+    return SelimShellScaffold(
+        title: 'الإنتاج وأوامر التشغيل',
         actions: [
           // MOB-3: شارة عدد عمليات الطابور المعلّقة (مثل تسجيل إنتاج
           // محفوظ محليًا) — تظهر فقط عند وجود معلّق وتتحدث تلقائيًا.
@@ -61,9 +59,8 @@ class _ProductionView extends StatelessWidget {
                 context.read<ProductionCubit>().fetchWorkOrders(refresh: true),
           ),
         ],
-      ),
       // DEV-PQ1: إنشاء أمر تشغيل من التطبيق — الداتا لير كانت جاهزة بلا UI.
-      floatingActionButton: FloatingActionButton.extended(
+      fab: FloatingActionButton.extended(
         onPressed: () => _showCreateWorkOrderDialog(context),
         icon: const Icon(Icons.precision_manufacturing),
         label: const Text('أمر تشغيل جديد'),
@@ -80,7 +77,8 @@ class _ProductionView extends StatelessWidget {
         },
         builder: (context, state) {
           if (state is ProductionLoading || state is ProductionInitial) {
-            return const Center(child: CircularProgressIndicator());
+            // UI-REVAMP: سكيلتون يحاكي بطاقات أوامر التشغيل.
+            return const AppSkeletonList();
           }
           if (state is ProductionEmpty) {
             return _EmptyProductionView(

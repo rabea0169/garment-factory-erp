@@ -8,7 +8,7 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/quality_cubit.dart';
 import '../cubit/quality_state.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class QualityScreen extends StatelessWidget {
   /// DEV-PQ3: حقن اختياري — [cubit] و[dio] يُستخدمان في اختبارات الـ
@@ -21,19 +21,16 @@ class QualityScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Builder(
-      builder: (screenContext) => Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('مراقبة الجودة'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث',
-              onPressed: () =>
-                  screenContext.read<QualityCubit>().fetchQualityChecks(),
-            ),
-          ],
-        ),
+      builder: (screenContext) => SelimShellScaffold(
+        title: 'مراقبة الجودة',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () =>
+                screenContext.read<QualityCubit>().fetchQualityChecks(),
+          ),
+        ],
         body: BlocBuilder<QualityCubit, QualityState>(
           builder: (context, state) {
             if (state is QualityInitial || state is QualityLoading) {
@@ -63,8 +60,9 @@ class QualityScreen extends StatelessWidget {
                   final rejected =
                       int.tryParse('${check['rejectedQty'] ?? 0}') ?? 0;
                   final workOrder = check['workOrder'] as Map?;
-                  final checkedAt =
-                      DateTime.tryParse('${check['checkedAt'] ?? ''}');
+                  final checkedAt = DateTime.tryParse(
+                    '${check['checkedAt'] ?? ''}',
+                  );
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
                     child: ListTile(
@@ -72,8 +70,9 @@ class QualityScreen extends StatelessWidget {
                         rejected > 0
                             ? Icons.warning_amber_rounded
                             : Icons.check_circle,
-                        color:
-                            rejected > 0 ? AppColors.error : AppColors.success,
+                        color: rejected > 0
+                            ? AppColors.error
+                            : AppColors.success,
                         size: 32,
                       ),
                       title: Text(
@@ -94,8 +93,10 @@ class QualityScreen extends StatelessWidget {
                               style: const TextStyle(color: AppColors.error),
                             ),
                           if (checkedAt != null)
-                            Text(DateFormat('yyyy-MM-dd hh:mm a')
-                                .format(checkedAt.toLocal())),
+                            Text(
+                              DateFormat('yyyy-MM-dd hh:mm a')
+                                  .format(checkedAt.toLocal()),
+                            ),
                         ],
                       ),
                     ),
@@ -106,7 +107,7 @@ class QualityScreen extends StatelessWidget {
             return const SizedBox.shrink();
           },
         ),
-        floatingActionButton: FloatingActionButton.extended(
+        fab: FloatingActionButton.extended(
           onPressed: () => _showAddQualityCheckDialog(screenContext),
           icon: const Icon(Icons.playlist_add_check),
           label: const Text('تقرير جديد'),
@@ -126,15 +127,12 @@ class QualityScreen extends StatelessWidget {
   Future<void> _showAddQualityCheckDialog(BuildContext context) async {
     final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => _AddQualityCheckDialog(
-        cubit: context.read<QualityCubit>(),
-        dio: dio,
-      ),
+      builder: (_) =>
+          _AddQualityCheckDialog(cubit: context.read<QualityCubit>(), dio: dio),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تسجيل تقرير الجودة')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم تسجيل تقرير الجودة')));
     }
   }
 
@@ -311,8 +309,9 @@ class _AddQualityCheckDialogState extends State<_AddQualityCheckDialog> {
         queryParameters: {'workOrderId': workOrderId, 'limit': 100},
       );
       checkedStages = {
-        for (final check in ApiClient.extractPaginatedData(response.data)
-            .whereType<Map>())
+        for (final check in ApiClient.extractPaginatedData(
+          response.data,
+        ).whereType<Map>())
           if (check['stage'] is String) check['stage'] as String,
       };
     } catch (_) {
@@ -359,8 +358,7 @@ class _AddQualityCheckDialogState extends State<_AddQualityCheckDialog> {
     setState(() => _stage = stage);
     final workOrderId = _selectedWorkOrderId;
     if (workOrderId == null) return;
-    final stageRunId =
-        await widget.cubit.resolveStageRunId(workOrderId, stage);
+    final stageRunId = await widget.cubit.resolveStageRunId(workOrderId, stage);
     if (!mounted) return;
     setState(() => _resolvedStageRunId = stageRunId);
   }
@@ -375,17 +373,24 @@ class _AddQualityCheckDialogState extends State<_AddQualityCheckDialog> {
     final rejected = _number(_rejectedController);
     final waste = _number(_wasteController);
     if (checked != passed + rejected + waste) {
-      setState(() => _submitError =
-          'يجب أن يساوي المفحوص مجموع السليم والمرفوض والهالك');
+      setState(
+        () =>
+            _submitError = 'يجب أن يساوي المفحوص مجموع السليم والمرفوض والهالك',
+      );
       return;
     }
     // عقد CreateQualityCheckDto: أسباب إلزامية عند وجود رفض/هالك (وإلا 400).
-    if (rejected > 0 && (_rejectionReason == null || _rejectionReason!.isEmpty)) {
-      setState(() => _submitError = 'يلزم اختيار سبب الرفض عند وجود كميات مرفوضة');
+    if (rejected > 0 &&
+        (_rejectionReason == null || _rejectionReason!.isEmpty)) {
+      setState(
+        () => _submitError = 'يلزم اختيار سبب الرفض عند وجود كميات مرفوضة',
+      );
       return;
     }
     if (waste > 0 && (_wasteReason == null || _wasteReason!.isEmpty)) {
-      setState(() => _submitError = 'يلزم اختيار سبب الهالك عند وجود كميات هالك');
+      setState(
+        () => _submitError = 'يلزم اختيار سبب الهالك عند وجود كميات هالك',
+      );
       return;
     }
     setState(() {
@@ -430,7 +435,9 @@ class _AddQualityCheckDialogState extends State<_AddQualityCheckDialog> {
         : const <String, dynamic>{};
     final productName = product['name'] as String? ?? '';
     final code = order['code'] as String? ?? order['id'].toString();
-    final status = QualityScreen._translateOrderStatus('${order['status'] ?? ''}');
+    final status = QualityScreen._translateOrderStatus(
+      '${order['status'] ?? ''}',
+    );
     return productName.isEmpty
         ? '$code ($status)'
         : '$code — $productName ($status)';
@@ -470,152 +477,172 @@ class _AddQualityCheckDialogState extends State<_AddQualityCheckDialog> {
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
-            DropdownButtonFormField<String>(
-              initialValue: _selectedWorkOrderId,
-              decoration: const InputDecoration(
-                labelText: 'أمر التشغيل *',
-                helperText: 'الرمز — المنتج (الحالة)',
-              ),
-              items: _workOrders
-                  .map(
-                    (order) => DropdownMenuItem<String>(
-                      value: order['id'].toString(),
-                      child: Text(
-                        _workOrderLabel(order),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  )
-                  .toList(),
-              onChanged: _isSaving ? null : _onWorkOrderChanged,
-              validator: (value) => value == null ? 'اختر أمر التشغيل' : null,
-            ),
-            const SizedBox(height: 10),
-            if (_loadingOrderDetails) const LinearProgressIndicator(minHeight: 2),
-            if (_loadingOrderDetails) const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _stage,
-              decoration: const InputDecoration(labelText: 'مرحلة الفحص *'),
-              items: [
-                for (final stage in _stageValues)
-                  DropdownMenuItem<String>(
-                    value: stage,
-                    enabled: !_checkedStages.contains(stage),
-                    child: Text(
-                      QualityScreen._translateStage(stage) +
-                          (_checkedStages.contains(stage) ? ' (تم فحصها)' : ''),
-                    ),
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedWorkOrderId,
+                  decoration: const InputDecoration(
+                    labelText: 'أمر التشغيل *',
+                    helperText: 'الرمز — المنتج (الحالة)',
                   ),
-              ],
-              onChanged: _isSaving ? null : (value) {
-                if (value != null) _onStageChanged(value);
-              },
-              validator: (value) => value == null ? 'اختر مرحلة الفحص' : null,
-            ),
-            if (_selectedWorkOrderId != null &&
-                !_loadingOrderDetails &&
-                _resolvedStageRunId == null) ...[
-              const SizedBox(height: 10),
-              DecoratedBox(
-                decoration: BoxDecoration(
-                  color: AppColors.warning.withValues(alpha: 0.14),
-                  borderRadius: BorderRadius.circular(8),
+                  items: _workOrders
+                      .map(
+                        (order) => DropdownMenuItem<String>(
+                          value: order['id'].toString(),
+                          child: Text(
+                            _workOrderLabel(order),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _isSaving ? null : _onWorkOrderChanged,
+                  validator: (value) =>
+                      value == null ? 'اختر أمر التشغيل' : null,
                 ),
-                child: Padding(
-                  padding: const EdgeInsets.all(10),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.info_outline,
-                          color: AppColors.warning, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
+                const SizedBox(height: 10),
+                if (_loadingOrderDetails)
+                  const LinearProgressIndicator(minHeight: 2),
+                if (_loadingOrderDetails) const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _stage,
+                  decoration: const InputDecoration(labelText: 'مرحلة الفحص *'),
+                  items: [
+                    for (final stage in _stageValues)
+                      DropdownMenuItem<String>(
+                        value: stage,
+                        enabled: !_checkedStages.contains(stage),
                         child: Text(
-                          'لا يتوفر تشغيل مرحلة مكتمل لهذه المرحلة على هذا '
-                          'الجهاز. سجّل مخرجات المرحلة من شاشة الإنتاج أولًا '
-                          'ثم أعد المحاولة.',
-                          style: const TextStyle(fontSize: 12),
+                          QualityScreen._translateStage(stage) +
+                              (_checkedStages.contains(stage)
+                                  ? ' (تم فحصها)'
+                                  : ''),
                         ),
                       ),
-                    ],
-                  ),
+                  ],
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          if (value != null) _onStageChanged(value);
+                        },
+                  validator: (value) =>
+                      value == null ? 'اختر مرحلة الفحص' : null,
                 ),
-              ),
-            ],
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _checkedController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'إجمالي المفحوص *'),
-              validator: _nonNegative,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _passedController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'السليم *'),
-              validator: _nonNegative,
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _rejectedController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'المرفوض'),
-              validator: _nonNegative,
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _rejectionReason,
-              decoration: const InputDecoration(labelText: 'سبب الرفض'),
-              items: reasons,
-              onChanged: _isSaving
-                  ? null
-                  : (value) {
-                      setState(() => _rejectionReason = value);
-                    },
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _wasteController,
-              keyboardType: TextInputType.number,
-              decoration: const InputDecoration(labelText: 'الهالك'),
-              validator: _nonNegative,
-            ),
-            const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              initialValue: _wasteReason,
-              decoration: const InputDecoration(labelText: 'سبب الهالك'),
-              // قيم QualityWasteReason في الخادم (schema.prisma):
-              // NATURAL_LOSS, DEFECT_RELATED, HUMAN_ERROR, MATERIAL_DEFECT, OTHER
-              items: const [
-                DropdownMenuItem(
-                    value: 'NATURAL_LOSS', child: Text('فاقد طبيعي')),
-                DropdownMenuItem(
-                    value: 'DEFECT_RELATED', child: Text('مرتبط بعيوب')),
-                DropdownMenuItem(
-                    value: 'HUMAN_ERROR', child: Text('خطأ بشري')),
-                DropdownMenuItem(
-                    value: 'MATERIAL_DEFECT', child: Text('عيب خامة')),
-                DropdownMenuItem(value: 'OTHER', child: Text('أخرى')),
-              ],
-              onChanged: _isSaving
-                  ? null
-                  : (value) {
-                      setState(() => _wasteReason = value);
-                    },
-            ),
-            const SizedBox(height: 10),
-            TextFormField(
-              controller: _notesController,
-              decoration: const InputDecoration(labelText: 'ملاحظات'),
-            ),
-            if (_submitError != null) ...[
-              const SizedBox(height: 12),
-              Text(
-                _submitError!,
-                style: const TextStyle(color: AppColors.error),
-                textAlign: TextAlign.center,
-              ),
-            ],
+                if (_selectedWorkOrderId != null &&
+                    !_loadingOrderDetails &&
+                    _resolvedStageRunId == null) ...[
+                  const SizedBox(height: 10),
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppColors.warning.withValues(alpha: 0.14),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(10),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.info_outline,
+                            color: AppColors.warning,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'لا يتوفر تشغيل مرحلة مكتمل لهذه المرحلة على هذا '
+                              'الجهاز. سجّل مخرجات المرحلة من شاشة الإنتاج أولًا '
+                              'ثم أعد المحاولة.',
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _checkedController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: 'إجمالي المفحوص *',
+                  ),
+                  validator: _nonNegative,
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _passedController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'السليم *'),
+                  validator: _nonNegative,
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _rejectedController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'المرفوض'),
+                  validator: _nonNegative,
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _rejectionReason,
+                  decoration: const InputDecoration(labelText: 'سبب الرفض'),
+                  items: reasons,
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          setState(() => _rejectionReason = value);
+                        },
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _wasteController,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'الهالك'),
+                  validator: _nonNegative,
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: _wasteReason,
+                  decoration: const InputDecoration(labelText: 'سبب الهالك'),
+                  // قيم QualityWasteReason في الخادم (schema.prisma):
+                  // NATURAL_LOSS, DEFECT_RELATED, HUMAN_ERROR, MATERIAL_DEFECT, OTHER
+                  items: const [
+                    DropdownMenuItem(
+                      value: 'NATURAL_LOSS',
+                      child: Text('فاقد طبيعي'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'DEFECT_RELATED',
+                      child: Text('مرتبط بعيوب'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'HUMAN_ERROR',
+                      child: Text('خطأ بشري'),
+                    ),
+                    DropdownMenuItem(
+                      value: 'MATERIAL_DEFECT',
+                      child: Text('عيب خامة'),
+                    ),
+                    DropdownMenuItem(value: 'OTHER', child: Text('أخرى')),
+                  ],
+                  onChanged: _isSaving
+                      ? null
+                      : (value) {
+                          setState(() => _wasteReason = value);
+                        },
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: _notesController,
+                  decoration: const InputDecoration(labelText: 'ملاحظات'),
+                ),
+                if (_submitError != null) ...[
+                  const SizedBox(height: 12),
+                  Text(
+                    _submitError!,
+                    style: const TextStyle(color: AppColors.error),
+                    textAlign: TextAlign.center,
+                  ),
+                ],
               ],
             ),
           ),
@@ -634,8 +661,8 @@ class _AddQualityCheckDialogState extends State<_AddQualityCheckDialog> {
         FilledButton(
           onPressed:
               _isSaving || _loadingWorkOrders || _resolvedStageRunId == null
-                  ? null
-                  : _save,
+              ? null
+              : _save,
           child: Text(_isSaving ? 'جاري الحفظ...' : 'حفظ'),
         ),
       ],

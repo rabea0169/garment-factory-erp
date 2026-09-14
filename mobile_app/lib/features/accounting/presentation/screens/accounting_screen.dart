@@ -6,7 +6,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/accounting_cubit.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 /// تسميات أنواع الطرف المقابل (تطابق enum الخادم CUSTOMER/SUPPLIER/WORKER).
 const Map<String, String> _counterpartyTypeLabels = {
@@ -25,52 +25,70 @@ class AccountingScreen extends StatelessWidget {
     final content = Builder(
       builder: (screenContext) => DefaultTabController(
         length: 4,
-        child: Scaffold(
-          appBar: AppBar(
-            leading: const GfBackButton(),
-            title: const Text('الحسابات والمالية'),
-            bottom: const TabBar(
-              tabs: [
-                Tab(text: 'السندات', icon: Icon(Icons.receipt)),
-                Tab(text: 'الحسابات', icon: Icon(Icons.account_tree)),
-                Tab(text: 'القيود', icon: Icon(Icons.menu_book)),
-                Tab(text: 'ميزان المراجعة', icon: Icon(Icons.balance)),
-              ],
+        // UI-REVAMP: هجرة للهيكل الموحد — التبويبات انتقلت من أسفل شريط
+        // التطبيق إلى رأس الجسم على خلفية بيضاء (نمط بقية الشاشات المهاجرة).
+        child: SelimShellScaffold(
+          title: 'الحسابات والمالية',
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'تحديث',
+              onPressed: () =>
+                  screenContext.read<AccountingCubit>().fetchData(),
             ),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.refresh),
-                tooltip: 'تحديث',
-                onPressed: () =>
-                    screenContext.read<AccountingCubit>().fetchData(),
+          ],
+          body: Column(
+            children: [
+              Material(
+                color: Colors.white,
+                child: const TabBar(
+                  labelColor: AppColors.primary,
+                  unselectedLabelColor: Colors.grey,
+                  indicatorColor: AppColors.secondary,
+                  labelStyle: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontWeight: FontWeight.bold,
+                  ),
+                  unselectedLabelStyle: TextStyle(fontFamily: 'Cairo'),
+                  tabs: [
+                    Tab(text: 'السندات', icon: Icon(Icons.receipt)),
+                    Tab(text: 'الحسابات', icon: Icon(Icons.account_tree)),
+                    Tab(text: 'القيود', icon: Icon(Icons.menu_book)),
+                    Tab(text: 'ميزان المراجعة', icon: Icon(Icons.balance)),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: BlocBuilder<AccountingCubit, AccountingState>(
+                  builder: (context, state) {
+                    if (state is AccountingInitial ||
+                        state is AccountingLoading) {
+                      return const AppLoadingView();
+                    }
+                    if (state is AccountingError) {
+                      return AppErrorView(
+                        message: state.message,
+                        onRetry: () =>
+                            context.read<AccountingCubit>().fetchData(),
+                      );
+                    }
+                    if (state is AccountingLoaded) {
+                      return TabBarView(
+                        children: [
+                          _VouchersTab(state: state),
+                          _AccountsTab(accounts: state.accounts),
+                          _JournalEntriesTab(state: state),
+                          _TrialBalanceTab(state: state),
+                        ],
+                      );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
               ),
             ],
           ),
-          body: BlocBuilder<AccountingCubit, AccountingState>(
-            builder: (context, state) {
-              if (state is AccountingInitial || state is AccountingLoading) {
-                return const AppLoadingView();
-              }
-              if (state is AccountingError) {
-                return AppErrorView(
-                  message: state.message,
-                  onRetry: () => context.read<AccountingCubit>().fetchData(),
-                );
-              }
-              if (state is AccountingLoaded) {
-                return TabBarView(
-                  children: [
-                    _VouchersTab(state: state),
-                    _AccountsTab(accounts: state.accounts),
-                    _JournalEntriesTab(state: state),
-                    _TrialBalanceTab(state: state),
-                  ],
-                );
-              }
-              return const SizedBox.shrink();
-            },
-          ),
-          floatingActionButton: FloatingActionButton.extended(
+          fab: FloatingActionButton.extended(
             onPressed: () => _showCreateVoucherDialog(screenContext),
             icon: const Icon(Icons.add),
             label: const Text('سند جديد'),
@@ -91,14 +109,12 @@ class AccountingScreen extends StatelessWidget {
   Future<void> _showCreateVoucherDialog(BuildContext context) async {
     final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => _CreateVoucherDialog(
-        cubit: context.read<AccountingCubit>(),
-      ),
+      builder: (_) =>
+          _CreateVoucherDialog(cubit: context.read<AccountingCubit>()),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تسجيل السند بنجاح')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم تسجيل السند بنجاح')));
     }
   }
 }
@@ -144,8 +160,9 @@ class AccountingFormats {
       } else {
         label = name;
       }
-      labels[account['id'].toString()] =
-          label.isEmpty ? 'حساب غير مسمى' : label;
+      labels[account['id'].toString()] = label.isEmpty
+          ? 'حساب غير مسمى'
+          : label;
     }
     return labels;
   }
@@ -196,19 +213,18 @@ class _VoucherCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isPayment = voucher['type'] == 'PAYMENT';
     final treasury = voucher['treasury'];
-    final treasuryName =
-        treasury is Map ? (treasury['name']?.toString() ?? 'غير محددة') : 'غير محددة';
+    final treasuryName = treasury is Map
+        ? (treasury['name']?.toString() ?? 'غير محددة')
+        : 'غير محددة';
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: ListTile(
-        onTap: () => showVoucherDetailsSheet(
-          context,
-          voucher: voucher,
-          state: state,
-        ),
+        onTap: () =>
+            showVoucherDetailsSheet(context, voucher: voucher, state: state),
         leading: CircleAvatar(
-          backgroundColor:
-              isPayment ? Colors.red.shade50 : Colors.green.shade50,
+          backgroundColor: isPayment
+              ? Colors.red.shade50
+              : Colors.green.shade50,
           child: Icon(
             isPayment ? Icons.arrow_upward : Icons.arrow_downward,
             color: isPayment ? AppColors.error : AppColors.success,
@@ -229,11 +245,7 @@ class _VoucherCard extends StatelessWidget {
               color: isPayment ? AppColors.error : AppColors.success,
             ),
             const SizedBox(width: 4),
-            const Icon(
-              Icons.chevron_left,
-              size: 18,
-              color: AppColors.textHint,
-            ),
+            const Icon(Icons.chevron_left, size: 18, color: AppColors.textHint),
           ],
         ),
       ),
@@ -266,9 +278,11 @@ class _AccountsTab extends StatelessWidget {
             leading: const Icon(Icons.account_balance_wallet),
             title: Text('${account['name'] ?? ''}'),
             subtitle: Text(
-                'كود: ${account['code'] ?? ''} | النوع: ${account['type'] ?? ''}'),
-            trailing:
-                account['isGroup'] == true ? const Icon(Icons.folder) : null,
+              'كود: ${account['code'] ?? ''} | النوع: ${account['type'] ?? ''}',
+            ),
+            trailing: account['isGroup'] == true
+                ? const Icon(Icons.folder)
+                : null,
           ),
         );
       },
@@ -294,8 +308,7 @@ class _JournalEntriesTab extends StatelessWidget {
     if (error != null) {
       return AppErrorView(
         message: error,
-        onRetry: () =>
-            context.read<AccountingCubit>().fetchJournalEntries(),
+        onRetry: () => context.read<AccountingCubit>().fetchJournalEntries(),
       );
     }
     if (state.journalEntries.isEmpty) {
@@ -321,17 +334,15 @@ class _JournalEntriesTab extends StatelessWidget {
 }
 
 class _JournalEntryCard extends StatelessWidget {
-  const _JournalEntryCard({
-    required this.entry,
-    required this.accountLabels,
-  });
+  const _JournalEntryCard({required this.entry, required this.accountLabels});
 
   final Map<String, dynamic> entry;
   final Map<String, String> accountLabels;
 
   @override
   Widget build(BuildContext context) {
-    final lines = (entry['lines'] as List?)
+    final lines =
+        (entry['lines'] as List?)
             ?.whereType<Map>()
             .map((line) => Map<String, dynamic>.from(line))
             .toList() ??
@@ -339,8 +350,9 @@ class _JournalEntryCard extends StatelessWidget {
     final isAuto = entry['isAuto'] == true;
     final isReversed = entry['isReversed'] == true;
     final createdBy = entry['createdBy'];
-    final createdByName =
-        createdBy is Map ? createdBy['name']?.toString() : null;
+    final createdByName = createdBy is Map
+        ? createdBy['name']?.toString()
+        : null;
     return Card(
       margin: const EdgeInsets.only(bottom: 10),
       child: Padding(
@@ -375,8 +387,10 @@ class _JournalEntryCard extends StatelessWidget {
             Text(
               'التاريخ: ${AccountingFormats.date(entry['date'])}'
               '${createdByName != null && createdByName.isNotEmpty ? ' | بواسطة: $createdByName' : ''}',
-              style:
-                  const TextStyle(color: AppColors.textSecondary, fontSize: 12),
+              style: const TextStyle(
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
             ),
             const Divider(height: 18),
             const Text(
@@ -385,8 +399,10 @@ class _JournalEntryCard extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             if (lines.isEmpty)
-              const Text('لا توجد بنود لهذا القيد',
-                  style: TextStyle(fontSize: 12)),
+              const Text(
+                'لا توجد بنود لهذا القيد',
+                style: TextStyle(fontSize: 12),
+              ),
             for (final line in lines)
               _JournalLineView(
                 line: line,
@@ -441,9 +457,7 @@ class _TrialBalanceTab extends StatelessWidget {
         Expanded(
           child: ListView(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-            children: [
-              _TrialBalanceTable(rows: rows),
-            ],
+            children: [_TrialBalanceTable(rows: rows)],
           ),
         ),
       ],
@@ -473,9 +487,13 @@ class _TrialBalanceSummaryCard extends StatelessWidget {
                 Expanded(
                   child: Column(
                     children: [
-                      const Text('إجمالي المدين',
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.textSecondary)),
+                      const Text(
+                        'إجمالي المدين',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
                       const SizedBox(height: 2),
                       Text(
                         '${AccountingFormats.money(state.totalDebit)} جنيه',
@@ -487,14 +505,17 @@ class _TrialBalanceSummaryCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                Container(
-                    width: 1, height: 36, color: AppColors.divider),
+                Container(width: 1, height: 36, color: AppColors.divider),
                 Expanded(
                   child: Column(
                     children: [
-                      const Text('إجمالي الدائن',
-                          style: TextStyle(
-                              fontSize: 12, color: AppColors.textSecondary)),
+                      const Text(
+                        'إجمالي الدائن',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
                       const SizedBox(height: 2),
                       Text(
                         '${AccountingFormats.money(state.totalCredit)} جنيه',
@@ -559,8 +580,9 @@ class _TrialBalanceTable extends StatelessWidget {
       ),
       children: [
         TableRow(
-          decoration:
-              BoxDecoration(color: AppColors.primary.withValues(alpha: 0.08)),
+          decoration: BoxDecoration(
+            color: AppColors.primary.withValues(alpha: 0.08),
+          ),
           children: const [
             _TableHeaderCell('الحساب'),
             _TableHeaderCell('مدين', centered: true),
@@ -629,7 +651,9 @@ class _AccountCell extends StatelessWidget {
             Text(
               code,
               style: const TextStyle(
-                  fontSize: 10, color: AppColors.textSecondary),
+                fontSize: 10,
+                color: AppColors.textSecondary,
+              ),
             ),
         ],
       ),
@@ -665,13 +689,13 @@ class _BalanceCell extends StatelessWidget {
     final label = balance > 0
         ? 'مدين'
         : balance < 0
-            ? 'دائن'
-            : '';
+        ? 'دائن'
+        : '';
     final color = balance > 0
         ? AppColors.success
         : balance < 0
-            ? AppColors.error
-            : AppColors.textSecondary;
+        ? AppColors.error
+        : AppColors.textSecondary;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
       child: Row(
@@ -687,7 +711,10 @@ class _BalanceCell extends StatelessWidget {
             Text(
               label,
               style: TextStyle(
-                  fontSize: 10, color: color, fontWeight: FontWeight.bold),
+                fontSize: 10,
+                color: color,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ],
         ],
@@ -772,7 +799,8 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
     final isPayment = voucher['type'] == 'PAYMENT';
     final treasury = voucher['treasury'];
     final createdBy = voucher['createdBy'];
-    final code = voucher['code']?.toString() ??
+    final code =
+        voucher['code']?.toString() ??
         (voucher['journalEntry'] is Map
             ? voucher['journalEntry']['code']?.toString()
             : null) ??
@@ -803,10 +831,7 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
                 child: Text(voucher['description']?.toString() ?? 'بلا وصف'),
               ),
               const SizedBox(height: 12),
-              _infoRow(
-                'التاريخ',
-                AccountingFormats.date(voucher['date']),
-              ),
+              _infoRow('التاريخ', AccountingFormats.date(voucher['date'])),
               _infoRow(
                 'الخزينة',
                 treasury is Map
@@ -815,9 +840,7 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
               ),
               _infoRow(
                 'أنشأه',
-                createdBy is Map
-                    ? (createdBy['name']?.toString() ?? '—')
-                    : '—',
+                createdBy is Map ? (createdBy['name']?.toString() ?? '—') : '—',
               ),
               _infoRow(
                 'المرجع الخارجي',
@@ -888,7 +911,8 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
   }
 
   Widget _buildEntrySection(Map<String, dynamic> entry) {
-    final lines = (entry['lines'] as List?)
+    final lines =
+        (entry['lines'] as List?)
             ?.whereType<Map>()
             .map((line) => Map<String, dynamic>.from(line))
             .toList() ??
@@ -896,16 +920,16 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
     final isAuto = entry['isAuto'] == true;
     final isReversed = entry['isReversed'] == true;
     final createdBy = entry['createdBy'];
-    final createdByName =
-        createdBy is Map ? createdBy['name']?.toString() : null;
+    final createdByName = createdBy is Map
+        ? createdBy['name']?.toString()
+        : null;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Divider(height: 24),
         Row(
           children: [
-            const Icon(Icons.menu_book,
-                size: 18, color: AppColors.primary),
+            const Icon(Icons.menu_book, size: 18, color: AppColors.primary),
             const SizedBox(width: 6),
             const Expanded(
               child: Text(
@@ -916,7 +940,9 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
             Text(
               entry['code']?.toString() ?? '—',
               style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12),
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
             ),
           ],
         ),
@@ -926,8 +952,7 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
         Text(
           'التاريخ: ${AccountingFormats.date(entry['date'])}'
           '${createdByName != null && createdByName.isNotEmpty ? ' | بواسطة: $createdByName' : ''}',
-          style: const TextStyle(
-              color: AppColors.textSecondary, fontSize: 12),
+          style: const TextStyle(color: AppColors.textSecondary, fontSize: 12),
         ),
         const SizedBox(height: 8),
         Row(
@@ -938,8 +963,7 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
             ),
             if (isReversed) ...[
               const SizedBox(width: 6),
-              const _AccountingChip(
-                  label: 'معكوس', color: AppColors.warning),
+              const _AccountingChip(label: 'معكوس', color: AppColors.warning),
             ],
           ],
         ),
@@ -953,10 +977,7 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
           const Text('لا توجد بنود مسجلة لهذا القيد')
         else
           for (final line in lines)
-            _JournalLineView(
-              line: line,
-              accountLabels: widget.accountLabels,
-            ),
+            _JournalLineView(line: line, accountLabels: widget.accountLabels),
       ],
     );
   }
@@ -972,14 +993,15 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
             child: Text(
               label,
               style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 13),
+                color: AppColors.textSecondary,
+                fontSize: 13,
+              ),
             ),
           ),
           Expanded(
             child: Text(
               value,
-              style: const TextStyle(
-                  fontSize: 13, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ),
         ],
@@ -993,14 +1015,19 @@ class _VoucherDetailsSheetState extends State<_VoucherDetailsSheet> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.info_outline,
-              size: 18, color: AppColors.textSecondary),
+          const Icon(
+            Icons.info_outline,
+            size: 18,
+            color: AppColors.textSecondary,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
               message,
               style: const TextStyle(
-                  color: AppColors.textSecondary, fontSize: 12),
+                color: AppColors.textSecondary,
+                fontSize: 12,
+              ),
             ),
           ),
         ],
@@ -1025,8 +1052,9 @@ class _SheetHeader extends StatelessWidget {
     return Row(
       children: [
         CircleAvatar(
-          backgroundColor:
-              isPayment ? Colors.red.shade50 : Colors.green.shade50,
+          backgroundColor: isPayment
+              ? Colors.red.shade50
+              : Colors.green.shade50,
           child: Icon(
             isPayment ? Icons.arrow_upward : Icons.arrow_downward,
             color: isPayment ? AppColors.error : AppColors.success,
@@ -1040,12 +1068,16 @@ class _SheetHeader extends StatelessWidget {
               Text(
                 isPayment ? 'سند صرف' : 'سند قبض',
                 style: const TextStyle(
-                    fontWeight: FontWeight.bold, fontSize: 17),
+                  fontWeight: FontWeight.bold,
+                  fontSize: 17,
+                ),
               ),
               Text(
                 'الكود: $code',
                 style: const TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12),
+                  color: AppColors.textSecondary,
+                  fontSize: 12,
+                ),
               ),
             ],
           ),
@@ -1062,9 +1094,10 @@ class _SheetHeader extends StatelessWidget {
                 color: isPayment ? AppColors.error : AppColors.success,
               ),
             ),
-            const Text('جنيه',
-                style: TextStyle(
-                    color: AppColors.textSecondary, fontSize: 12)),
+            const Text(
+              'جنيه',
+              style: TextStyle(color: AppColors.textSecondary, fontSize: 12),
+            ),
           ],
         ),
       ],
@@ -1104,8 +1137,11 @@ class _JournalLineView extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 4),
         child: Row(
           children: [
-            const Icon(Icons.subdirectory_arrow_left,
-                size: 14, color: AppColors.textSecondary),
+            const Icon(
+              Icons.subdirectory_arrow_left,
+              size: 14,
+              color: AppColors.textSecondary,
+            ),
             const SizedBox(width: 4),
             Expanded(
               child: Text(
@@ -1116,8 +1152,7 @@ class _JournalLineView extends StatelessWidget {
             ),
             Text(
               '$amount جنيه',
-              style: const TextStyle(
-                  fontSize: 12, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
           ],
         ),
@@ -1170,7 +1205,9 @@ class _JournalLineView extends StatelessWidget {
               child: Text(
                 description,
                 style: const TextStyle(
-                    fontSize: 11, color: AppColors.textSecondary),
+                  fontSize: 11,
+                  color: AppColors.textSecondary,
+                ),
               ),
             ),
         ],
@@ -1184,10 +1221,7 @@ class _JournalLineView extends StatelessWidget {
 // ============================================================================
 
 class _AccountingChip extends StatelessWidget {
-  const _AccountingChip({
-    required this.label,
-    required this.color,
-  });
+  const _AccountingChip({required this.label, required this.color});
 
   final String label;
   final Color color;
@@ -1324,8 +1358,9 @@ class _CreateVoucherDialogState extends State<_CreateVoucherDialog> {
       // رسالة الخادم الفعلية (403/400/شبكة) بدل رسالة عامة تبتلعها.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content:
-              Text('تعذر حفظ السند: ${ApiClient.instance.messageFor(error)}'),
+          content: Text(
+            'تعذر حفظ السند: ${ApiClient.instance.messageFor(error)}',
+          ),
         ),
       );
     }
@@ -1365,8 +1400,9 @@ class _CreateVoucherDialogState extends State<_CreateVoucherDialog> {
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _amountController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(labelText: 'المبلغ *'),
                   validator: (value) {
                     final amount = double.tryParse(value?.trim() ?? '');
@@ -1406,15 +1442,14 @@ class _CreateVoucherDialogState extends State<_CreateVoucherDialog> {
                 DropdownButtonFormField<String>(
                   initialValue: _counterpartyType,
                   decoration: const InputDecoration(
-                      labelText: 'نوع الطرف المقابل'),
+                    labelText: 'نوع الطرف المقابل',
+                  ),
                   items: const [
                     DropdownMenuItem(value: 'CUSTOMER', child: Text('عميل')),
                     DropdownMenuItem(value: 'SUPPLIER', child: Text('مورد')),
                     DropdownMenuItem(value: 'WORKER', child: Text('عامل')),
                   ],
-                  onChanged: _isSaving
-                      ? null
-                      : _onCounterpartyTypeChanged,
+                  onChanged: _isSaving ? null : _onCounterpartyTypeChanged,
                 ),
                 if (_counterpartyType != null) ...[
                   const SizedBox(height: 10),
@@ -1475,8 +1510,7 @@ class _CreateVoucherDialogState extends State<_CreateVoucherDialog> {
               style: const TextStyle(color: AppColors.error, fontSize: 12),
             ),
             TextButton.icon(
-              onPressed:
-                  _isSaving ? null : () => _loadCounterparties(type),
+              onPressed: _isSaving ? null : () => _loadCounterparties(type),
               icon: const Icon(Icons.refresh),
               label: const Text('إعادة المحاولة'),
             ),

@@ -9,14 +9,10 @@ import '../../../../core/widgets/contact_import_button.dart';
 import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/suppliers_cubit.dart';
 import '../../../parties/presentation/widgets/party_details_sheet.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class SuppliersScreen extends StatelessWidget {
-  const SuppliersScreen({
-    super.key,
-    this.cubit,
-    this.contactImportService,
-  });
+  const SuppliersScreen({super.key, this.cubit, this.contactImportService});
 
   final SuppliersCubit? cubit;
   final ContactImportService? contactImportService;
@@ -24,21 +20,18 @@ class SuppliersScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Builder(
-      builder: (screenContext) => Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('الموردون'),
-          actions: [
-            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
-            const EntityExportButtons(entities: ['suppliers']),
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث',
-              onPressed: () =>
-                  screenContext.read<SuppliersCubit>().fetchSuppliers(),
-            ),
-          ],
-        ),
+      builder: (screenContext) => SelimShellScaffold(
+        title: 'الموردون',
+        actions: [
+          // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+          const EntityExportButtons(entities: ['suppliers']),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () =>
+                screenContext.read<SuppliersCubit>().fetchSuppliers(),
+          ),
+        ],
         body: BlocBuilder<SuppliersCubit, SuppliersState>(
           builder: (context, state) {
             if (state is SuppliersLoading || state is SuppliersInitial) {
@@ -85,8 +78,8 @@ class SuppliersScreen extends StatelessWidget {
                             onPressed: supplier['id'] == null
                                 ? null
                                 : () => context.push(
-                                      '${AppRouter.supplierStatement}/${supplier['id']}',
-                                    ),
+                                    '${AppRouter.supplierStatement}/${supplier['id']}',
+                                  ),
                           ),
                           // SELIM-ERP W4: بطاقة الطرف (تفاصيل المورد).
                           IconButton(
@@ -95,12 +88,10 @@ class SuppliersScreen extends StatelessWidget {
                             onPressed: supplier['id'] == null
                                 ? null
                                 : () => showPartyDetailsSheet(
-                                      context,
-                                      party: Map<String, dynamic>.from(
-                                        supplier,
-                                      ),
-                                      isCustomer: false,
-                                    ),
+                                    context,
+                                    party: Map<String, dynamic>.from(supplier),
+                                    isCustomer: false,
+                                  ),
                           ),
                           Text(
                             '${supplier['balance'] ?? 0} جنيه',
@@ -116,7 +107,7 @@ class SuppliersScreen extends StatelessWidget {
             return const SizedBox.shrink();
           },
         ),
-        floatingActionButton: FloatingActionButton.extended(
+        fab: FloatingActionButton.extended(
           onPressed: () => _showAddSupplierDialog(screenContext),
           icon: const Icon(Icons.business_center_outlined),
           label: const Text('إضافة مورد'),
@@ -142,9 +133,8 @@ class SuppliersScreen extends StatelessWidget {
       ),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ المورد بنجاح')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم حفظ المورد بنجاح')));
     }
   }
 }
@@ -228,7 +218,8 @@ class _AddSupplierDialogState extends State<_AddSupplierDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ContactImportButton(
-                  service: widget.contactImportService ??
+                  service:
+                      widget.contactImportService ??
                       const ContactImportService(),
                   onImported: _applyContact,
                 ),
@@ -250,8 +241,9 @@ class _AddSupplierDialogState extends State<_AddSupplierDialog> {
                 TextFormField(
                   controller: _emailController,
                   keyboardType: TextInputType.emailAddress,
-                  decoration:
-                      const InputDecoration(labelText: 'البريد الإلكتروني'),
+                  decoration: const InputDecoration(
+                    labelText: 'البريد الإلكتروني',
+                  ),
                 ),
                 const SizedBox(height: 10),
                 TextFormField(

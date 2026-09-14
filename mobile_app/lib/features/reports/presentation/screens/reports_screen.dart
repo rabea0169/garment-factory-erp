@@ -1,10 +1,11 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../cubit/reports_cubit.dart';
 import '../cubit/reports_state.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class ReportsScreen extends StatelessWidget {
   const ReportsScreen({super.key});
@@ -13,11 +14,8 @@ class ReportsScreen extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) => ReportsCubit()..fetchDashboardStats(),
-      child: Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('التقارير والإحصائيات'),
-        ),
+      child: SelimShellScaffold(
+        title: 'التقارير والإحصائيات',
         body: BlocBuilder<ReportsCubit, ReportsState>(
           builder: (context, state) {
             if (state is ReportsLoading) {
@@ -33,8 +31,7 @@ class ReportsScreen extends StatelessWidget {
             if (state is ReportsLoaded) {
               final data = state.data;
               final sales = List<dynamic>.from(data['sales'] as List);
-              final production =
-                  List<dynamic>.from(data['production'] as List);
+              final production = List<dynamic>.from(data['production'] as List);
               final workers = List<dynamic>.from(data['topWorkers'] as List);
               final inventory = data['inventory'] as Map;
               return RefreshIndicator(
@@ -72,14 +69,16 @@ class ReportsScreen extends StatelessWidget {
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.cloud_off,
-                                size: 48, color: AppColors.error),
+                            const Icon(
+                              Icons.cloud_off,
+                              size: 48,
+                              color: AppColors.error,
+                            ),
                             const SizedBox(height: 12),
                             Text(
                               state.message,
                               textAlign: TextAlign.center,
-                              style:
-                                  const TextStyle(fontFamily: 'Cairo'),
+                              style: const TextStyle(fontFamily: 'Cairo'),
                             ),
                             const SizedBox(height: 16),
                             OutlinedButton.icon(
@@ -239,7 +238,9 @@ class ReportsScreen extends StatelessWidget {
   }
 
   Widget _buildProductionChart(List<dynamic> production) {
-    if (production.isEmpty) return _emptyReport('لا يوجد إنتاج في الفترة المحددة');
+    if (production.isEmpty) {
+      return _emptyReport('لا يوجد إنتاج في الفترة المحددة');
+    }
     return SizedBox(
       height: 250,
       child: LineChart(
@@ -296,7 +297,9 @@ class ReportsScreen extends StatelessWidget {
   }
 
   Widget _buildTopWorkers(List<dynamic> workers) {
-    if (workers.isEmpty) return _emptyReport('لا يوجد إنتاج عمال في الفترة المحددة');
+    if (workers.isEmpty) {
+      return _emptyReport('لا يوجد إنتاج عمال في الفترة المحددة');
+    }
     return Card(
       child: Column(
         children: workers.map((worker) {
@@ -351,8 +354,11 @@ class ReportsScreen extends StatelessWidget {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.inbox_outlined,
-                      size: 48, color: AppColors.textSecondary),
+                  const Icon(
+                    Icons.inbox_outlined,
+                    size: 48,
+                    color: AppColors.textSecondary,
+                  ),
                   const SizedBox(height: 12),
                   const Text(
                     'لا توجد بيانات لعرضها في الفترة الحالية',

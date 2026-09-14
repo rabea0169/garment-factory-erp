@@ -10,7 +10,7 @@ import '../cubit/users_state.dart';
 import '../widgets/change_role_dialog.dart';
 import '../widgets/user_permissions_dialog.dart';
 import '../widgets/create_user_dialog.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 /// CC-9: شاشة إدارة المستخدمين — قائمة (GET /users)، إنشاء (POST
 /// /users)، تغيير دور (PATCH /users/:id/role)، وتعطيل/تنشيط (PATCH
@@ -36,20 +36,17 @@ class _UsersView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('المستخدمون'),
-        actions: [
-          Builder(
-            builder: (ctx) => IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث',
-              onPressed: () => ctx.read<UsersCubit>().fetchUsers(),
-            ),
+    return SelimShellScaffold(
+      title: 'المستخدمون',
+      actions: [
+        Builder(
+          builder: (ctx) => IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () => ctx.read<UsersCubit>().fetchUsers(),
           ),
-        ],
-      ),
+        ),
+      ],
       body: BlocBuilder<UsersCubit, UsersState>(
         builder: (context, state) {
           if (state is UsersLoading || state is UsersInitial) {
@@ -88,7 +85,7 @@ class _UsersView extends StatelessWidget {
         },
       ),
       // CC-9: إنشاء مستخدم جديد (POST /users).
-      floatingActionButton: FloatingActionButton.extended(
+      fab: FloatingActionButton.extended(
         onPressed: () => _showCreateUserDialog(context),
         icon: const Icon(Icons.person_add_alt),
         label: const Text('مستخدم جديد'),
@@ -103,9 +100,9 @@ class _UsersView extends StatelessWidget {
       builder: (_) => CreateUserDialog(cubit: cubit),
     );
     if (created == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إنشاء المستخدم بنجاح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم إنشاء المستخدم بنجاح')));
     }
   }
 }
@@ -159,9 +156,9 @@ class _UserCardState extends State<_UserCard> {
       ),
     );
     if (changed == true && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ الصلاحيات بنجاح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم حفظ الصلاحيات بنجاح')));
     }
   }
 
@@ -193,7 +190,8 @@ class _UserCardState extends State<_UserCard> {
       final confirmed = await confirmAppAction(
         context,
         title: 'تعطيل المستخدم',
-        message: 'سيُمنع "${_name.isEmpty ? 'هذا المستخدم' : _name}" من '
+        message:
+            'سيُمنع "${_name.isEmpty ? 'هذا المستخدم' : _name}" من '
             'تسجيل الدخول حتى يُنشَّط مجددًا. هل أنت متأكد؟',
         confirmLabel: 'تعطيل',
       );
@@ -210,7 +208,9 @@ class _UserCardState extends State<_UserCard> {
       );
     } else {
       messenger.showSnackBar(
-        SnackBar(content: Text(target ? 'تم تنشيط المستخدم' : 'تم تعطيل المستخدم')),
+        SnackBar(
+          content: Text(target ? 'تم تنشيط المستخدم' : 'تم تعطيل المستخدم'),
+        ),
       );
     }
   }
@@ -230,7 +230,9 @@ class _UserCardState extends State<_UserCard> {
             title: Text(
               _name.isEmpty ? 'مستخدم' : _name,
               style: const TextStyle(
-                  fontWeight: FontWeight.bold, fontFamily: 'Cairo'),
+                fontWeight: FontWeight.bold,
+                fontFamily: 'Cairo',
+              ),
             ),
             subtitle: Text(
               '${widget.user['email'] ?? ''}\n'
@@ -250,8 +252,7 @@ class _UserCardState extends State<_UserCard> {
                     padding: const EdgeInsetsDirectional.only(start: 8),
                     child: FilledButton.tonalIcon(
                       onPressed: _isRunning ? null : _changeRole,
-                      icon: const Icon(Icons.published_with_changes,
-                          size: 18),
+                      icon: const Icon(Icons.published_with_changes, size: 18),
                       label: const Text('تغيير الدور'),
                     ),
                   ),
@@ -277,8 +278,10 @@ class _UserCardState extends State<_UserCard> {
                           )
                         : TextButton.icon(
                             onPressed: _isRunning ? null : _toggleActive,
-                            icon: const Icon(Icons.check_circle_outline,
-                                size: 18),
+                            icon: const Icon(
+                              Icons.check_circle_outline,
+                              size: 18,
+                            ),
                             label: const Text('تنشيط'),
                             style: TextButton.styleFrom(
                               foregroundColor: AppColors.success,

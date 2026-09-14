@@ -7,7 +7,7 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../cubit/shipping_cubit.dart';
 import '../cubit/shipping_state.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class ShippingScreen extends StatelessWidget {
   const ShippingScreen({super.key, this.cubit});
@@ -17,19 +17,16 @@ class ShippingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Builder(
-      builder: (screenContext) => Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('الشحن والتوصيل'),
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث',
-              onPressed: () =>
-                  screenContext.read<ShippingCubit>().fetchShipments(),
-            ),
-          ],
-        ),
+      builder: (screenContext) => SelimShellScaffold(
+        title: 'الشحن والتوصيل',
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () =>
+                screenContext.read<ShippingCubit>().fetchShipments(),
+          ),
+        ],
         body: BlocBuilder<ShippingCubit, ShippingState>(
           builder: (context, state) {
             if (state is ShippingLoading || state is ShippingInitial) {
@@ -56,8 +53,8 @@ class ShippingScreen extends StatelessWidget {
                 itemBuilder: (context, index) {
                   final shipment = state.shipments[index] as Map;
                   final tracking = shipment['trackingNumber']?.toString();
-                  final shippingCompanyId =
-                      shipment['shippingCompanyId']?.toString();
+                  final shippingCompanyId = shipment['shippingCompanyId']
+                      ?.toString();
                   final salesOrder = shipment['salesOrder'] as Map?;
                   return Card(
                     margin: const EdgeInsets.only(bottom: 12),
@@ -79,22 +76,25 @@ class ShippingScreen extends StatelessWidget {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                              'شركة الشحن: ${shippingCompanyId ?? 'غير محددة'}'),
+                            'شركة الشحن: ${shippingCompanyId ?? 'غير محددة'}',
+                          ),
                           Text(
-                              'أمر البيع: ${salesOrder?['code'] ?? 'غير متوفر'}'),
+                            'أمر البيع: ${salesOrder?['code'] ?? 'غير متوفر'}',
+                          ),
                           Text(
-                              'الحالة: ${_translateStatus('${shipment['status'] ?? ''}')}'),
+                            'الحالة: ${_translateStatus('${shipment['status'] ?? ''}')}',
+                          ),
                           Text(_formatDate(shipment['createdAt'])),
                         ],
                       ),
                       trailing: IconButton(
-                        icon:
-                            const Icon(Icons.edit, color: AppColors.secondary),
-                        tooltip: 'تحديث الحالة',
-                        onPressed: () => _showUpdateStatusDialog(
-                          screenContext,
-                          shipment,
+                        icon: const Icon(
+                          Icons.edit,
+                          color: AppColors.secondary,
                         ),
+                        tooltip: 'تحديث الحالة',
+                        onPressed: () =>
+                            _showUpdateStatusDialog(screenContext, shipment),
                       ),
                     ),
                   );
@@ -104,7 +104,7 @@ class ShippingScreen extends StatelessWidget {
             return const SizedBox.shrink();
           },
         ),
-        floatingActionButton: FloatingActionButton.extended(
+        fab: FloatingActionButton.extended(
           onPressed: () => _showCreateShipmentDialog(screenContext),
           icon: const Icon(Icons.add_box),
           label: const Text('شحنة جديدة'),
@@ -134,22 +134,22 @@ class ShippingScreen extends StatelessWidget {
       }
       final saved = await showDialog<bool>(
         context: context,
-        builder: (_) => _CreateShipmentDialog(
-          cubit: cubit,
-          confirmedOrders: orders,
-        ),
+        builder: (_) =>
+            _CreateShipmentDialog(cubit: cubit, confirmedOrders: orders),
       );
       if (saved == true && context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم إنشاء الشحنة بنجاح')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('تم إنشاء الشحنة بنجاح')));
       }
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                'تعذر تحميل أوامر البيع: ${ApiClient.instance.messageFor(error)}')),
+          content: Text(
+            'تعذر تحميل أوامر البيع: ${ApiClient.instance.messageFor(error)}',
+          ),
+        ),
       );
     }
   }
@@ -166,9 +166,8 @@ class ShippingScreen extends StatelessWidget {
       ),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تحديث حالة الشحنة')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم تحديث حالة الشحنة')));
     }
   }
 
@@ -249,7 +248,8 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
-              'تعذر إنشاء الشحنة: ${ApiClient.instance.messageFor(error)}'),
+            'تعذر إنشاء الشحنة: ${ApiClient.instance.messageFor(error)}',
+          ),
         ),
       );
     }
@@ -287,7 +287,7 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
                   onChanged: _isSaving
                       ? null
                       : (value) =>
-                          setState(() => _selectedSalesOrderId = value),
+                            setState(() => _selectedSalesOrderId = value),
                   validator: (value) => value == null ? 'اختر أمر البيع' : null,
                 ),
                 const SizedBox(height: 10),
@@ -295,14 +295,14 @@ class _CreateShipmentDialogState extends State<_CreateShipmentDialog> {
                   controller: _shippingCompanyIdController,
                   decoration: const InputDecoration(
                     labelText: 'معرف شركة الشحن (UUID — اختياري)',
-                    hintText:
-                        'اتركه فارغًا إن لم يكن لديك معرّف شركة شحن',
+                    hintText: 'اتركه فارغًا إن لم يكن لديك معرّف شركة شحن',
                   ),
                   validator: (value) {
                     final text = value?.trim() ?? '';
                     if (text.isEmpty) return null;
                     final uuidPattern = RegExp(
-                        r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$');
+                      r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+                    );
                     return uuidPattern.hasMatch(text)
                         ? null
                         : 'أدخل UUID صالحًا أو اتركه فارغًا';
@@ -427,8 +427,10 @@ class _UpdateShipmentDialogState extends State<_UpdateShipmentDialog> {
       // P2 (audit-FE2): رسالة الخادم الفعلية (انتقال غير مسموح/مرتجع مطلوب...).
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                'تعذر تحديث حالة الشحنة: ${ApiClient.instance.messageFor(e)}')),
+          content: Text(
+            'تعذر تحديث حالة الشحنة: ${ApiClient.instance.messageFor(e)}',
+          ),
+        ),
       );
     }
   }
@@ -444,7 +446,8 @@ class _UpdateShipmentDialogState extends State<_UpdateShipmentDialog> {
           mainAxisSize: MainAxisSize.min,
           children: [
             Text(
-                'الحالة الحالية: ${ShippingScreen._translateStatus(_currentStatus)}'),
+              'الحالة الحالية: ${ShippingScreen._translateStatus(_currentStatus)}',
+            ),
             const SizedBox(height: 12),
             if (options.isEmpty)
               const Text('لا توجد انتقالات متاحة لهذه الحالة.')
@@ -474,7 +477,8 @@ class _UpdateShipmentDialogState extends State<_UpdateShipmentDialog> {
                   labelText: 'إثبات التسليم',
                   helperText: 'مطلوب عند اختيار تم التسليم',
                 ),
-                validator: (value) => _nextStatus == 'DELIVERED' &&
+                validator: (value) =>
+                    _nextStatus == 'DELIVERED' &&
                         (value == null || value.trim().isEmpty)
                     ? 'إثبات التسليم مطلوب'
                     : null,
