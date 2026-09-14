@@ -65,23 +65,37 @@ class OfflineQueueScreen extends StatelessWidget {
   Widget _summaryBar(BuildContext context, OutboxService outbox) {
     final total = outbox.pendingCount;
     final failed = outbox.failedCount;
+    // SELIM-ERP W4: التعارضات أولوية العرض (بيانات تغيّرت خادميًا).
+    final conflicts = outbox.conflictCount;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      color: failed > 0
-          ? AppColors.error.withValues(alpha: 0.08)
-          : AppColors.primary.withValues(alpha: 0.06),
+      color: conflicts > 0
+          ? AppColors.warning.withValues(alpha: 0.12)
+          : failed > 0
+              ? AppColors.error.withValues(alpha: 0.08)
+              : AppColors.primary.withValues(alpha: 0.06),
       child: Row(
         children: [
           Icon(
-            failed > 0 ? Icons.warning_amber : Icons.schedule,
-            color: failed > 0 ? AppColors.error : AppColors.primary,
+            conflicts > 0
+                ? Icons.sync_problem
+                : failed > 0
+                    ? Icons.warning_amber
+                    : Icons.schedule,
+            color: conflicts > 0
+                ? AppColors.warning
+                : failed > 0
+                    ? AppColors.error
+                    : AppColors.primary,
           ),
           const SizedBox(width: 10),
           Expanded(
             child: Text(
-              failed > 0
-                  ? '$failed عملية فاشلة من أصل $total — تحتاج قرارك'
-                  : '$total عملية معلّقة — تُرسل تلقائيًا عند عودة الاتصال',
+              conflicts > 0
+                  ? '$conflicts تعارضًا و$failed فاشلة من أصل $total — تحتاج قرارك'
+                  : failed > 0
+                      ? '$failed عملية فاشلة من أصل $total — تحتاج قرارك'
+                      : '$total عملية معلّقة — تُرسل تلقائيًا عند عودة الاتصال',
               style: const TextStyle(fontFamily: 'Cairo', fontSize: 13),
             ),
           ),
@@ -141,9 +155,15 @@ class _QueueCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final failed = entry.status == OutboxStatus.failed;
+    // SELIM-ERP W4: التعارض (409) له تمييز كهرماني وزر حلّ خاص.
+    final conflict = entry.status == OutboxStatus.conflict;
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 4),
-      color: failed ? AppColors.error.withValues(alpha: 0.04) : null,
+      color: conflict
+          ? AppColors.warning.withValues(alpha: 0.10)
+          : failed
+              ? AppColors.error.withValues(alpha: 0.04)
+              : null,
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Column(
@@ -152,8 +172,16 @@ class _QueueCard extends StatelessWidget {
             Row(
               children: [
                 Icon(
-                  failed ? Icons.error_outline : Icons.cloud_queue,
-                  color: failed ? AppColors.error : AppColors.primary,
+                  conflict
+                      ? Icons.sync_problem
+                      : failed
+                          ? Icons.error_outline
+                          : Icons.cloud_queue,
+                  color: conflict
+                      ? AppColors.warning
+                      : failed
+                          ? AppColors.error
+                          : AppColors.primary,
                   size: 20,
                 ),
                 const SizedBox(width: 8),
@@ -167,7 +195,7 @@ class _QueueCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                _statusChip(context, failed),
+                _statusChip(context, failed, conflict),
               ],
             ),
             const SizedBox(height: 4),
@@ -196,7 +224,7 @@ class _QueueCard extends StatelessWidget {
               ' · محاولات ${entry.attempts}/${entry.maxAttempts}',
               style: const TextStyle(fontFamily: 'Cairo', fontSize: 10),
             ),
-            if (failed && entry.lastError != null) ...[
+            if ((failed || conflict) && entry.lastError != null) ...[
               const SizedBox(height: 6),
               Container(
                 width: double.infinity,
@@ -219,6 +247,15 @@ class _QueueCard extends StatelessWidget {
             Row(
               mainAxisAlignment: MainAxisAlignment.end,
               children: [
+                if (conflict)
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: AppColors.warning,
+                    ),
+                    onPressed: () => _resolveConflict(context),
+                    icon: const Icon(Icons.merge_type, size: 18),
+                    label: const Text('حلّ التعارض'),
+                  ),
                 if (failed)
                   TextButton.icon(
                     onPressed: () => _retry(context),
@@ -242,14 +279,19 @@ class _QueueCard extends StatelessWidget {
 
   String _fallbackTitle() => 'عملية ${entry.method} ${entry.path}';
 
-  Widget _statusChip(BuildContext context, bool failed) => Container(
+  Widget _statusChip(BuildContext context, bool failed, bool conflict) =>
+      Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
         decoration: BoxDecoration(
-          color: failed ? AppColors.error : AppColors.warning,
+          color: conflict
+              ? AppColors.warning
+              : failed
+                  ? AppColors.error
+                  : AppColors.primary,
           borderRadius: BorderRadius.circular(10),
         ),
         child: Text(
-          failed ? 'فاشلة' : 'معلّقة',
+          conflict ? 'تعارض' : failed ? 'فاشلة' : 'معلّقة',
           style: const TextStyle(
             fontFamily: 'Cairo',
             fontSize: 10,
@@ -257,6 +299,20 @@ class _QueueCard extends StatelessWidget {
           ),
         ),
       );
+
+  /// SELIM-ERP W4 (ConflictResolver APP-2): عرض النسختين وقرار المستخدم —
+  /// أعد إرسال نسختك بمفتاح اندماجية جديد / اعتمد بيانات الخادم (حذف).
+  Future<void> _resolveConflict(BuildContext context) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (sheetContext) => _ConflictResolverSheet(
+        entry: entry,
+        outbox: outbox,
+      ),
+    );
+  }
 
   Future<void> _retry(BuildContext context) async {
     // العمليات المالية: تأكيد صريح قبل إعادة الإرسال (لا كتابة صامتة).
@@ -298,5 +354,182 @@ class _QueueCard extends StatelessWidget {
 
   Future<void> _delete(BuildContext context) async {
     await outbox.deleteOne(entry.id);
+  }
+}
+
+/// SELIM-ERP W4 — محلّ التعارض (نقل ConflictResolver APP-2 من المرجع):
+/// يعرض رسالة الخادم وبياناته مقابل نسختك المحلية، والقرار:
+/// - «أعد إرسال نسختي» (keepLocal): مفتاح اندماجية جديد + إرسال.
+/// - «اعتمد بيانات الخادم» (keepServer): حذف العنصر (بيانات الخادم
+///   هي الحقيقة) — قرار لا رجعة فيه.
+class _ConflictResolverSheet extends StatefulWidget {
+  const _ConflictResolverSheet({required this.entry, required this.outbox});
+
+  final OutboxEntry entry;
+  final OutboxService outbox;
+
+  @override
+  State<_ConflictResolverSheet> createState() =>
+      _ConflictResolverSheetState();
+}
+
+class _ConflictResolverSheetState extends State<_ConflictResolverSheet> {
+  bool _working = false;
+
+  Future<void> _keepLocal() async {
+    setState(() => _working = true);
+    final ok = await widget.outbox.retryWithFreshKey(widget.entry.id);
+    if (!mounted) return;
+    if (ok) {
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أُرسلت نسختك وقُبلت من الخادم')),
+      );
+    } else {
+      setState(() => _working = false);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('ما زال التعارض قائمًا — راجع بيانات الخادم'),
+        ),
+      );
+    }
+  }
+
+  Future<void> _keepServer() async {
+    setState(() => _working = true);
+    await widget.outbox.deleteOne(widget.entry.id);
+    if (!mounted) return;
+    Navigator.of(context).pop();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entry = widget.entry;
+    return Padding(
+      padding: EdgeInsets.only(
+        left: 16,
+        right: 16,
+        bottom: MediaQuery.viewInsetsOf(context).bottom + 16,
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.sync_problem, color: AppColors.warning),
+              const SizedBox(width: 8),
+              Text(
+                'تعارض مع بيانات الخادم',
+                style: const TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Text(
+            entry.title ?? 'عملية ${entry.method} ${entry.path}',
+            style: const TextStyle(fontFamily: 'Cairo', fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: AppColors.warning.withValues(alpha: 0.10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'رسالة الخادم:',
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  entry.lastError ?? 'تعارض (409)',
+                  style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 12,
+                    color: AppColors.warning,
+                  ),
+                ),
+                if (entry.serverData != null) ...[
+                  const SizedBox(height: 6),
+                  Text(
+                    'بيانات الخادم: ${entry.serverData}',
+                    maxLines: 4,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontFamily: 'Cairo',
+                      fontSize: 10,
+                      color: Colors.black54,
+                    ),
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'نسختك المحلية: ${entry.body}',
+            maxLines: 3,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontFamily: 'Cairo',
+              fontSize: 10,
+              color: Colors.black54,
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _working ? null : _keepLocal,
+              icon: _working
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.upload_rounded),
+              label: const Text('أعد إرسال نسختي (مفتاح جديد)'),
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                foregroundColor: AppColors.error,
+              ),
+              onPressed: _working ? null : _keepServer,
+              icon: const Icon(Icons.cloud_done_outlined),
+              label: const Text('اعتمد بيانات الخادم (حذف نسختك)'),
+            ),
+          ),
+          if (entry.isFinancial)
+            const Padding(
+              padding: EdgeInsets.only(top: 8),
+              child: Text(
+                'عملية مالية — التأكد من عدم التكرار مسؤوليتك قبل القرار.',
+                style: TextStyle(
+                  fontFamily: 'Cairo',
+                  fontSize: 11,
+                  color: AppColors.error,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
   }
 }

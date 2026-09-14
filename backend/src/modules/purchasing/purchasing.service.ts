@@ -109,6 +109,8 @@ export class PurchasingService {
         // لا بعمود مكرر.
         include: {
           supplier: { select: { id: true, code: true, name: true } },
+          // SELIM-ERP W4 (SPRINT 93): اسم الفرع لعرضه في قوائم المشتريات.
+          branch: { select: { id: true, name: true } },
           items: {
             select: {
               id: true,
@@ -197,6 +199,7 @@ export class PurchasingService {
       dueDate: dto.dueDate ?? null,
       notes: dto.notes ?? null,
       items: dto.items,
+      branchId: dto.branchId ?? null,
     });
     const replay = await tryReplayIdempotencyKey(
       this.prisma,
@@ -223,6 +226,16 @@ export class PurchasingService {
         });
         if (!supplier)
           throw new NotFoundException('المورد غير موجود أو غير نشط');
+        // SELIM-ERP W4 (SPRINT 93): الفرع الصادر — اختياري، يُتحقق منه داخل
+        // المعاملة (نشط) كي لا يُخزَّن فرع معطّل في أمر شراء.
+        if (dto.branchId) {
+          const branch = await tx.companyBranch.findFirst({
+            where: { id: dto.branchId, isActive: true },
+            select: { id: true },
+          });
+          if (!branch)
+            throw new BadRequestException('الفرع غير موجود أو غير نشط');
+        }
         const created = await tx.purchaseOrder.create({
           data: {
             code: generateDocumentCode(DocumentCodePrefix.PURCHASE_ORDER),
@@ -233,6 +246,7 @@ export class PurchasingService {
             notes: dto.notes,
             userId: creatorId,
             status: PurchaseOrderStatus.DRAFT,
+            ...(dto.branchId ? { branchId: dto.branchId } : {}),
             items: {
               create: dto.items.map((item) => ({
                 rawMaterialId: item.rawMaterialId,

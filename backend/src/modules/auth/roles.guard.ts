@@ -5,8 +5,14 @@ import {
   SetMetadata,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { PATH_METADATA } from '@nestjs/common/constants';
 import { UserRole } from '@prisma/client';
 import { IS_PUBLIC_KEY } from './public.decorator';
+import {
+  actionFromHttpMethod,
+  hasExplicitPermission,
+  resourceFromRoutePath,
+} from '../../core/permissions/permissions.domain';
 
 export const ROLES_KEY = 'roles';
 export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);
@@ -16,6 +22,13 @@ export const Roles = (...roles: UserRole[]) => SetMetadata(ROLES_KEY, roles);
  * - المسارات العامة تتخطى الفحص.
  * - المسارات بلا @Roles() متاحة لأي مستخدم موثّق.
  * - المسارات بـ @Roles() تتطلب دورًا مطابقًا (SUPER_ADMIN يتجاوز دائمًا).
+ *
+ * SELIM-ERP W4 — الطبقة الثانية (نفس checkPermission في المرجع SPRINT 81):
+ * عند فشل فحص الدور نستأنف بصلاحية صريحة على المستخدم
+ * (users.permissions): مورد الصلاحية يُستنتج من مسار المتحكم
+ * (resourceFromRoutePath) وإجراؤه من HTTP method (actionFromHttpMethod).
+ * الصلاحيات الصريحة **تضيف** وصولًا فوق الدور فقط — لا تلغيه أبدًا،
+ * ولا تُمنح إلا عبر PUT /users/:id/permissions (SUPER_ADMIN حصريًا).
  */
 @Injectable()
 export class RolesGuard implements CanActivate {
@@ -40,7 +53,8 @@ export class RolesGuard implements CanActivate {
     }
 
     const request = context.switchToHttp().getRequest<{
-      user?: { role?: UserRole };
+      method?: string;
+      user?: { role?: UserRole; permissions?: unknown };
     }>();
     const { user } = request;
 
@@ -48,6 +62,30 @@ export class RolesGuard implements CanActivate {
       return true;
     }
 
-    return requiredRoles.some((role) => user?.role === role);
+    if (requiredRoles.some((role) => user?.role === role)) {
+      return true;
+    }
+
+    // SELIM-ERP W4: فشل فحص الدور → منح صريح يفتح المسار (لا شيء آخر يفعل).
+    const controllerPath = this.reflector.get<string>(
+      PATH_METADATA,
+      context.getClass(),
+    );
+    const handlerPath = this.reflector.get<string>(
+      PATH_METADATA,
+      context.getHandler(),
+    );
+    const resource = resourceFromRoutePath(
+      `${controllerPath ?? ''}/${handlerPath ?? ''}`,
+    );
+    const action = actionFromHttpMethod(request.method ?? 'GET');
+    if (
+      resource &&
+      hasExplicitPermission(user?.permissions, resource, action)
+    ) {
+      return true;
+    }
+
+    return false;
   }
 }

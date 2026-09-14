@@ -28,6 +28,7 @@ class _FakePurchasingCubit extends PurchasingCubit {
 
   @override
   Future<void> createPurchaseOrder({
+    String? branchId,
     required String supplierId,
     required String paymentType,
     DateTime? dueDate,

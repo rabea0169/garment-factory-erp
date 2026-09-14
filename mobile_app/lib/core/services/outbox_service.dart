@@ -10,7 +10,10 @@ import '../network/api_client.dart';
 /// SELIM-ERP W3 (نقل OfflineQueueStore من lib/offline-queue.ts في Selim):
 /// حالة عنصر الطابور. المزامنة تلقائية للمعلّق فقط؛ «الفاشل» (رفض خادم
 /// 4xx) يتطلب قرار المستخدم — لا كتابة صامتة فوق بيانات الخادم.
-enum OutboxStatus { pending, failed }
+/// SELIM-ERP W4: «المتعارض» (409 تحديدًا — نقل ConflictResolver APP-2
+/// من المرجع): بيانات الخادم تغيّرت — يُعرض على المستخدم قراره (أعد
+/// الإرسال بمفتاح اندماجية جديد / اعتمد الخادم وحذف).
+enum OutboxStatus { pending, failed, conflict }
 
 /// MOB-3 + SELIM-ERP W3: طابور كتابة صادر (Outbox) — عمليات POST
 /// معلّقة تُخزن في Hive وتُرسل تسلسليًا (FIFO) عند عودة الاتصال.
@@ -28,7 +31,9 @@ enum OutboxStatus { pending, failed }
 /// - التغييرات (إدراج/حذف/تحديث حالة) تُعلن عبر [notifyListeners] —
 ///   الشاشات تستمع عبر ListenableBuilder.
 /// نتيجة إرسال واحدة (مستوى أعلى — لا يسمح Dart بالتعداد داخل الأصناف).
-enum _SendOutcome { sent, rejected, networkError }
+/// W4: conflict — 409 من الخادم (تعارض حالة/اندماجية) يعرض بياناته
+/// للقرار البشري، لا يُعاد تلقائيًا أبدًا.
+enum _SendOutcome { sent, rejected, networkError, conflict }
 
 class OutboxService extends ChangeNotifier {
   OutboxService({HiveInterface? hive, Dio? dio, Uuid? uuid})
@@ -95,6 +100,15 @@ class OutboxService extends ChangeNotifier {
     var count = 0;
     for (final entry in pendingEntries) {
       if (entry.status == OutboxStatus.failed) count++;
+    }
+    return count;
+  }
+
+  /// SELIM-ERP W4: عدد العمليات المتعارضة (409 — تحتاج قرار المستخدم).
+  int get conflictCount {
+    var count = 0;
+    for (final entry in pendingEntries) {
+      if (entry.status == OutboxStatus.conflict) count++;
     }
     return count;
   }
@@ -187,11 +201,25 @@ class OutboxService extends ChangeNotifier {
           notifyListeners();
           continue;
         }
-        // الفاشل لا يُعاد تلقائيًا — قرار المستخدم (retryOne).
-        if (entry.status == OutboxStatus.failed) continue;
+        // الفاشل والمتعارض لا يُعادان تلقائيًا — قرار المستخدم (retryOne /
+        // retryWithFreshKey). المرجع: processQueue يعالج pending فقط
+        // (وفاشلًا غير مالي ضمن محاولاته) — التعارض بشري دائمًا.
+        if (entry.status == OutboxStatus.failed ||
+            entry.status == OutboxStatus.conflict) {
+          continue;
+        }
         final outcome = await _send(entry);
         if (outcome == _SendOutcome.sent) {
           await _box!.delete(storageKey);
+          notifyListeners();
+        } else if (outcome == _SendOutcome.conflict) {
+          // W4: التعارض قرار بشري — لا إعادة إرسال تلقائية أبدًا.
+          await _markConflict(
+            storageKey,
+            entry,
+            _lastErrorMessage ?? 'تعارض مع بيانات الخادم',
+            _lastErrorData,
+          );
           notifyListeners();
         } else if (outcome == _SendOutcome.rejected) {
           await _markFailed(storageKey, entry, _lastErrorMessage ?? 'رفض الخادم');
@@ -207,6 +235,9 @@ class OutboxService extends ChangeNotifier {
   }
 
   String? _lastErrorMessage;
+
+  /// SELIM-ERP W4: بيانات استجابة الخادم عند 409 (تُعرض في محلّ التعارض).
+  Object? _lastErrorData;
 
   /// يرسل عنصرًا واحدًا ويعيد نتيجته (يحدّث _lastErrorMessage عند الرفض).
   Future<_SendOutcome> _send(OutboxEntry entry) async {
@@ -226,6 +257,17 @@ class OutboxService extends ChangeNotifier {
       final response = error.response;
       if (response != null && response.statusCode != null) {
         final status = response.statusCode!;
+        // SELIM-ERP W4: 409 = تعارض صريح (حالة تغيّرت / مفتاح اندماجية
+        // بمحتوى مختلف) — بيانات الخادم تُعرض للقرار البشري (APP-2).
+        if (status == 409) {
+          _lastErrorMessage =
+              ApiClient.instance.messageFor(error).trim().isNotEmpty
+                  ? ApiClient.instance.messageFor(error)
+                  : 'تعارض مع بيانات الخادم (409)';
+          final data = response.data;
+          _lastErrorData = data is Map || data is List ? data : null;
+          return _SendOutcome.conflict;
+        }
         if (status >= 400 && status < 500) {
           _lastErrorMessage =
               ApiClient.instance.messageFor(error).trim().isNotEmpty
@@ -289,6 +331,16 @@ class OutboxService extends ChangeNotifier {
       notifyListeners();
       return true;
     }
+    if (outcome == _SendOutcome.conflict) {
+      await _markConflict(
+        storageKey,
+        entry,
+        _lastErrorMessage ?? 'تعارض مع بيانات الخادم',
+        _lastErrorData,
+      );
+      notifyListeners();
+      return false;
+    }
     await _markFailed(
       storageKey,
       entry,
@@ -296,6 +348,73 @@ class OutboxService extends ChangeNotifier {
     );
     notifyListeners();
     return false;
+  }
+
+  /// SELIM-ERP W4 (keepLocal في ConflictResolver بالمرجع): إعادة إرسال
+  /// النسخة المحلية بـ **مفتاح اندماجية جديد** — يحل تعارض «نفس المفتاح
+  /// بمحتوى مختلف» ويجعل الخادم يعالج جسم الطلب الجديد. العملية المالية
+  /// تطلب تأكيدًا صريحًا من الواجهة قبل الاستدعاء (APP-1).
+  Future<bool> retryWithFreshKey(String entryId) async {
+    if (!_isReady && !await init()) return false;
+    final storageKey = _keyOf(entryId);
+    if (storageKey == null) return false;
+    final raw = _box!.get(storageKey);
+    if (raw is! Map) return false;
+    OutboxEntry entry;
+    try {
+      entry = OutboxEntry.fromJson(Map<String, dynamic>.from(raw));
+    } catch (_) {
+      await _box!.delete(storageKey);
+      notifyListeners();
+      return false;
+    }
+    // مفتاح جديد + إعادة تعيين الحالة/المحاولات قبل الإرسال.
+    final refreshed = entry.copyWithFreshKey(_uuid.v4());
+    final outcome = await _send(refreshed);
+    if (outcome == _SendOutcome.sent) {
+      await _box!.delete(storageKey);
+      notifyListeners();
+      return true;
+    }
+    if (outcome == _SendOutcome.conflict) {
+      await _markConflict(
+        storageKey,
+        refreshed,
+        _lastErrorMessage ?? 'تعارض مع بيانات الخادم',
+        _lastErrorData,
+      );
+      notifyListeners();
+      return false;
+    }
+    await _markFailed(
+      storageKey,
+      refreshed,
+      _lastErrorMessage ?? 'فشل غير معروف',
+    );
+    notifyListeners();
+    return false;
+  }
+
+  /// SELIM-ERP W4: تعليم عنصر متعارضًا (409) مع بيانات الخادم للعرض.
+  Future<void> _markConflict(
+    dynamic storageKey,
+    OutboxEntry entry,
+    String message,
+    Object? serverData,
+  ) async {
+    final updated = entry.copyWith(
+      status: OutboxStatus.conflict,
+      lastError: message,
+      lastAttemptAt: DateTime.now(),
+    );
+    try {
+      await _box!.put(
+        storageKey,
+        updated.toJson(serverData: serverData),
+      );
+    } catch (error) {
+      debugPrint('OutboxService: فشل تحديث حالة التعارض: $error');
+    }
   }
 
   /// SELIM-ERP W3: حذف عنصر واحد (تخلٍّ صريح عن العملية).
@@ -389,6 +508,7 @@ class OutboxEntry {
     this.amount,
     this.lastError,
     this.lastAttemptAt,
+    this.serverData,
   });
 
   factory OutboxEntry.fromJson(Map<String, dynamic> json) {
@@ -405,7 +525,9 @@ class OutboxEntry {
       createdAt: DateTime.parse(createdAtRaw),
       status: json['status'] == 'failed'
           ? OutboxStatus.failed
-          : OutboxStatus.pending,
+          : json['status'] == 'conflict'
+              ? OutboxStatus.conflict
+              : OutboxStatus.pending,
       attempts: (json['attempts'] as num?)?.toInt() ?? 0,
       maxAttempts: (json['maxAttempts'] as num?)?.toInt() ??
           OutboxService.defaultMaxAttempts,
@@ -417,6 +539,7 @@ class OutboxEntry {
       lastAttemptAt: json['lastAttemptAt'] is String
           ? DateTime.parse(json['lastAttemptAt'] as String)
           : null,
+      serverData: json['serverData'],
     );
   }
 
@@ -442,7 +565,55 @@ class OutboxEntry {
       amount: amount,
       lastError: lastError,
       lastAttemptAt: lastAttemptAt ?? this.lastAttemptAt,
+      serverData: serverData,
     );
+  }
+
+  /// SELIM-ERP W4: نسخة بمفتاح اندماجية جديد + حالة نظيفة (keepLocal).
+  OutboxEntry copyWithFreshKey(String freshKey) {
+    return OutboxEntry(
+      id: id,
+      method: method,
+      path: path,
+      body: body,
+      idempotencyKey: freshKey,
+      createdAt: createdAt,
+      status: OutboxStatus.pending,
+      attempts: 0,
+      maxAttempts: maxAttempts,
+      isFinancial: isFinancial,
+      title: title,
+      description: description,
+      amount: amount,
+    );
+  }
+
+  /// تسلسل التخزين — [serverData] (استجابة 409 للعرض) يُمرَّر خارجيًا
+  /// لأنه لا يجري مع النسخ الأساسية (Hive يخزن الخريطة كما هي).
+  Map<String, dynamic> toJson({Object? serverData}) {
+    return <String, dynamic>{
+      'id': id,
+      'method': method,
+      'path': path,
+      'body': body,
+      'idempotencyKey': idempotencyKey,
+      'createdAt': createdAt.toIso8601String(),
+      'status': status == OutboxStatus.failed
+          ? 'failed'
+          : status == OutboxStatus.conflict
+              ? 'conflict'
+              : 'pending',
+      'attempts': attempts,
+      'maxAttempts': maxAttempts,
+      'isFinancial': isFinancial,
+      'title': title,
+      'description': description,
+      'amount': amount,
+      'lastError': lastError,
+      'lastAttemptAt': lastAttemptAt?.toIso8601String(),
+      if (serverData != null || this.serverData != null)
+        'serverData': serverData ?? this.serverData,
+    };
   }
 
   /// معرف فريد للعنصر (مفتاح البحث في اللوحة).
@@ -490,22 +661,6 @@ class OutboxEntry {
   /// لحظة آخر محاولة.
   final DateTime? lastAttemptAt;
 
-  Map<String, dynamic> toJson() => <String, dynamic>{
-        'id': id,
-        'method': method,
-        'path': path,
-        'body': body,
-        'idempotencyKey': idempotencyKey,
-        'createdAt': createdAt.toIso8601String(),
-        'status': status.name,
-        'attempts': attempts,
-        'maxAttempts': maxAttempts,
-        'isFinancial': isFinancial,
-        if (title != null) 'title': title,
-        if (description != null) 'description': description,
-        if (amount != null) 'amount': amount,
-        if (lastError != null) 'lastError': lastError,
-        if (lastAttemptAt != null)
-          'lastAttemptAt': lastAttemptAt!.toIso8601String(),
-      };
+  /// SELIM-ERP W4: بيانات الخادم عند 409 (تُعرض في محلّ التعارض).
+  final Object? serverData;
 }

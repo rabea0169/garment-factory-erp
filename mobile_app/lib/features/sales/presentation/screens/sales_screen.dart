@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/network/api_client.dart';
+import '../../../parties/presentation/widgets/party_details_sheet.dart';
 import '../../../../core/contacts/contact_import_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
@@ -111,18 +112,38 @@ class SalesScreen extends StatelessWidget {
                             }).toList(),
                           ),
                         ),
-                        // SELIM-ERP W3: كشف حساب العميل من بطاقة طلبه.
+                        // SELIM-ERP W3: كشف حساب العميل من بطاقة طلبه +
+                        // SELIM-ERP W4: بطاقة الطرف (تفاصيل + تحصيل سريع).
                         if (customer?['id'] != null)
                           Align(
                             alignment: AlignmentDirectional.centerStart,
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                              child: OutlinedButton.icon(
-                                onPressed: () => screenContext.push(
-                                  '${AppRouter.customerStatement}/${customer!['id']}',
-                                ),
-                                icon: const Icon(Icons.receipt_long_outlined),
-                                label: const Text('كشف حساب العميل'),
+                              child: Wrap(
+                                spacing: 8,
+                                runSpacing: 4,
+                                children: [
+                                  OutlinedButton.icon(
+                                    onPressed: () => screenContext.push(
+                                      '${AppRouter.customerStatement}/${customer!['id']}',
+                                    ),
+                                    icon: const Icon(
+                                        Icons.receipt_long_outlined),
+                                    label: const Text('كشف حساب العميل'),
+                                  ),
+                                  OutlinedButton.icon(
+                                    onPressed: () =>
+                                        showPartyDetailsSheet(
+                                      screenContext,
+                                      party: Map<String, dynamic>.from(
+                                        customer as Map,
+                                      ),
+                                      isCustomer: true,
+                                    ),
+                                    icon: const Icon(Icons.info_outline),
+                                    label: const Text('بطاقة العميل'),
+                                  ),
+                                ],
                               ),
                             ),
                           ),
@@ -547,6 +568,7 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
   late final Future<_SalesOrderOptions> _optionsFuture;
   String? _customerId;
   String? _variantId;
+  String? _branchId;
   var _paymentType = 'CASH';
   var _isSaving = false;
 
@@ -560,9 +582,13 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
     final results = await Future.wait([
       widget.salesCubit.fetchCustomers(),
       widget.salesCubit.fetchProducts(),
+      // SELIM-ERP W4: الفروع النشطة للمنتقي — فشل التحميل لا يمنع
+      // الفاتورة (الفرع اختياري) فنبتلعه ونكمل بقائمة فارغة.
+      _fetchBranches(),
     ]);
     final customers = results[0].cast<dynamic>();
     final products = results[1].cast<dynamic>();
+    final branches = results[2];
     final variants = <Map<String, dynamic>>[];
     for (final product in products) {
       if (product is! Map) continue;
@@ -579,7 +605,36 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
         });
       }
     }
-    return _SalesOrderOptions(customers: customers, variants: variants);
+    return _SalesOrderOptions(
+      customers: customers,
+      variants: variants,
+      branches: branches,
+    );
+  }
+
+  /// جلب الفروع النشطة للمنتقي (لا يرمي — الفروع اختيارية).
+  static Future<List<Map<String, dynamic>>> _fetchBranches() async {
+    try {
+      final response =
+          await ApiClient.instance.dio.get<dynamic>('/branches');
+      final rows = response.data is Map
+          ? (response.data as Map)['branches']
+          : response.data;
+      if (rows is! List) return const [];
+      return rows
+          .whereType<Map>()
+          .where((b) => b['isActive'] == true && b['id'] != null)
+          .map(
+            (b) => <String, dynamic>{
+              'id': b['id'].toString(),
+              'name': b['name']?.toString() ?? 'فرع',
+              'isMain': b['isMain'] == true,
+            },
+          )
+          .toList();
+    } catch (_) {
+      return const [];
+    }
   }
 
   @override
@@ -612,6 +667,8 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
             'quantity': int.parse(_quantityController.text.trim()),
           },
         ],
+        // SELIM-ERP W4 (SPRINT 93): الفرع المُصدِر — اختياري.
+        branchId: _branchId,
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (_) {
@@ -726,6 +783,35 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
                               }
                             },
                     ),
+                    // SELIM-ERP W4 (SPRINT 93): الفرع المُصدِر — اختياري،
+                    // لا يظهر إلا إن توفرت فروع نشطة.
+                    if (options.branches.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      DropdownButtonFormField<String?>(
+                        initialValue: _branchId,
+                        decoration: const InputDecoration(
+                          labelText: 'الفرع (اختياري)',
+                        ),
+                        items: [
+                          const DropdownMenuItem<String?>(
+                            value: null,
+                            child: Text('بلا فرع'),
+                          ),
+                          ...options.branches.map(
+                            (branch) => DropdownMenuItem<String?>(
+                              value: branch['id'] as String,
+                              child: Text(
+                                '${branch['isMain'] == true ? '★ ' : ''}'
+                                '${branch['name']}',
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: _isSaving
+                            ? null
+                            : (value) => setState(() => _branchId = value),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _discountController,
@@ -774,10 +860,17 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
 }
 
 class _SalesOrderOptions {
-  const _SalesOrderOptions({required this.customers, required this.variants});
+  const _SalesOrderOptions({
+    required this.customers,
+    required this.variants,
+    required this.branches,
+  });
 
   final List<dynamic> customers;
   final List<Map<String, dynamic>> variants;
+
+  /// SELIM-ERP W4: الفروع النشطة (اختيارية في الفاتورة).
+  final List<Map<String, dynamic>> branches;
 }
 
 class _CustomerPaymentDialog extends StatefulWidget {

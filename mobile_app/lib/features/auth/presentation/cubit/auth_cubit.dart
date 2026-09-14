@@ -109,6 +109,14 @@ class AuthCubit extends Cubit<AuthState> {
         throw const FormatException('بيانات المستخدم غير موجودة');
       }
       final normalizedUser = Map<String, dynamic>.from(user);
+      // SELIM-ERP W4: الصلاحيات الفعالة (الدور أساس + الصريح يضيف) تُدمج
+      // داخل خريطة المستخدم كي تقرأها بوابات الأقسام (canAccessWithUser)
+      // من مصدر واحد — نفس شكل /auth/me.
+      final effective = responseData['effectivePermissions'];
+      if (effective is Map) {
+        normalizedUser['effectivePermissions'] =
+            Map<String, dynamic>.from(effective);
+      }
       // MOB-1: نخزن التوكنين معًا — access_token وrefresh_token بنفس
       // النمط في التخزين الآمن (Keystore/Keychain) كي يتوفر رمز التحديث
       // لمعالج 401 في ApiClient.

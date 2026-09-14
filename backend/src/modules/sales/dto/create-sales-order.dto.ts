@@ -6,6 +6,7 @@ import {
   IsArray,
   IsEnum,
   IsNumber,
+  IsOptional,
   IsUUID,
   Max,
   Min,
@@ -17,6 +18,16 @@ export class CreateSalesOrderDto {
   @ApiProperty({ example: 'uuid-of-customer', description: 'معرف العميل' })
   @IsUUID(undefined, { message: 'معرف العميل يجب أن يكون UUID صالحًا' })
   customerId: string;
+
+  /** SELIM-ERP W4 (SPRINT 93): الفرع المُصدِر للفاتورة — اختياري. */
+  @ApiProperty({
+    example: 'uuid-of-branch',
+    description: 'معرف الفرع (اختياري — بلا فرع إن غاب)',
+    required: false,
+  })
+  @IsOptional()
+  @IsUUID(undefined, { message: 'معرف الفرع يجب أن يكون UUID صالحًا' })
+  branchId?: string;
 
   @ApiProperty({
     enum: PaymentType,

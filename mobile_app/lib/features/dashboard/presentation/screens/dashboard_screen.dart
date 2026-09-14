@@ -11,7 +11,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/services/device_registration_service.dart';
 import '../../../../core/navigation/double_back_exit_guard.dart';
 import '../../../../core/router/app_router.dart';
-import '../../../../core/security/route_access.dart';
+import '../../../../core/security/effective_permissions.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/selim/selim_shell.dart';
 import '../../../auth/presentation/cubit/auth_cubit.dart';
@@ -257,9 +257,7 @@ class _DashboardContent extends StatelessWidget {
   /// (نفس مرآة سياسات الخادم) فلا يظهر للمحاسب زر ينقله لشاشة ممنوعة.
   Widget _buildQuickActions(BuildContext context) {
     final authState = context.watch<AuthCubit>().state;
-    final role = authState is AuthAuthenticated
-        ? authState.user['role']?.toString() ?? ''
-        : '';
+    final user = authState is AuthAuthenticated ? authState.user : null;
     final actions = <(String, String, IconData, Color, String)>[
       (
         'فاتورة مبيعات',
@@ -303,7 +301,7 @@ class _DashboardContent extends StatelessWidget {
         AppColors.primary,
         AppRouter.reports,
       ),
-    ].where((a) => RouteAccess.canAccess(a.$5, role)).toList();
+    ].where((a) => canAccessWithUser(a.$5, user)).toList();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,

@@ -402,6 +402,106 @@ void main() {
       expect(entries.single.maxAttempts, OutboxService.defaultMaxAttempts);
     });
   });
+
+  // ------------------------------------------------------------------
+  group('SELIM-ERP W4 — التعارض (409) ومحلّ القرار', () {
+    test('drain يعلّم عنصر 409 كتعارض (لا failed) مع بيانات الخادم', () async {
+      adapter.statusByPath['/pos/orders'] = 409;
+      final outbox = newOutbox();
+      await outbox.init();
+      await outbox.enqueue(
+        method: 'POST',
+        path: '/pos/orders',
+        body: {'total': 100},
+        idempotencyKey: 'k-conflict-1',
+      );
+      await outbox.drain();
+
+      expect(outbox.pendingCount, 1);
+      expect(outbox.conflictCount, 1);
+      expect(outbox.failedCount, 0);
+      final entry = outbox.pendingEntries.single;
+      expect(entry.status, OutboxStatus.conflict);
+      expect(entry.lastError, contains('تعارض'));
+      expect(entry.serverData, isNotNull);
+      // بيانات الخادم من جسم 409.
+      expect((entry.serverData as Map)['message'], contains('الخادم'));
+    });
+
+    test('التعارض يبقى بعد جولة drain ثانية — لا إعادة إرسال تلقائية', () async {
+      adapter.statusByPath['/pos/orders'] = 409;
+      final outbox = newOutbox();
+      await outbox.init();
+      await outbox.enqueue(
+        method: 'POST',
+        path: '/pos/orders',
+        body: {'total': 100},
+        idempotencyKey: 'k-conflict-2',
+      );
+      await outbox.drain();
+      await outbox.drain();
+      // طلب واحد فقط — المتعارض لا يُعاد أبدًا تلقائيًا.
+      expect(adapter.requests, hasLength(1));
+      expect(outbox.conflictCount, 1);
+    });
+
+    test('retryWithFreshKey: مفتاح اندماجية جديد ونجاح يحذف العنصر', () async {
+      adapter.statusByPath['/pos/orders'] = 409;
+      final outbox = newOutbox();
+      await outbox.init();
+      final entry = await outbox.enqueue(
+        method: 'POST',
+        path: '/pos/orders',
+        body: {'total': 100},
+        idempotencyKey: 'k-conflict-3',
+      );
+      await outbox.drain();
+      expect(outbox.conflictCount, 1);
+
+      // الخادم يقبل الآن (لا 409) — القرار keepLocal.
+      adapter.statusByPath.clear();
+      final ok = await outbox.retryWithFreshKey(entry!.id);
+      expect(ok, isTrue);
+      expect(outbox.pendingCount, 0);
+      // طلبان فقط: drain الأولية (بالمفتاح الأصلي) ثم الإعادة بالمفتاح
+      // الجديد — الأخير مختلف عن الأصل (keepLocal بالمرجع).
+      expect(adapter.keys, hasLength(2));
+      expect(adapter.keys.last, isNot(equals('k-conflict-3')));
+      expect(adapter.keys.last, isNot(equals(adapter.keys.first)));
+    });
+
+    test('deleteOne يحذف المتعارض (قرار اعتماد الخادم)', () async {
+      adapter.statusByPath['/pos/orders'] = 409;
+      final outbox = newOutbox();
+      await outbox.init();
+      final entry = await outbox.enqueue(
+        method: 'POST',
+        path: '/pos/orders',
+        body: {'total': 100},
+        idempotencyKey: 'k-conflict-4',
+      );
+      await outbox.drain();
+      await outbox.deleteOne(entry!.id);
+      expect(outbox.pendingCount, 0);
+      expect(outbox.conflictCount, 0);
+    });
+
+    test('409 أثناء retryOne يعلّم تعارضًا بدل فشل', () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      final entry = await outbox.enqueue(
+        method: 'POST',
+        path: '/pos/orders',
+        body: {'total': 100},
+        idempotencyKey: 'k-conflict-5',
+      );
+      adapter.statusByPath['/pos/orders'] = 409;
+      final ok = await outbox.retryOne(entry!.id);
+      expect(ok, isFalse);
+      expect(outbox.pendingEntries.single.status, OutboxStatus.conflict);
+    });
+  });
+
 }
 
 /// محول Dio مُبرمج: يسجل الطلبات ويعيد 200، مع مسارات تفشل بـ 500 عند
@@ -428,8 +528,11 @@ class _ScriptedAdapter implements HttpClientAdapter {
     requests.add(options);
     final status = statusByPath[options.path] ??
         (failStatusFor.contains(options.path) ? 500 : 200);
-    final body =
-        status == 400 ? '{"message": "بيانات غير صالحة"}' : '{"ok": true}';
+    final body = status == 400
+        ? '{"message": "بيانات غير صالحة"}'
+        : status == 409
+            ? '{"message": "تغيّرت الحالة على الخادم — تعارض"}'
+            : '{"ok": true}';
     return ResponseBody.fromString(body, status, headers: {
       Headers.contentTypeHeader: [Headers.jsonContentType],
     });

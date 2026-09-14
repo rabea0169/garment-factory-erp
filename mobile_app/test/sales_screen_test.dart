@@ -38,6 +38,7 @@ class _FakeSalesCubit extends SalesCubit {
 
   @override
   Future<void> createSalesOrder({
+    String? branchId,
     required String customerId,
     required String paymentType,
     required double discount,

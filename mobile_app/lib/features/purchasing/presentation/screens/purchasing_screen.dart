@@ -308,8 +308,34 @@ class _CreatePurchaseOrderDialogState
   final _notesController = TextEditingController();
   String? _supplierId;
   String? _rawMaterialId;
+  String? _branchId;
   var _paymentType = 'CASH';
   var _isSaving = false;
+
+  /// SELIM-ERP W4: الفروع النشطة للمنتقي (لا يرمي — الفرع اختياري).
+  Future<List<Map<String, dynamic>>> _loadBranches() async {
+    try {
+      final response =
+          await ApiClient.instance.dio.get<dynamic>('/branches');
+      final rows = response.data is Map
+          ? (response.data as Map)['branches']
+          : response.data;
+      if (rows is! List) return const [];
+      return rows
+          .whereType<Map>()
+          .where((b) => b['isActive'] == true && b['id'] != null)
+          .map(
+            (b) => <String, dynamic>{
+              'id': b['id'].toString(),
+              'name': b['name']?.toString() ?? 'فرع',
+              'isMain': b['isMain'] == true,
+            },
+          )
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
 
   @override
   void dispose() {
@@ -334,6 +360,8 @@ class _CreatePurchaseOrderDialogState
             'unitCost': double.parse(_unitCostController.text.trim()),
           },
         ],
+        // SELIM-ERP W4 (SPRINT 93): الفرع الصادر — اختياري.
+        branchId: _branchId,
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -381,6 +409,43 @@ class _CreatePurchaseOrderDialogState
                       ? null
                       : (value) => setState(() => _supplierId = value),
                   validator: (value) => value == null ? 'اختر المورد' : null,
+                ),
+                // SELIM-ERP W4 (SPRINT 93): الفرع الصادر — اختياري.
+                FutureBuilder<List<Map<String, dynamic>>>(
+                  future: _loadBranches(),
+                  builder: (context, snapshot) {
+                    final branches = snapshot.data ?? const [];
+                    if (branches.isEmpty) return const SizedBox.shrink();
+                    return Column(
+                      children: [
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String?>(
+                          initialValue: _branchId,
+                          decoration: const InputDecoration(
+                            labelText: 'الفرع (اختياري)',
+                          ),
+                          items: [
+                            const DropdownMenuItem<String?>(
+                              value: null,
+                              child: Text('بلا فرع'),
+                            ),
+                            ...branches.map(
+                              (branch) => DropdownMenuItem<String?>(
+                                value: branch['id'] as String,
+                                child: Text(
+                                  '${branch['isMain'] == true ? '★ ' : ''}'
+                                  '${branch['name']}',
+                                ),
+                              ),
+                            ),
+                          ],
+                          onChanged: _isSaving
+                              ? null
+                              : (value) => setState(() => _branchId = value),
+                        ),
+                      ],
+                    );
+                  },
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(

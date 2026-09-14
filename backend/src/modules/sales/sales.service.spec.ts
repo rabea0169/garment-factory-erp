@@ -1367,6 +1367,8 @@ describe('SalesService — GF-IMP-W3: SAL-5 قائمة الأوامر بفلات
     const itemsInclude = findCall.include.items as Record<string, unknown>;
     expect(findCall.include).toEqual({
       customer: { select: { id: true, name: true, code: true } },
+      // SELIM-ERP W4 (SPRINT 93): اسم الفرع في قوائم البيع.
+      branch: { select: { id: true, name: true } },
       items: {
         select: {
           id: true,

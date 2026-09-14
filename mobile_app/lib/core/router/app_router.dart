@@ -37,10 +37,11 @@ import '../../features/system/presentation/screens/offline_queue_screen.dart';
 import '../../features/system/presentation/screens/factory_settings_screen.dart';
 import '../../features/system/presentation/screens/audit_logs_screen.dart';
 import '../../features/system/presentation/screens/devices_screen.dart';
+import '../../features/branches/presentation/screens/branches_screen.dart';
 import '../../features/accounting/presentation/screens/cost_centers_screen.dart';
 import '../../features/financial_reports/presentation/screens/party_statement_screen.dart';
 import '../storage/auth_storage.dart';
-import '../security/route_access.dart';
+import '../security/effective_permissions.dart';
 import '../navigation/back_navigation.dart';
 
 class AppRouter {
@@ -88,6 +89,7 @@ class AppRouter {
   static const String auditLogs = '/audit-logs';
   static const String devices = '/devices';
   static const String costCenters = '/cost-centers';
+  static const String branches = '/branches';
   static const String customerStatement = '/statement/customer';
   static const String supplierStatement = '/statement/supplier';
 
@@ -133,9 +135,10 @@ class AppRouter {
       // محاولة مستخدم بلاغٍ خاطئ دخول /users أو /accounting عبر URL
       // كان يعرض شاشة 403؛ الآن يُعاد توجيهه للوحة التحكم. الخادم يظل
       // خط الدفاع الأخير (fail-closed).
+      // SELIM-ERP W4: الصلاحيات الصريحة (effectivePermissions من الجلسة)
+      // تفتح مسارًا فشل فحص دورِه — نفس منطق الخادم (طبقة فوق الدور).
       if (isAuthenticated && !isLoginRoute) {
-        final role = user?['role']?.toString() ?? '';
-        if (!RouteAccess.canAccess(state.matchedLocation, role)) {
+        if (!canAccessWithUser(state.matchedLocation, user)) {
           return dashboard;
         }
       }
@@ -369,6 +372,12 @@ class AppRouter {
         name: 'costCenters',
         builder: (context, state) =>
             const BackGuard(child: CostCentersScreen()),
+      ),
+      GoRoute(
+        path: branches,
+        name: 'branches',
+        builder: (context, state) =>
+            const BackGuard(child: BranchesScreen()),
       ),
       GoRoute(
         path: '$customerStatement/:id',

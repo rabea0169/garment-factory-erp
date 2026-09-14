@@ -41,4 +41,13 @@ export class CreateProductDto {
   @IsOptional()
   @IsUUID(undefined, { message: 'معرف الموسم يجب أن يكون UUID صالحًا' })
   seasonId?: string;
+
+  /** SELIM-ERP W4 (SPRINT 94): فرع الصنف — اختياري (null = مشترك بين الفروع). */
+  @ApiPropertyOptional({
+    example: 'uuid-of-branch',
+    description: 'معرف الفرع (اختياري)',
+  })
+  @IsOptional()
+  @IsUUID(undefined, { message: 'معرف الفرع يجب أن يكون UUID صالحًا' })
+  branchId?: string;
 }

@@ -32,6 +32,10 @@ model User {
   // P0 fix (wave 7): @map يطابق العمود jwt_version الذي أنشأته migration
   // 20260902000000_wave4_sec_f04_refresh_tokens — بدونه كل استعلام يفشل بـ P2022.
   jwtVersion Int      @default(0) @map("jwt_version")
+  // SELIM-ERP W4: صلاحيات تفصيلية للمستخدم فوق الدور — يقلد UserPermission
+  // في Selim: JSON [{ resource, action, canViewAll?, canEditOwn? }]. الفارغ/null
+  // = الصلاحيات الفعالة الافتراضية للدور (نفس دلالة isDefault في المرجع).
+  permissions Json? @map("permissions")
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -164,6 +168,8 @@ model Product {
   // في لوحة التحكم تقارن الرصيد المتاح بهذا الحد (يقلد Item.reorderLevel).
   reorderLevel     Decimal? @db.Decimal(10, 4)
   barcode          String?  @unique
+  // SELIM-ERP W4 (SPRINT 94): فرع الصنف — اختياري (null = مشترك بين الفروع).
+  branchId         String?
   isActive       Boolean   @default(true)
   // E2: soft-delete — المنتج يُعلَّم كمحذوف بدل الحذف الفعلي (audit trail).
   deletedAt      DateTime?
@@ -171,6 +177,7 @@ model Product {
   updatedAt      DateTime  @updatedAt
 
   season      Season?          @relation(fields: [seasonId], references: [id])
+  branch      CompanyBranch?   @relation(fields: [branchId], references: [id], onDelete: SetNull)
   variants    ProductVariant[]
   bomVersions BomVersion[]
   // SELIM-ERP W1: بنود عروض الأسعار وأوامر القص على الموديل الرئيسي.
@@ -180,6 +187,7 @@ model Product {
   // E2: composite index على (isActive, deletedAt) — الفلتر المشترك في كل الاستعلامات.
   @@index([isActive, deletedAt])
   @@index([seasonId])
+  @@index([branchId])
   // audit-DB: ترتيب قوائم المنتجات زمنيًا (createdAt DESC).
   @@index([createdAt])
   @@map("products")
@@ -984,11 +992,14 @@ model SalesOrder {
   discount    Decimal          @default(0) @db.Decimal(10, 2)
   dueDate     DateTime?
   notes       String?
+  // SELIM-ERP W4 (SPRINT 93): الفرع الذي صدرت منه فاتورة البيع — اختياري.
+  branchId    String?
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
   customer  Customer          @relation(fields: [customerId], references: [id])
   user      User              @relation(fields: [userId], references: [id])
+  branch    CompanyBranch?    @relation(fields: [branchId], references: [id], onDelete: SetNull)
   items     SalesOrderItem[]
   payments  CustomerPayment[]
   shipments Shipment[]
@@ -1000,6 +1011,8 @@ model SalesOrder {
   @@index([status, createdAt])
   @@index([customerId])
   @@index([userId])
+  // SELIM-ERP W4: فلترة قوائم البيع حسب الفرع.
+  @@index([branchId])
   // audit-DB: تقارير ضريبة المبيعات حسب نسبة VAT للأمر.
   @@index([vatRate])
   @@map("sales_orders")
@@ -1097,11 +1110,14 @@ model PurchaseOrder {
   dueDate     DateTime?
   status      PurchaseOrderStatus @default(DRAFT)
   notes       String?
+  // SELIM-ERP W4 (SPRINT 93): الفرع الذي صدر عنه أمر الشراء — اختياري.
+  branchId    String?
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
 
   supplier Supplier            @relation(fields: [supplierId], references: [id])
   user     User                @relation(fields: [userId], references: [id])
+  branch   CompanyBranch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
   items    PurchaseOrderItem[]
   receipts PurchaseReceipt[]
   payments SupplierPayment[]
@@ -1110,6 +1126,8 @@ model PurchaseOrder {
 
   @@index([supplierId])
   @@index([userId])
+  // SELIM-ERP W4: فلترة قوائم المشتريات حسب الفرع.
+  @@index([branchId])
   // audit-DB: تعادل sales_orders — قوائم المشتريات تفلتر بالحالة وتُرتّب زمنيًا.
   @@index([status, createdAt])
   @@map("purchase_orders")
@@ -2203,4 +2221,30 @@ model Device {
   @@index([userId])
   @@index([lastSeenAt])
   @@map("devices")
+}
+
+// ---------------------------------------------------------------------------
+// SELIM-ERP W4: فروع الشركة — نقل CompanyBranch من Selim (SPRINT 89) مع
+// ربطها بالمستندات التشغيلية (SPRINT 93: مبيعات/مشتريات — SPRINT 94: أصناف).
+// تكييف أحادي المستأجر: لا companyId (المصنع واحد)، والعلاقة اختيارية
+// (branchId nullable) حتى تبقى المستندات القديمة والمسارات الخالية من
+// الفروع تعمل بلا تغيير.
+// ---------------------------------------------------------------------------
+model CompanyBranch {
+  id        String   @id @default(uuid())
+  name      String
+  address   String?
+  phone     String?
+  manager   String? // اسم مسؤول الفرع (نص حر كما في المرجع)
+  isMain    Boolean  @default(false)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  salesOrders    SalesOrder[]
+  purchaseOrders PurchaseOrder[]
+  products       Product[]
+
+  @@index([isActive])
+  @@map("company_branches")
 }

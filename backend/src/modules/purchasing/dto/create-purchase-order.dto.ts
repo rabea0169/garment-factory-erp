@@ -58,6 +58,15 @@ export class CreatePurchaseOrderDto {
   @IsUUID(undefined, { message: 'معرف المورد يجب أن يكون UUID صالحًا' })
   supplierId: string;
 
+  /** SELIM-ERP W4 (SPRINT 93): الفرع الصادر عنه أمر الشراء — اختياري. */
+  @ApiPropertyOptional({
+    example: 'uuid-of-branch',
+    description: 'معرف الفرع (اختياري — بلا فرع إن غاب)',
+  })
+  @IsUUID(undefined, { message: 'معرف الفرع يجب أن يكون UUID صالحًا' })
+  @IsOptional()
+  branchId?: string;
+
   @ApiProperty({
     enum: PaymentType,
     example: PaymentType.CASH,

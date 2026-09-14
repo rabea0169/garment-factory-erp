@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../router/app_router.dart';
-import '../../security/route_access.dart';
+import '../../security/effective_permissions.dart';
 
 /// درج "كل الأقسام" — نسخة دارت من درج المزيد في Selim ERP:
 /// BottomSheet قابل للسحب للإغلاق، حقل بحث، وشبكة أيقونات ملونة
@@ -11,7 +11,10 @@ import '../../security/route_access.dart';
 /// [role] يُمرَّر من المستدعي (الغلاف يعرف دور المستخدم من AuthCubit)
 /// بدل قراءته داخل الدرج — الدرج يُبنى على مستوى الـ Navigator الأعلى
 /// من شجرة المزود، فقراءة BlocProvider منه غير مضمونة.
-Future<void> showSelimMoreSheet(BuildContext context, {String? role}) {
+Future<void> showSelimMoreSheet(
+  BuildContext context, {
+  Map<String, dynamic>? user,
+}) {
   return showModalBottomSheet<void>(
     context: context,
     isScrollControlled: true,
@@ -19,15 +22,15 @@ Future<void> showSelimMoreSheet(BuildContext context, {String? role}) {
     shape: const RoundedRectangleBorder(
       borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
     ),
-    builder: (context) => _SelimMoreSheet(role: role ?? ''),
+    builder: (context) => _SelimMoreSheet(user: user),
   );
 }
 
 class _SelimMoreSheet extends StatefulWidget {
-  const _SelimMoreSheet({required this.role});
+  const _SelimMoreSheet({required this.user});
 
-  /// دور المستخدم الحالي — يُمرَّر من الغلاف (انظر doc الدالة أعلاه).
-  final String role;
+  /// مستخدم الجلسة (الدور + الصلاحيات الفعالة) — SELIM-ERP W4.
+  final Map<String, dynamic>? user;
 
   @override
   State<_SelimMoreSheet> createState() => _SelimMoreSheetState();
@@ -98,6 +101,8 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
         _MoreItem('سجل التدقيق', Icons.history_rounded, const Color(0xFF546E7A), AppRouter.auditLogs),
         _MoreItem('الأجهزة المسجلة', Icons.devices_rounded, const Color(0xFF00796B), AppRouter.devices),
         _MoreItem('طابور المزامنة', Icons.sync_rounded, const Color(0xFF00838F), AppRouter.offlineQueue),
+        // SELIM-ERP W4 — فروع الشركة (إدارة GM/SA).
+        _MoreItem('فروع الشركة', Icons.store_rounded, const Color(0xFF00695C), AppRouter.branches),
       ],
     ),
   ];
@@ -110,7 +115,7 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final role = widget.role;
+    final user = widget.user;
     final query = _search.text.trim();
     final groups =
         _allGroups
@@ -120,7 +125,7 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
                 group.icon,
                 group.color,
                 group.items
-                    .where((item) => RouteAccess.canAccess(item.route, role))
+                    .where((item) => canAccessWithUser(item.route, user))
                     .where(
                       (item) =>
                           query.isEmpty || item.label.contains(query),
