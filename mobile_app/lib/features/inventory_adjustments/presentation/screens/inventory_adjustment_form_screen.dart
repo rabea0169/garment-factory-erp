@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 /// نموذج إنشاء مسودة تسوية جرد (SELIM-ERP W1) — يفتح كنموذج ملء الشاشة
 /// من الزر العائم في شاشة التسويات.
@@ -96,18 +96,17 @@ class _InventoryAdjustmentFormScreenState extends State<InventoryAdjustmentFormS
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('تسوية جرد جديدة'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.save_rounded),
-            tooltip: 'حفظ',
-            onPressed: _saving ? null : _save,
-          ),
-        ],
-      ),
+    // UI-COMPLETE: الهيكل الموحد — زر الرجوع التلقائي + التنقل السفلي
+    // ولوحة الأوامر، مثل بقية الشاشات.
+    return SelimShellScaffold(
+      title: 'تسوية جرد جديدة',
+      actions: [
+        IconButton(
+          icon: const Icon(Icons.save_rounded),
+          tooltip: 'حفظ',
+          onPressed: _saving ? null : _save,
+        ),
+      ],
       body: Form(
         key: _formKey,
         child: ListView(

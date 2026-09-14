@@ -4,11 +4,11 @@ import 'package:intl/intl.dart';
 
 import '../../../../../core/constants/app_colors.dart';
 import '../../../../../core/widgets/app_feedback.dart';
+import '../../../../../core/widgets/selim/selim_shell.dart';
 import '../cubit/payrolls_cubit.dart';
 import '../cubit/payrolls_state.dart';
 import '../widgets/create_payroll_dialog.dart';
 import '../widgets/pay_payroll_dialog.dart';
-import '../../../../../core/navigation/back_navigation.dart';
 
 /// MOB-8 + GF-IMP-W3: شاشة كشوف الرواتب — قائمة كشوف GET /hr/payrolls مع
 /// مرشح حالة (الكل/مسودة/معتمد/مدفوع)، وتحويلها من عرض فقط إلى دورة
@@ -35,10 +35,15 @@ class _PayrollsView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('كشوف الرواتب'),
+    // UI-COMPLETE: الهيكل الموحد بدل Scaffold العادي — تنقل سفلي
+    // على الجوال وقضيب جانبي على الديسكتوب + لوحة أوامر (Ctrl+K) وجرس
+    // التنبيهات، مثل بقية شاشات التطبيق.
+    return SelimShellScaffold(
+      title: 'كشوف الرواتب',
+      fab: FloatingActionButton.extended(
+        onPressed: () => _showCreatePayrollDialog(context),
+        icon: const Icon(Icons.post_add),
+        label: const Text('كشف جديد'),
       ),
       body: Column(
         children: [
@@ -90,12 +95,6 @@ class _PayrollsView extends StatelessWidget {
             ),
           ),
         ],
-      ),
-      // GF-IMP-W3: إنشاء كشف راتب جديد (POST /hr/payrolls).
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showCreatePayrollDialog(context),
-        icon: const Icon(Icons.post_add),
-        label: const Text('كشف جديد'),
       ),
     );
   }

@@ -30,6 +30,7 @@ class SelimShellScaffold extends StatelessWidget implements PreferredSizeWidget 
     this.fab,
     this.currentRoute,
     this.actions,
+    this.bottom,
   });
 
   /// عنوان الشاشة في الـ AppBar.
@@ -46,6 +47,9 @@ class SelimShellScaffold extends StatelessWidget implements PreferredSizeWidget 
   /// أزرار إضافية في شريط التطبيق.
   final List<Widget>? actions;
 
+  /// شريط سفلي للـ AppBar (TabBar) — شاشات العمالة ذات التبويبات.
+  final PreferredSizeWidget? bottom;
+
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 
@@ -53,9 +57,9 @@ class SelimShellScaffold extends StatelessWidget implements PreferredSizeWidget 
   Widget build(BuildContext context) {
     final isWide = MediaQuery.sizeOf(context).width >= 1000;
     if (isWide) {
-      return _WideShell(title: title, body: body, fab: fab, actions: actions);
+      return _WideShell(title: title, body: body, fab: fab, actions: actions, bottom: bottom);
     }
-    return _MobileShell(title: title, body: body, fab: fab, actions: actions);
+    return _MobileShell(title: title, body: body, fab: fab, actions: actions, bottom: bottom);
   }
 }
 
@@ -97,12 +101,13 @@ List<SelimDestination> get allDestinations => [
 ];
 
 class _MobileShell extends StatelessWidget {
-  const _MobileShell({required this.title, required this.body, this.fab, this.actions});
+  const _MobileShell({required this.title, required this.body, this.fab, this.actions, this.bottom});
 
   final String title;
   final Widget body;
   final Widget? fab;
   final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
 
   @override
   Widget build(BuildContext context) {
@@ -140,6 +145,7 @@ class _MobileShell extends StatelessWidget {
               ),
               ...?actions,
             ],
+            bottom: bottom,
           ),
             body: body,
             floatingActionButton: fab,
@@ -294,12 +300,13 @@ class _MoreButton extends StatelessWidget {
 }
 
 class _WideShell extends StatelessWidget {
-  const _WideShell({required this.title, required this.body, this.fab, this.actions});
+  const _WideShell({required this.title, required this.body, this.fab, this.actions, this.bottom});
 
   final String title;
   final Widget body;
   final Widget? fab;
   final List<Widget>? actions;
+  final PreferredSizeWidget? bottom;
 
   @override
   Widget build(BuildContext context) {
@@ -329,6 +336,7 @@ class _WideShell extends StatelessWidget {
           ),
           ...?actions,
         ],
+        bottom: bottom,
       ),
       // RTL: القضيب الجانبي يظهر يمين الشاشة تلقائيًا في اتجاه عربي.
       body: Row(

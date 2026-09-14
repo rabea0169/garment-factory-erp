@@ -2,10 +2,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 import '../../../inventory/presentation/cubit/inventory_cubit.dart';
 import '../../../inventory/presentation/cubit/inventory_state.dart';
 import '../cubit/products_cubit.dart';
-import '../../../../core/navigation/back_navigation.dart';
 
 class AddProductScreen extends StatefulWidget {
   const AddProductScreen({super.key});
@@ -295,11 +295,10 @@ class _AddProductScreenState extends State<AddProductScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('إضافة منتج جديد'),
-      ),
+    // UI-COMPLETE: الهيكل الموحد — زر الرجوع التلقائي + التنقل السفلي
+    // ولوحة الأوامر، مثل بقية الشاشات.
+    return SelimShellScaffold(
+      title: 'إضافة منتج جديد',
       body: Form(
         key: _formKey,
         autovalidateMode: AutovalidateMode.onUserInteraction,
