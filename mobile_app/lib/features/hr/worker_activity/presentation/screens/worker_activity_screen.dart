@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../../core/constants/app_colors.dart';
@@ -42,6 +43,18 @@ class WorkerActivityScreen extends StatelessWidget {
           appBar: AppBar(
             leading: const GfBackButton(),
             title: Text('نشاط العامل${_titleSuffix()}'),
+            // SELIM-ERP W5: التقرير المجمّع بنطاق تاريخ من هنا مباشرة —
+            // push كشاشات التفاصيل (الرجوع يعود إلى هنا لا للوحة).
+            actions: [
+              IconButton(
+                tooltip: 'تقرير العامل المجمّع',
+                icon: const Icon(Icons.assessment),
+                onPressed: () => context.push(
+                  '/hr/workers/report/$workerId'
+                  '${(workerName == null || workerName!.isEmpty) ? '' : '?name=${Uri.encodeComponent(workerName!)}'}',
+                ),
+              ),
+            ],
             bottom: const TabBar(
               tabs: [
                 Tab(text: 'آخر السلف'),
