@@ -176,10 +176,15 @@ class _EntityExportButtonsState extends State<EntityExportButtons> {
   @override
   Widget build(BuildContext context) {
     // إخفاء ذاتي حين لا يملك الدور أي كيان مصرّح به (الخادم يظل الحَكَم).
-    // maybeOf: الشاشات المُختبرة بلا AuthCubit (اختبارات الوحدات) ترى
-    // الزر مخفيًا بدل انهيار ProviderNotFoundException — والدور نادرًا
+    // read داخل try: الشاشات المُختبرة بلا AuthCubit (اختبارات الوحدات)
+    // ترى الزر مخفيًا بدل انهيار ProviderNotFoundException — والدور نادرًا
     // ما يتغير أثناء جلسة قائمة، فالقراءة تكتفي.
-    final authCubit = BlocProvider.maybeOf<AuthCubit>(context);
+    AuthCubit? authCubit;
+    try {
+      authCubit = context.read<AuthCubit>();
+    } catch (_) {
+      // بلا مزوّد AuthCubit فوق هذا الزر — نُخفي الأزرار فقط.
+    }
     final authState = authCubit?.state;
     final role =
         authState is AuthAuthenticated ? authState.user['role']?.toString() : null;
