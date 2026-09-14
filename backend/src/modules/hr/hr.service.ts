@@ -36,6 +36,8 @@ import {
 } from '../../core/common/codes.util';
 import { PayrollQueryDto } from './dto/payroll-query.dto';
 import { WorkerPeriodQueryDto } from './dto/worker-period-query.dto';
+import { WorkerReportQueryDto } from './dto/worker-report-query.dto';
+import { round2 } from '../../core/common/money.util';
 type CreateWorkerInput = {
   name: string;
   phone?: string;
@@ -1399,6 +1401,331 @@ export class HrService {
       createdById: row.createdById,
       approvedById: row.approvedById,
       approvedAt: row.approvedAt,
+    };
+  }
+
+  // ----------------------------------------------------------------
+  // SELIM-ERP W5 — تقرير العامل المجمّع
+  // (نقل GET /api/worker-report/[id]?from=&to= من المرجع، بدلالات
+  // حسابات هذا المشروع — راجع docs/SELIM_REPLICATION.md قسم الموجة 5)
+  // ----------------------------------------------------------------
+
+  /**
+   * تحليل حد تاريخ صارم (YYYY-MM-DD أو ISO) مع إلحاق نهاية اليوم
+   * عند طلب ذلك — null عند صيغة غير صالحة (نفس سلوك المرجع: 400).
+   */
+  private static parseReportBoundary(
+    value: string,
+    endOfDay: boolean,
+  ): Date | null {
+    const trimmed = value.trim();
+    const isoDate = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+    if (isoDate) {
+      const year = Number(isoDate[1]);
+      const month = Number(isoDate[2]) - 1;
+      const day = Number(isoDate[3]);
+      const result = new Date(
+        Date.UTC(
+          year,
+          month,
+          day,
+          endOfDay ? 23 : 0,
+          endOfDay ? 59 : 0,
+          endOfDay ? 59 : 0,
+          endOfDay ? 999 : 0,
+        ),
+      );
+      if (
+        result.getUTCFullYear() !== year ||
+        result.getUTCMonth() !== month ||
+        result.getUTCDate() !== day
+      ) {
+        return null;
+      }
+      return result;
+    }
+    const parsed = new Date(trimmed);
+    if (Number.isNaN(parsed.getTime())) return null;
+    if (endOfDay) parsed.setUTCHours(23, 59, 59, 999);
+    return parsed;
+  }
+
+  /**
+   * التقرير: حركات الفترة (سلف/سندات قبض/حضور/إنتاج/رواتب) + ملخص
+   * مجاميعها + الرصيد الافتتاحي والختامي للعامل.
+   *
+   * **دلالات الرصيد في هذا المشروع** (تكييف عن المرجع — اتجاه سندات
+   * القبض معكوس): سند القبض عندنا Cr WORKER_ADVANCES أي استرداد نقدي
+   * **من** العامل يخفض دين سلفه، بينما سندات المرجع مدفوعات **إلى**
+   * العامل تُخصم من مستحقاته. لذا:
+   *
+   *   net(حتى لحظة) = Σ(سلف غير مسوية) − Σ(سندات قبض) − Σ(رواتب
+   *   APPROVED غير مدفوعة netAmount)
+   *
+   *   net > 0 → العامل مدين للشركة؛ net < 0 → الشركة مدينة للعامل.
+   * لا يوجد رصيد افتتاحي مزروع يدويًا (لا حقل openingBalance على
+   * Worker) — الافتتاحي يُحسب من الحركات قبل «من» فقط.
+   */
+  async getWorkerReport(
+    id: string,
+    query: WorkerReportQueryDto,
+    viewerRole?: UserRole,
+  ) {
+    let fromBound: Date | null = null;
+    let toBound: Date | null = null;
+    if (query.from) {
+      fromBound = HrService.parseReportBoundary(query.from, false);
+      if (!fromBound) {
+        throw new BadRequestException('تاريخ "من" غير صحيح');
+      }
+    }
+    if (query.to) {
+      toBound = HrService.parseReportBoundary(query.to, true);
+      if (!toBound) {
+        throw new BadRequestException('تاريخ "إلى" غير صحيح');
+      }
+    }
+    if (fromBound && toBound && fromBound > toBound) {
+      throw new BadRequestException('تاريخ البداية يجب ألا يتجاوز النهاية');
+    }
+
+    const identityVisible = isHrIdentityRole(viewerRole);
+    const worker = await this.prisma.worker.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        ...(identityVisible ? { phone: true, nationalId: true } : {}),
+        specialty: true,
+        pieceRate: true,
+        isActive: true,
+        hireDate: true,
+      },
+    });
+    if (!worker) throw new NotFoundException('العامل غير موجود');
+
+    // فلاتر الفترة: (من صباح أول يوم .. إلى آخر لحظة آخر يوم).
+    const inRange = {
+      ...(fromBound || toBound
+        ? {
+            date: {
+              ...(fromBound ? { gte: fromBound } : {}),
+              ...(toBound ? { lte: toBound } : {}),
+            },
+          }
+        : {}),
+    };
+    const asOfEnd = {
+      ...(toBound ? { date: { lte: toBound } } : {}),
+    };
+    const beforeStart = {
+      ...(fromBound ? { date: { lt: fromBound } } : {}),
+    };
+    // الرواتب تُنسب لنهاية فترتها (الكشف يسوّي إنتاج الفترة عند نهايتها).
+    const payrollInRange = {
+      ...(fromBound || toBound
+        ? {
+            periodEnd: {
+              ...(fromBound ? { gte: fromBound } : {}),
+              ...(toBound ? { lte: toBound } : {}),
+            },
+          }
+        : {}),
+    };
+    const payrollAsOfEnd = {
+      ...(toBound ? { periodEnd: { lte: toBound } } : {}),
+    };
+    const payrollBeforeStart = {
+      ...(fromBound ? { periodEnd: { lt: fromBound } } : {}),
+    };
+
+    // سقف القوائم كالمرجع (تقرير قراءة — لا ترقيم).
+    const LIST_CAP = 500;
+
+    const [
+      advances,
+      receipts,
+      attendance,
+      productions,
+      payrolls,
+      asOfAdvances,
+      asOfReceipts,
+      asOfPayrolls,
+      beforeAdvances,
+      beforeReceipts,
+      beforePayrolls,
+    ] = await this.prisma.$transaction([
+      this.prisma.workerAdvance.findMany({
+        where: { workerId: id, ...inRange },
+        orderBy: { date: 'desc' },
+        take: LIST_CAP,
+        select: {
+          id: true,
+          amount: true,
+          settledAmount: true,
+          date: true,
+          notes: true,
+        },
+      }),
+      this.prisma.workerReceipt.findMany({
+        where: { workerId: id, ...inRange },
+        orderBy: { date: 'desc' },
+        take: LIST_CAP,
+        select: {
+          id: true,
+          code: true,
+          amount: true,
+          date: true,
+          notes: true,
+          treasuryId: true,
+        },
+      }),
+      this.prisma.attendance.findMany({
+        where: { workerId: id, ...inRange },
+        orderBy: { date: 'desc' },
+        take: LIST_CAP,
+        select: { id: true, date: true, isPresent: true, notes: true },
+      }),
+      this.prisma.dailyProduction.findMany({
+        where: { workerId: id, ...inRange },
+        orderBy: { date: 'desc' },
+        take: LIST_CAP,
+        select: {
+          id: true,
+          date: true,
+          piecesCount: true,
+          workOrderId: true,
+        },
+      }),
+      this.prisma.payroll.findMany({
+        where: { workerId: id, ...payrollInRange },
+        orderBy: { periodEnd: 'desc' },
+        take: LIST_CAP,
+        select: {
+          id: true,
+          periodStart: true,
+          periodEnd: true,
+          grossAmount: true,
+          advanceDeduct: true,
+          absenceDeduct: true,
+          netAmount: true,
+          status: true,
+          isPaid: true,
+        },
+      }),
+      // مواضع الرصيد الختامي (حتى نهاية الفترة).
+      this.prisma.workerAdvance.findMany({
+        where: { workerId: id, ...asOfEnd },
+        select: { amount: true, settledAmount: true },
+      }),
+      this.prisma.workerReceipt.findMany({
+        where: { workerId: id, ...asOfEnd },
+        select: { amount: true },
+      }),
+      this.prisma.payroll.findMany({
+        where: {
+          workerId: id,
+          ...payrollAsOfEnd,
+          status: PayrollStatus.APPROVED,
+          isPaid: false,
+        },
+        select: { netAmount: true },
+      }),
+      // مواضع الرصيد الافتتاحي (قبل بداية الفترة).
+      this.prisma.workerAdvance.findMany({
+        where: { workerId: id, ...beforeStart },
+        select: { amount: true, settledAmount: true },
+      }),
+      this.prisma.workerReceipt.findMany({
+        where: { workerId: id, ...beforeStart },
+        select: { amount: true },
+      }),
+      this.prisma.payroll.findMany({
+        where: {
+          workerId: id,
+          ...payrollBeforeStart,
+          status: PayrollStatus.APPROVED,
+          isPaid: false,
+        },
+        select: { netAmount: true },
+      }),
+    ]);
+
+    const unsettledOf = (
+      rows: { amount: Prisma.Decimal; settledAmount: Prisma.Decimal }[],
+    ) =>
+      rows.reduce(
+        (sum, row) =>
+          sum +
+          Math.max(0, row.amount.toNumber() - row.settledAmount.toNumber()),
+        0,
+      );
+    const sumOf = (rows: { amount: Prisma.Decimal }[]) =>
+      rows.reduce((sum, row) => sum + row.amount.toNumber(), 0);
+    const netOf = (
+      advanceRows: { amount: Prisma.Decimal; settledAmount: Prisma.Decimal }[],
+      receiptRows: { amount: Prisma.Decimal }[],
+      payrollRows: { netAmount: Prisma.Decimal }[],
+    ) =>
+      round2(
+        unsettledOf(advanceRows) -
+          sumOf(receiptRows) -
+          payrollRows.reduce((sum, row) => sum + row.netAmount.toNumber(), 0),
+      );
+
+    const pieceRate = worker.pieceRate.toNumber();
+    const totalPieces = productions.reduce(
+      (sum, row) => sum + row.piecesCount,
+      0,
+    );
+    const totalAdvances = sumOf(advances);
+    const totalReceipts = sumOf(receipts);
+    const totalGross = payrolls.reduce(
+      (sum, row) => sum + row.grossAmount.toNumber(),
+      0,
+    );
+    const totalAdvanceDeduct = payrolls.reduce(
+      (sum, row) => sum + row.advanceDeduct.toNumber(),
+      0,
+    );
+    const totalNet = payrolls.reduce(
+      (sum, row) => sum + row.netAmount.toNumber(),
+      0,
+    );
+
+    return {
+      worker: {
+        ...worker,
+        pieceRate,
+      },
+      range: { from: query.from ?? null, to: query.to ?? null },
+      summary: {
+        totalAdvances: round2(totalAdvances),
+        totalReceipts: round2(totalReceipts),
+        totalPieces,
+        productionValue: round2(totalPieces * pieceRate),
+        payrollCount: payrolls.length,
+        totalGross: round2(totalGross),
+        totalAdvanceDeduct: round2(totalAdvanceDeduct),
+        totalNet: round2(totalNet),
+        presentDays: attendance.filter((row) => row.isPresent).length,
+        absentDays: attendance.filter((row) => !row.isPresent).length,
+        totalAttendanceDays: attendance.length,
+        // موجب: العامل مدين للشركة؛ سالب: الشركة مدينة للعامل.
+        openingNet: netOf(beforeAdvances, beforeReceipts, beforePayrolls),
+        closingNet: netOf(asOfAdvances, asOfReceipts, asOfPayrolls),
+        unsettledAdvancesAsOf: round2(unsettledOf(asOfAdvances)),
+        receiptsTotalAsOf: round2(sumOf(asOfReceipts)),
+        unpaidApprovedNetAsOf: round2(
+          asOfPayrolls.reduce((sum, row) => sum + row.netAmount.toNumber(), 0),
+        ),
+      },
+      advances,
+      receipts,
+      attendance,
+      productions,
+      payrolls,
     };
   }
 }

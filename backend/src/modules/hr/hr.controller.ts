@@ -21,6 +21,7 @@ import { PayPayrollDto } from './dto/pay-payroll.dto';
 import { RecordProductionDto } from './dto/record-production.dto';
 import { PayrollQueryDto } from './dto/payroll-query.dto';
 import { WorkerPeriodQueryDto } from './dto/worker-period-query.dto';
+import { WorkerReportQueryDto } from './dto/worker-report-query.dto';
 import { HrService } from './hr.service';
 
 @ApiTags('HR (الموارد البشرية والعمال)')
@@ -68,6 +69,21 @@ export class HrController {
     @CurrentUser('role') viewerRole?: UserRole,
   ) {
     return this.hrService.getWorkerDetails(id, viewerRole);
+  }
+
+  // SELIM-ERP W5 — تقرير العامل المجمّع (نقل worker-report من المرجع):
+  // حركات الفترة + الملخص + الرصيد الافتتاحي/الختامي. HR/GM فقط.
+  @Get('workers/:id/report')
+  @Roles(UserRole.HR_MANAGER, UserRole.GENERAL_MANAGER)
+  @ApiOperation({
+    summary: 'تقرير عامل مجمّع بنطاق تاريخ (سلف/سندات/حضور/إنتاج/رواتب)',
+  })
+  async getWorkerReport(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Query() query: WorkerReportQueryDto,
+    @CurrentUser('role') viewerRole?: UserRole,
+  ) {
+    return this.hrService.getWorkerReport(id, query, viewerRole);
   }
 
   @Post('attendance')

@@ -1365,3 +1365,213 @@ describe('HrService — GF-IMP-W3 (HR-4/5/6/7/8)', () => {
     });
   });
 });
+
+describe('HrService — SELIM-ERP W5 (تقرير العامل المجمّع)', () => {
+  let service: HrService;
+  let prisma: HrPrismaMock;
+  let financial: { postJournalEntryInTx: jest.Mock };
+
+  const workerRow = {
+    id: 'worker-r',
+    code: 'WKR-0001',
+    name: 'عامل القص',
+    phone: '01000000000',
+    nationalId: '29901011234567',
+    specialty: WorkerSpecialty.CUTTING,
+    pieceRate: new Prisma.Decimal('5.5'),
+    isActive: true,
+    hireDate: new Date('2026-01-01T00:00:00.000Z'),
+  };
+
+  const advance = (amount: string, settled: string) => ({
+    id: `adv-${amount}`,
+    amount: new Prisma.Decimal(amount),
+    settledAmount: new Prisma.Decimal(settled),
+    date: new Date('2026-09-05T10:00:00.000Z'),
+    notes: null,
+  });
+  const receipt = (amount: string) => ({
+    id: `rcp-${amount}`,
+    code: 'WRC-0001',
+    amount: new Prisma.Decimal(amount),
+    date: new Date('2026-09-06T10:00:00.000Z'),
+    notes: null,
+    treasuryId: null,
+  });
+  const payrollRow = {
+    id: 'pay-r',
+    periodStart: new Date('2026-09-01T00:00:00.000Z'),
+    periodEnd: new Date('2026-09-30T00:00:00.000Z'),
+    grossAmount: new Prisma.Decimal('1000'),
+    advanceDeduct: new Prisma.Decimal('100'),
+    absenceDeduct: new Prisma.Decimal('0'),
+    netAmount: new Prisma.Decimal('900'),
+    status: PayrollStatus.APPROVED,
+    isPaid: false,
+  };
+
+  beforeEach(() => {
+    prisma = createHrPrismaMock();
+    financial = { postJournalEntryInTx: jest.fn() };
+    // تقرير العامل يستخدم شكل المصفوفة من $transaction (قراءة متوازية).
+    prisma.$transaction.mockImplementation((operations: unknown[]) =>
+      Array.isArray(operations) ? Promise.all(operations) : operations,
+    );
+    prisma.worker.findUnique.mockResolvedValue(workerRow);
+    service = new HrService(
+      prisma as unknown as PrismaService,
+      financial as unknown as FinancialPostingService,
+    );
+  });
+
+  it('W5: تاريخ «من» غير صالح → 400 برسالة المرجع نفسها', async () => {
+    await expect(
+      service.getWorkerReport('worker-r', { from: 'not-a-date' }),
+    ).rejects.toThrow(new BadRequestException('تاريخ "من" غير صحيح'));
+  });
+
+  it('W5: تاريخ «إلى» غير صالح → 400', async () => {
+    await expect(
+      service.getWorkerReport('worker-r', { to: '2026-13-45' }),
+    ).rejects.toThrow(new BadRequestException('تاريخ "إلى" غير صحيح'));
+  });
+
+  it('W5: البداية بعد النهاية → 400', async () => {
+    await expect(
+      service.getWorkerReport('worker-r', {
+        from: '2026-09-20',
+        to: '2026-09-01',
+      }),
+    ).rejects.toThrow(
+      new BadRequestException('تاريخ البداية يجب ألا يتجاوز النهاية'),
+    );
+  });
+
+  it('W5: عامل غير موجود → 404', async () => {
+    prisma.worker.findUnique.mockResolvedValue(null);
+    await expect(service.getWorkerReport('worker-x', {})).rejects.toThrow(
+      new NotFoundException('العامل غير موجود'),
+    );
+  });
+
+  it('W5: التقرير الكامل — مجاميع الفترة والرصيدان بدلالات المشروع', async () => {
+    // قوائم الفترة.
+    prisma.workerAdvance.findMany.mockImplementation(
+      ({ orderBy }: { orderBy?: unknown }) =>
+        orderBy
+          ? [advance('100', '40'), advance('60', '60')]
+          : [advance('100', '40')],
+    );
+    prisma.workerReceipt.findMany.mockImplementation(
+      ({ orderBy }: { orderBy?: unknown }) => (orderBy ? [receipt('30')] : []),
+    );
+    prisma.attendance.findMany.mockResolvedValue([
+      { id: 'a1', date: new Date('2026-09-02'), isPresent: true, notes: null },
+      { id: 'a2', date: new Date('2026-09-03'), isPresent: true, notes: null },
+      {
+        id: 'a3',
+        date: new Date('2026-09-04'),
+        isPresent: false,
+        notes: 'غياب',
+      },
+    ]);
+    prisma.dailyProduction.findMany.mockResolvedValue([
+      {
+        id: 'p1',
+        date: new Date('2026-09-02'),
+        piecesCount: 20,
+        workOrderId: null,
+      },
+      {
+        id: 'p2',
+        date: new Date('2026-09-03'),
+        piecesCount: 10,
+        workOrderId: null,
+      },
+    ]);
+    prisma.payroll.findMany.mockImplementation(
+      ({
+        orderBy,
+        where,
+      }: {
+        orderBy?: unknown;
+        where?: { status?: unknown };
+      }) => (orderBy ? [payrollRow] : where?.status ? [payrollRow] : []),
+    );
+
+    const report = await service.getWorkerReport(
+      'worker-r',
+      { from: '2026-09-01', to: '2026-09-30' },
+      UserRole.HR_MANAGER,
+    );
+
+    // الهوية تظهر لأدوار HR (HR-8).
+    expect(report.worker.phone).toBe('01000000000');
+    expect(report.worker.nationalId).toBe('29901011234567');
+
+    const summary = report.summary;
+    expect(summary.totalAdvances).toBe(160);
+    expect(summary.totalReceipts).toBe(30);
+    expect(summary.totalPieces).toBe(30);
+    // 30 قطعة × أجر القطعة 5.5 = 165.
+    expect(summary.productionValue).toBe(165);
+    expect(summary.payrollCount).toBe(1);
+    expect(summary.totalGross).toBe(1000);
+    expect(summary.totalAdvanceDeduct).toBe(100);
+    expect(summary.totalNet).toBe(900);
+    expect(summary.presentDays).toBe(2);
+    expect(summary.absentDays).toBe(1);
+    expect(summary.totalAttendanceDays).toBe(3);
+    // الافتتاحي: سلف غير مسوية 50 قبل الفترة (workerAdvance.findMany
+    // بلا orderBy يعيد مواضع asOf/before عبر mockImplementation موحد).
+    // هنا beforeStart يعيد [] للسندات/الرواتب — والافتتاحي = 50 − 0 − 0.
+    expect(summary.unsettledAdvancesAsOf).toBe(60);
+    expect(summary.receiptsTotalAsOf).toBe(0);
+    expect(summary.unpaidApprovedNetAsOf).toBe(900);
+    // الختامي: 60 سلفًا غير مسوية − 0 سندات (asOf بلا تاريخ قبل نطاق
+    // الاستعلام يقيدها lte) − 900 رواتب مستحقة = −840 (مدينون للعامل).
+    // ملاحظة: الموك يوجّه asOfReceipts/asOfPayrolls إلى الفرع بلا orderBy —
+    // راجع mockImplementation أعلاه (workerReceipt/asOf → []). الرواتب
+    // asOf تأتي من فرع where.status (APPROVED غير مدفوعة) = 900.
+    expect(summary.closingNet).toBe(-840);
+    expect(report.range).toEqual({ from: '2026-09-01', to: '2026-09-30' });
+  });
+
+  it('W5: بلا نطاق — كل التاريخ (لا فلاتر تاريخ في الاستعلامات)', async () => {
+    prisma.workerAdvance.findMany.mockResolvedValue([]);
+    prisma.workerReceipt.findMany.mockResolvedValue([]);
+    prisma.attendance.findMany.mockResolvedValue([]);
+    prisma.dailyProduction.findMany.mockResolvedValue([]);
+    prisma.payroll.findMany.mockResolvedValue([]);
+
+    const report = await service.getWorkerReport('worker-r', {});
+
+    expect(report.range).toEqual({ from: null, to: null });
+    expect(report.summary.totalAdvances).toBe(0);
+    expect(report.summary.closingNet).toBe(0);
+    // استعلام القوائم بلا فلتر تاريخ (where.date غائب — يبقى workerId).
+    const advanceListCalls = prisma.workerAdvance.findMany.mock
+      .calls as unknown as [
+      [{ orderBy?: unknown; where?: { date?: unknown } }],
+    ];
+    const advanceListCall = advanceListCalls.find((call) => call[0].orderBy);
+    expect(advanceListCall?.[0].where?.date).toBeUndefined();
+  });
+
+  it('W5: غير أدوار HR — حقول الهوية لا تُطلب من القاعدة (HR-8)', async () => {
+    prisma.workerAdvance.findMany.mockResolvedValue([]);
+    prisma.workerReceipt.findMany.mockResolvedValue([]);
+    prisma.attendance.findMany.mockResolvedValue([]);
+    prisma.dailyProduction.findMany.mockResolvedValue([]);
+    prisma.payroll.findMany.mockResolvedValue([]);
+
+    await service.getWorkerReport('worker-r', {}, UserRole.CASHIER);
+
+    const workerCalls = prisma.worker.findUnique.mock.calls as unknown as [
+      [{ select: Record<string, unknown> }],
+    ];
+    const select = workerCalls[0][0].select;
+    expect(select.nationalId).toBeUndefined();
+    expect(select.phone).toBeUndefined();
+  });
+});
