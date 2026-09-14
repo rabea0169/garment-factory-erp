@@ -322,15 +322,21 @@ class _FactorySettingsScreenState extends State<FactorySettingsScreen> {
             ListTile(
               title: const Text('نسبة الضريبة (%)',
                   style: TextStyle(fontFamily: 'Cairo')),
-              subtitle: Slider(
-                value: _taxRate,
-                max: 100,
-                divisions: 100,
-                label: '${_taxRate.round()}%',
-                activeTrackColor: AppColors.primary,
-                onChanged: _readOnly
-                    ? null
-                    : (value) => setState(() => _taxRate = value),
+              subtitle: SliderTheme(
+                // SliderTheme مستقر عبر الإصدارات (activeColor أُهملت
+                // وبديلها المباشر غير متاح في كل الإصدارات).
+                data: const SliderThemeData(
+                  activeTrackColor: AppColors.primary,
+                ),
+                child: Slider(
+                  value: _taxRate,
+                  max: 100,
+                  divisions: 100,
+                  label: '${_taxRate.round()}%',
+                  onChanged: _readOnly
+                      ? null
+                      : (value) => setState(() => _taxRate = value),
+                ),
               ),
               trailing: Text(
                 '${_taxRate.round()}%',

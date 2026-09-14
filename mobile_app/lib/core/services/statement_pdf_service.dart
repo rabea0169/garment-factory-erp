@@ -12,7 +12,7 @@ import 'package:printing/printing.dart';
 import '../../../features/financial_reports/presentation/cubit/party_statement_cubit.dart';
 import '../../../features/financial_reports/presentation/widgets/statement_page_widget.dart';
 import 'factory_settings_cache.dart';
-import 'file_name_sanitizer.dart';
+import '../utils/file_name_sanitizer.dart';
 
 /// SELIM-ERP W3 — تصدير كشف الحساب إلى PDF بمحرك Flutter نفسه.
 ///
@@ -33,13 +33,13 @@ class StatementPdfService {
     required BuildContext context,
     required PartyStatement statement,
   }) async {
+    // نلتقط الـ Overlay أولًا — قبل أي await — استعمال لاحق آمن.
+    final overlay = Overlay.maybeOf(context, rootOverlay: true);
+    if (overlay == null) return null;
+
     final settings = await FactorySettingsCache.instance.load();
     final pages = chunkStatementRows(statement.movements);
     final totalPages = pages.length;
-
-    // نلتقط الـ Overlay مرة واحدة قبل أي await — استعمال لاحق آمن.
-    final overlay = Overlay.maybeOf(context, rootOverlay: true);
-    if (overlay == null) return null;
 
     final document = pw.Document(
       title: 'كشف حساب ${statement.name}',
