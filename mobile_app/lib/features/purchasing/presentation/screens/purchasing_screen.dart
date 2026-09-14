@@ -3,6 +3,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/purchasing_cubit.dart';
 import '../../../../core/navigation/back_navigation.dart';
 
@@ -19,6 +20,8 @@ class PurchasingScreen extends StatelessWidget {
           leading: const GfBackButton(),
           title: const Text('المشتريات والاستلام'),
           actions: [
+            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+            const EntityExportButtons(entities: ['purchases']),
             IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'تحديث',

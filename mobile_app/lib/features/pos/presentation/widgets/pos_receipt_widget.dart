@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 
+import '../../../../core/services/factory_settings_cache.dart';
 import '../cubit/pos_cubit.dart';
 
 /// SELIM-ERP W2 — إيصار نقطة البيع الحراري (Widget يُطبع عبر printWidget).
@@ -12,19 +13,43 @@ class PosReceiptWidget extends StatelessWidget {
   const PosReceiptWidget({
     super.key,
     required this.receipt,
-    this.storeName = 'مصنع الملابس الجاهزة',
-    this.storePhone = '',
+    this.storeName,
+    this.storePhone,
     this.cashierName,
   });
 
   final PosReceipt receipt;
-  final String storeName;
-  final String storePhone;
+
+  /// اسم المتجر: null = من إعدادات المصنع (SELIM-ERP W3 — الأسبقية
+  /// على الثابت القديم؛ تمرير قيمة يستخدمها كما هي (الاختبارات).
+  final String? storeName;
+  final String? storePhone;
   final String? cashierName;
 
   @override
   Widget build(BuildContext context) {
     final now = receipt.createdAt ?? DateTime.now();
+    // SELIM-ERP W3: الترويسة من إعدادات المصنع (تُجلب مرة ثم تُخزَّن).
+    return FutureBuilder<FactorySettings>(
+      future: FactorySettingsCache.instance.load(),
+      builder: (context, snapshot) {
+        final settings = snapshot.data;
+        return _buildReceipt(
+          context,
+          now,
+          storeName ?? settings?.factoryName ?? 'مصنع الملابس الجاهزة',
+          storePhone ?? settings?.phone ?? '',
+        );
+      },
+    );
+  }
+
+  Widget _buildReceipt(
+    BuildContext context,
+    DateTime now,
+    String resolvedStoreName,
+    String resolvedStorePhone,
+  ) {
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Container(
@@ -37,7 +62,7 @@ class PosReceiptWidget extends StatelessWidget {
           children: [
             Center(
               child: Text(
-                storeName,
+                resolvedStoreName,
                 style: const TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.w800,
@@ -45,10 +70,10 @@ class PosReceiptWidget extends StatelessWidget {
                 ),
               ),
             ),
-            if (storePhone.isNotEmpty)
+            if (resolvedStorePhone.isNotEmpty)
               Center(
                 child: Text(
-                  storePhone,
+                  resolvedStorePhone,
                   style: const TextStyle(fontSize: 11, color: Colors.black),
                 ),
               ),

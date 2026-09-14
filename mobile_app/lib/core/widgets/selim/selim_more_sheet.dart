@@ -61,6 +61,7 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
         _MoreItem('المصاريف', Icons.payments_rounded, const Color(0xFFC62828), AppRouter.expenses),
         _MoreItem('الحسابات والقيود', Icons.account_tree_rounded, const Color(0xFF0277BD), AppRouter.accounting),
         _MoreItem('التقارير المالية', Icons.assessment_rounded, const Color(0xFF1565C0), AppRouter.financialReports),
+        _MoreItem('مراكز التكلفة', Icons.pie_chart_rounded, const Color(0xFF6D4C41), AppRouter.costCenters),
       ],
     ),
     _MoreGroup(
@@ -92,6 +93,11 @@ class _SelimMoreSheetState extends State<_SelimMoreSheet> {
         _MoreItem('مركز الطباعة', Icons.print_rounded, const Color(0xFFE65100), AppRouter.printing),
         _MoreItem('المستخدمون', Icons.manage_accounts_rounded, const Color(0xFF37474F), AppRouter.users),
         _MoreItem('الشحن والتوزيع', Icons.local_shipping_rounded, const Color(0xFF00695C), AppRouter.shipping),
+        // SELIM-ERP W3 — إدارة النظام الموسعة.
+        _MoreItem('إعدادات المصنع', Icons.tune_rounded, const Color(0xFF455A64), AppRouter.factorySettings),
+        _MoreItem('سجل التدقيق', Icons.history_rounded, const Color(0xFF546E7A), AppRouter.auditLogs),
+        _MoreItem('الأجهزة المسجلة', Icons.devices_rounded, const Color(0xFF00796B), AppRouter.devices),
+        _MoreItem('طابور المزامنة', Icons.sync_rounded, const Color(0xFF00838F), AppRouter.offlineQueue),
       ],
     ),
   ];

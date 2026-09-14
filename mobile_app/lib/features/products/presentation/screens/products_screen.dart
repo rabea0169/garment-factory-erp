@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/widgets/app_feedback.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/products_cubit.dart';
 import '../cubit/products_state.dart';
 import 'add_product_screen.dart';
@@ -20,6 +21,8 @@ class ProductsScreen extends StatelessWidget {
           leading: const GfBackButton(),
           title: const Text('دليل المنتجات (الكتالوج)'),
           actions: [
+            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+            const EntityExportButtons(entities: ['products']),
             Builder(
               builder: (ctx) => IconButton(
                 icon: const Icon(Icons.refresh),

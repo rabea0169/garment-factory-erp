@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -6,6 +8,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/device_registration_service.dart';
 import '../../../../core/navigation/double_back_exit_guard.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/security/route_access.dart';
@@ -34,6 +37,13 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   final _exitGuard = DoubleBackExitGuard();
+
+  @override
+  void initState() {
+    super.initState();
+    // SELIM-ERP W3: تسجيل الجهاز بعد الدخول (فشل صمت — تتبع تشغيلي).
+    unawaited(DeviceRegistrationService.instance.registerOnce());
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -225,6 +235,8 @@ class _DashboardContent extends StatelessWidget {
             _buildKpiGrid(context),
             const SizedBox(height: 24),
             _buildProductionChart(context),
+            const SizedBox(height: 24),
+            _buildExpensesChart(context),
             const SizedBox(height: 24),
             _buildTopWorkers(context),
           ],
@@ -578,6 +590,108 @@ class _DashboardContent extends StatelessWidget {
             minY: 0,
             maxY: maxY == 0 ? 1 : maxY.toDouble(),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// SELIM-ERP W3: مصاريف الفترة حسب البند (دائري — مرآة
+  /// expensesByCategory في /api/dashboard/charts عند Selim).
+  Widget _buildExpensesChart(BuildContext context) {
+    final raw = stats['expensesByCategory'];
+    final categories = <(String, double)>[];
+    if (raw is List) {
+      for (final row in raw) {
+        if (row is Map) {
+          final label = row['category']?.toString() ?? 'غير مصنف';
+          final amount = double.tryParse(
+                row['amount']?.toString() ?? '0',
+              ) ??
+              0;
+          if (amount > 0) categories.add((label, amount));
+        }
+      }
+    }
+    if (categories.isEmpty) {
+      return const SizedBox.shrink();
+    }
+    final total = categories.fold<double>(0, (sum, c) => sum + c.$2);
+    const palette = <Color>[
+      Color(0xFF00897B),
+      Color(0xFF3949AB),
+      Color(0xFFC62828),
+      Color(0xFFEF6C00),
+      Color(0xFF6D4C41),
+      Color(0xFF00838F),
+    ];
+    return _sectionCard(
+      context,
+      title: 'توزيع المصاريف حسب البند',
+      child: SizedBox(
+        height: 220,
+        child: Row(
+          children: [
+            Expanded(
+              child: PieChart(
+                PieChartData(
+                  sectionsSpace: 2,
+                  centerSpaceRadius: 40,
+                  sections: [
+                    for (var i = 0; i < categories.length && i < 6; i++)
+                      PieChartSectionData(
+                        value: categories[i].$2,
+                        color: palette[i % palette.length],
+                        radius: 46,
+                        title:
+                            '${(categories[i].$2 / total * 100).round()}%',
+                        titleStyle: const TextStyle(
+                          fontFamily: 'Cairo',
+                          fontSize: 11,
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  for (var i = 0; i < categories.length && i < 6; i++)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 10,
+                            height: 10,
+                            decoration: BoxDecoration(
+                              color: palette[i % palette.length],
+                              shape: BoxShape.circle,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              categories[i].$1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontFamily: 'Cairo',
+                                fontSize: 12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -196,6 +196,33 @@ class RouteAccess {
     '/backup': {
       AppRoles.superAdmin,
     },
+    // --- SELIM-ERP W3: مرآة أدوار الخادم للمسارات الجديدة ---
+    // أجهزة التطبيق: قائمة الأجهزة GM/SA (تسجيل/نبضة متاحة للكل خادميًا
+    // لكن الشاشة تعرض القائمة).
+    '/devices': {
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // مراكز التكلفة: ACC/GM/SA (نفس أدوار accounting الخادمية).
+    '/cost-centers': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.superAdmin,
+    },
+    // كشف حساب عميل: ACC/GM/CASHIER/SA (نفس financial-reports).
+    '/statement/customer': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.cashier,
+      AppRoles.superAdmin,
+    },
+    // كشف حساب مورد: ACC/GM/INV/SA (نفس financial-reports).
+    '/statement/supplier': {
+      AppRoles.accountant,
+      AppRoles.generalManager,
+      AppRoles.inventoryManager,
+      AppRoles.superAdmin,
+    },
   };
 
   /// هل يملك [role] صلاحية الوصول إلى [location]؟
