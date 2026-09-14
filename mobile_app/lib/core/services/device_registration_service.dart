@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
@@ -54,13 +56,31 @@ class DeviceRegistrationService {
   }
 
   /// يفتح صندوق الإعدادات بأمان (null عند تعطل التخزين).
+  ///
+  /// ملحوظة تقنية (نفسها في OutboxService.init): عند فشل openBox
+  /// يُكمل Hive مُكملًا داخليًا بلا مستمعين — يظهر كخطأ غير معالج في
+  /// الاختبارات مهما أحطنا الاستدعاء بمصائد — لذا ننتظره داخل zone
+  /// محرس يبتلع الخطأ، والفشل الفعلي يُعاد null.
   Future<Box?> _openSettings() async {
-    try {
-      if (_hive.isBoxOpen(settingsBox)) return _hive.box(settingsBox);
-      return await _hive.openBox(settingsBox);
-    } catch (_) {
+    if (_hive.isBoxOpen(settingsBox)) return _hive.box(settingsBox);
+    Box? opened;
+    Object? failure;
+    await runZonedGuarded(() async {
+      try {
+        opened = await _hive.openBox(settingsBox);
+      } catch (error) {
+        failure = error;
+      }
+    }, (Object error, StackTrace stack) {
+      // يُبتلع عمدًا — انظر التعليق أعلاه (سلوك Hive الموثق).
+    });
+    if (opened == null) {
+      // فشل صامت للتسجيل (تشخيص فقط) — التتبع تحسين لا وظيفة.
+      debugPrint('DeviceRegistrationService: تعذر فتح صندوق الإعدادات: '
+          '$failure');
       return null;
     }
+    return opened;
   }
 
   /// يسجّل الجهاز مرة واحدة لكل تشغيل (POST /system/devices/register).

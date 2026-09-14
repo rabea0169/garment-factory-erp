@@ -42,7 +42,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
   void initState() {
     super.initState();
     // SELIM-ERP W3: تسجيل الجهاز بعد الدخول (فشل صمت — تتبع تشغيلي).
-    unawaited(DeviceRegistrationService.instance.registerOnce());
+    // catchError عند الاستدعاء: حتى لو أفلت خطأ (مثل Hive غير مهيأ في
+    // بيئة اختبار) من المُسجّل رغم مصائد الداخل، لا يصبح مستقبلًا
+    // غير معالج يفشل اختبارات الواجهة.
+    unawaited(
+      DeviceRegistrationService.instance
+          .registerOnce()
+          .catchError((_) => false),
+    );
   }
 
   @override
