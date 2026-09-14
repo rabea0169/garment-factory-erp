@@ -5,6 +5,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/services/barcode_scanner_launcher.dart';
 import '../../../../core/widgets/app_feedback.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
 import '../../../../core/navigation/back_navigation.dart';
@@ -86,6 +87,8 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
           ],
         ),
         actions: [
+          // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+          const EntityExportButtons(entities: ['inventory']),
           IconButton(
             icon: const Icon(Icons.refresh),
             tooltip: 'تحديث',

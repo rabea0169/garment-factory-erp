@@ -5,9 +5,12 @@ import {
   Headers,
   Post,
   Query,
+  Res,
+  StreamableFile,
   UploadedFile,
   UseInterceptors,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
@@ -41,6 +44,30 @@ export class DataImportController {
   @ApiOperation({ summary: 'الكيانات القابلة للاستيراد وأعمدتها ودور إنشائها' })
   describeEntities() {
     return this.importService.describeEntities();
+  }
+
+  /** SELIM-ERP W3 — تنزيل قالب الاستيراد (XLSX بأوراق الكيانات الأربعة). */
+  @Get('template')
+  @Roles(
+    UserRole.GENERAL_MANAGER,
+    UserRole.PRODUCTION_MANAGER,
+    UserRole.CASHIER,
+    UserRole.INVENTORY_MANAGER,
+    UserRole.HR_MANAGER,
+    UserRole.SUPER_ADMIN,
+  )
+  @ApiOperation({
+    summary: 'تنزيل قالب الاستيراد XLSX (ورقة RTL لكل كيان برؤوس الأعمدة)',
+  })
+  async downloadTemplate(@Res({ passthrough: true }) res: Response) {
+    const buffer = await this.importService.generateTemplate();
+    res.set({
+      'Content-Type':
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': 'attachment; filename="import_template.xlsx"',
+      'Cache-Control': 'no-store',
+    });
+    return new StreamableFile(buffer);
   }
 
   @Post('preview')

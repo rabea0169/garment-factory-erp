@@ -1,4 +1,5 @@
 import 'reflect-metadata';
+import * as ExcelJS from 'exceljs';
 import { UserRole, WorkerSpecialty } from '@prisma/client';
 import { DataImportService } from './data-import.service';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -244,5 +245,27 @@ describe('DataImportService — معالج الاستيراد (SELIM W2)', () =>
     expect(entities[0].columns.find((c) => c.key === 'name')?.required).toBe(
       true,
     );
+  });
+
+  it('SELIM-ERP W3: generateTemplate — ملف XLSX صالح بأوراق الكيانات الأربعة RTL', async () => {
+    const buffer = await service.generateTemplate();
+    // XLSX = أرشيف ZIP: البصمة PK\x03\x04 في البداية + حجم معقول.
+    expect(buffer.length).toBeGreaterThan(2000);
+    expect(buffer.length).toBeLessThan(400 * 1024);
+    expect(buffer.subarray(0, 2).toString('latin1')).toBe('PK');
+
+    // أعِد قراءته بـ exceljs: أربع أوراق بأسماء الكيانات ورؤوس صحيحة.
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+    const names = workbook.worksheets.map((ws) => ws.name);
+    expect(names).toEqual(['المنتجات', 'العملاء', 'الموردون', 'العمال']);
+    const productsSheet = workbook.getWorksheet('المنتجات');
+    const headerValues = productsSheet?.getRow(1).values as unknown as (
+      string | null
+    )[];
+    // values يبدأ بعنصر null (فهرس 1-based) — تجاهله.
+    expect(headerValues.filter(Boolean)).toContain('الاسم *');
+    // RTL مفعّل في ورقة المنتجات.
+    expect(productsSheet?.views?.[0]?.rightToLeft).toBe(true);
   });
 });

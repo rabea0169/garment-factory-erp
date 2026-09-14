@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/contacts/contact_import_service.dart';
+import '../../../../core/router/app_router.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/suppliers_cubit.dart';
 import '../../../../core/navigation/back_navigation.dart';
 
@@ -25,6 +28,8 @@ class SuppliersScreen extends StatelessWidget {
           leading: const GfBackButton(),
           title: const Text('الموردون'),
           actions: [
+            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+            const EntityExportButtons(entities: ['suppliers']),
             IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'تحديث',
@@ -69,9 +74,24 @@ class SuppliersScreen extends StatelessWidget {
                         'كود: ${supplier['code'] ?? '-'}'
                         '${supplier['phone'] == null ? '' : ' | ${supplier['phone']}'}',
                       ),
-                      trailing: Text(
-                        '${supplier['balance'] ?? 0} جنيه',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          // SELIM-ERP W3: كشف حساب المورد من بطاقته.
+                          IconButton(
+                            tooltip: 'كشف حساب المورد',
+                            icon: const Icon(Icons.receipt_long_outlined),
+                            onPressed: supplier['id'] == null
+                                ? null
+                                : () => context.push(
+                                      '${AppRouter.supplierStatement}/${supplier['id']}',
+                                    ),
+                          ),
+                          Text(
+                            '${supplier['balance'] ?? 0} جنيه',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                        ],
                       ),
                     ),
                   );

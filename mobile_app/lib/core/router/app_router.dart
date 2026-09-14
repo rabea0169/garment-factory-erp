@@ -33,6 +33,12 @@ import '../../features/printing/presentation/screens/printing_screen.dart';
 import '../../features/pos/presentation/screens/pos_screen.dart';
 import '../../features/data_import/presentation/screens/import_screen.dart';
 import '../../features/system/presentation/screens/backup_screen.dart';
+import '../../features/system/presentation/screens/offline_queue_screen.dart';
+import '../../features/system/presentation/screens/factory_settings_screen.dart';
+import '../../features/system/presentation/screens/audit_logs_screen.dart';
+import '../../features/system/presentation/screens/devices_screen.dart';
+import '../../features/accounting/presentation/screens/cost_centers_screen.dart';
+import '../../features/financial_reports/presentation/screens/party_statement_screen.dart';
 import '../storage/auth_storage.dart';
 import '../security/route_access.dart';
 import '../navigation/back_navigation.dart';
@@ -76,6 +82,14 @@ class AppRouter {
   static const String pos = '/pos';
   static const String importWizard = '/import';
   static const String backup = '/backup';
+  // SELIM-ERP W3 — مسارات الموجة الثالثة.
+  static const String offlineQueue = '/offline-queue';
+  static const String factorySettings = '/factory-settings';
+  static const String auditLogs = '/audit-logs';
+  static const String devices = '/devices';
+  static const String costCenters = '/cost-centers';
+  static const String customerStatement = '/statement/customer';
+  static const String supplierStatement = '/statement/supplier';
 
   static final _rootNavigatorKey = GlobalKey<NavigatorState>();
   static String _initialLocation = login;
@@ -323,6 +337,58 @@ class AppRouter {
         name: 'backup',
         builder: (context, state) =>
             const BackGuard(child: BackupScreen()),
+      ),
+      // SELIM-ERP W3 — مسارات الموجة الثالثة (كلها داخل BackGuard:
+      // الرجوع يعود للوحة التحكم — نفس سلوك زر الرجوع الموحد).
+      GoRoute(
+        path: offlineQueue,
+        name: 'offlineQueue',
+        builder: (context, state) =>
+            const BackGuard(child: OfflineQueueScreen()),
+      ),
+      GoRoute(
+        path: factorySettings,
+        name: 'factorySettings',
+        builder: (context, state) =>
+            const BackGuard(child: FactorySettingsScreen()),
+      ),
+      GoRoute(
+        path: auditLogs,
+        name: 'auditLogs',
+        builder: (context, state) =>
+            const BackGuard(child: AuditLogsScreen()),
+      ),
+      GoRoute(
+        path: devices,
+        name: 'devices',
+        builder: (context, state) =>
+            const BackGuard(child: DevicesScreen()),
+      ),
+      GoRoute(
+        path: costCenters,
+        name: 'costCenters',
+        builder: (context, state) =>
+            const BackGuard(child: CostCentersScreen()),
+      ),
+      GoRoute(
+        path: '$customerStatement/:id',
+        name: 'customerStatement',
+        builder: (context, state) => BackGuard(
+          child: PartyStatementScreen(
+            partyId: state.pathParameters['id'] ?? '',
+            isCustomer: true,
+          ),
+        ),
+      ),
+      GoRoute(
+        path: '$supplierStatement/:id',
+        name: 'supplierStatement',
+        builder: (context, state) => BackGuard(
+          child: PartyStatementScreen(
+            partyId: state.pathParameters['id'] ?? '',
+            isCustomer: false,
+          ),
+        ),
       ),
     ],
     errorBuilder: (context, state) => Scaffold(

@@ -3,6 +3,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import * as ExcelJS from 'exceljs';
 import { Prisma, UserRole } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { generateDocumentCode } from '../../core/common/codes.util';
@@ -86,6 +87,62 @@ export class DataImportService {
         hint: c.hint,
       })),
     }));
+  }
+
+  /**
+   * SELIM-ERP W3 — قالب الاستيراد XLSX (نقل من GET /api/import/template
+   * في Selim): مصنف بورقة RTL لكل كيان مدعوم، صف رؤوس مُنسّق بأعمدة
+   * الكيان نفسها (نفس عناوين المعالج حرفيًا) + قوائم منسدلة لأعمدة
+   * enum (تخصصات العمال) + تعليق تلميح على الأعمدة المطلوبة.
+   * الأعمدة الإضافية بلا رأس — يرشد المستخدم لأخذها من هنا.
+   */
+  async generateTemplate(): Promise<Buffer> {
+    const workbook = new ExcelJS.Workbook();
+    workbook.creator = 'Garment Factory ERP';
+
+    for (const def of getImportEntities()) {
+      const worksheet = workbook.addWorksheet(def.title, {
+        views: [{ rightToLeft: true, state: 'frozen', ySplit: 1 }],
+      });
+      const headers = def.columns.map((c) =>
+        c.required ? `${c.header} *` : c.header,
+      );
+      worksheet.addRow(headers);
+      const headerRow = worksheet.getRow(1);
+      headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      headerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: '059669' },
+      };
+      headerRow.alignment = { vertical: 'middle', horizontal: 'right' };
+      worksheet.columns = def.columns.map((c) => ({
+        width: Math.min(Math.max(c.header.length + 6, 14), 45),
+      }));
+
+      // أعمدة enum: قائمة منسدلة بالقيم العربية المقبولة (exceljs: تعيين
+      // dataValidation على كل خلية في نطاق 2..1001 — لا API لنطاق كامل).
+      def.columns.forEach((column, index) => {
+        if (column.type === 'enum' && column.enumValues) {
+          const values = Object.values(column.enumValues).map(
+            (synonyms) => synonyms[0],
+          );
+          const letter = worksheet.getColumn(index + 1).letter;
+          for (let row = 2; row <= 201; row++) {
+            worksheet.getCell(`${letter}${row}`).dataValidation = {
+              type: 'list',
+              allowBlank: true,
+              formulae: [`"${values.join(',')}"`],
+              showErrorMessage: true,
+              error: 'اختر قيمة من القائمة المنسدلة',
+            };
+          }
+        }
+      });
+    }
+
+    const buffer = await workbook.xlsx.writeBuffer();
+    return Buffer.from(buffer);
   }
 
   /** الخطوة 1: معاينة بلا كتابة — تحليل + تحقق كامل. */

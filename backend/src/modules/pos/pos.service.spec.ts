@@ -144,6 +144,14 @@ describe('PosService — نقطة البيع (SELIM W2)', () => {
       prisma as unknown as PrismaService,
       { bulkIssueFinishedGoods } as unknown as InventoryService,
       { postJournalEntryInTx } as unknown as FinancialPostingService,
+      // SELIM-ERP W3: إعدادات المصنع — افتراضات (QR نصي بلا تسجيل).
+      {
+        getSettings: jest.fn().mockResolvedValue({
+          factoryName: 'مصنع الملابس',
+          taxNumber: null,
+          enableInvoiceQr: true,
+        }),
+      } as never,
     );
   });
 

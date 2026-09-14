@@ -84,6 +84,44 @@ export class FinancialReportsController {
     return this.financialReportsService.getAging(query);
   }
 
+  @Get('customer-statement/:id')
+  @Roles(
+    UserRole.ACCOUNTANT,
+    UserRole.GENERAL_MANAGER,
+    UserRole.CASHIER,
+    UserRole.SUPER_ADMIN,
+  )
+  @ApiOperation({
+    summary:
+      'كشف حساب عميل: رصيد افتتاحي + حركات (فواتير/سندات/مرتجعات) + ختامي',
+  })
+  async getCustomerStatement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.financialReportsService.getCustomerStatement(id, from, to);
+  }
+
+  @Get('supplier-statement/:id')
+  @Roles(
+    UserRole.ACCOUNTANT,
+    UserRole.GENERAL_MANAGER,
+    UserRole.INVENTORY_MANAGER,
+    UserRole.SUPER_ADMIN,
+  )
+  @ApiOperation({
+    summary:
+      'كشف حساب مورد: رصيد افتتاحي + حركات (استلامات/سندات/مرتجعات) + ختامي',
+  })
+  async getSupplierStatement(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.financialReportsService.getSupplierStatement(id, from, to);
+  }
+
   @Get('budgets/variance')
   @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
   @ApiOperation({

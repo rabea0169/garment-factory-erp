@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/router/app_router.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/selim/format.dart';
 import '../../../../core/widgets/selim/gradient_hero_card.dart' show HeroStat;
@@ -522,7 +524,7 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen>
             if (rows.isEmpty)
               const _EmptySection(message: 'لا توجد أرصدة قائمة')
             else
-              ...rows.map((row) => _agingRow(row)),
+              ...rows.map((row) => _agingRow(row, isAR: isAR)),
           ],
         );
       },
@@ -530,7 +532,9 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen>
   }
 
   /// صف طرف (عميل/مورد) مع شارة دلو العمر ورصيده.
-  Widget _agingRow(Map<String, dynamic> row) {
+  ///
+  /// SELIM-ERP W3: ضغطة على الصف تفتح كشف حساب الطرف (عميل/مورد).
+  Widget _agingRow(Map<String, dynamic> row, {required bool isAR}) {
     final bucket = row['bucket']?.toString();
     final color = switch (bucket) {
       '0-30' => AppColors.success,
@@ -539,70 +543,79 @@ class _FinancialReportsScreenState extends State<FinancialReportsScreen>
       '90+' => AppColors.error,
       _ => AppColors.statusPlanned,
     };
+    final partyId = row['id']?.toString();
     return Card(
       elevation: 0.5,
       margin: const EdgeInsetsDirectional.only(bottom: 8),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsetsDirectional.fromSTEB(12, 10, 12, 10),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    row['name']?.toString() ?? 'طرف',
-                    style: const TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w700,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: partyId == null
+            ? null
+            : () => context.push(
+                  '${isAR ? AppRouter.customerStatement : AppRouter.supplierStatement}/$partyId',
+                ),
+        child: Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(12, 10, 12, 10),
+          child: Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      row['name']?.toString() ?? 'طرف',
+                      style: const TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    bucket == null
-                        ? 'رصيد غير مخصص (بلا أمر مفتوح قابل للتأريخ)'
-                        : 'أقدم أمر مفتوح: ${date(row['oldestOpenDate'])}',
-                    style: TextStyle(
-                      fontFamily: 'Cairo',
-                      fontSize: 10.5,
-                      color: Colors.grey.shade500,
+                    const SizedBox(height: 2),
+                    Text(
+                      bucket == null
+                          ? 'رصيد غير مخصص (بلا أمر مفتوح قابل للتأريخ)'
+                          : 'أقدم أمر مفتوح: ${date(row['oldestOpenDate'])}',
+                      style: TextStyle(
+                        fontFamily: 'Cairo',
+                        fontSize: 10.5,
+                        color: Colors.grey.shade500,
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              padding:
-                  const EdgeInsetsDirectional.symmetric(horizontal: 8, vertical: 2),
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.14),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                bucket ?? '—',
-                style: TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w700,
-                  color: color,
+                  ],
                 ),
               ),
-            ),
-            const SizedBox(width: 8),
-            Directionality(
-              textDirection: TextDirection.ltr,
-              child: Text(
-                money(asNum(row['balance'])),
-                style: const TextStyle(
-                  fontFamily: 'Cairo',
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w700,
+              Container(
+                padding: const EdgeInsetsDirectional.symmetric(
+                    horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.14),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  bucket ?? '—',
+                  style: TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: color,
+                  ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(width: 8),
+              Directionality(
+                textDirection: TextDirection.ltr,
+                child: Text(
+                  money(asNum(row['balance'])),
+                  style: const TextStyle(
+                    fontFamily: 'Cairo',
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );

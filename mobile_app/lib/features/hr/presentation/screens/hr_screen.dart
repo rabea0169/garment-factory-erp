@@ -7,6 +7,7 @@ import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../production/presentation/widgets/outbox_pending_badge.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/hr_cubit.dart';
 import '../cubit/hr_state.dart';
 import '../widgets/create_worker_dialog.dart';
@@ -42,6 +43,8 @@ class _HrScreenState extends State<HrScreen> {
           leading: const GfBackButton(),
           title: const Text('الموارد البشرية والعمال'),
           actions: [
+            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+            const EntityExportButtons(entities: ['workers']),
             // MOB-3: عدد تسجيلات الإنتاج المحفوظة محليًا بانتظار الاتصال.
             const OutboxPendingBadge(),
             // COMM-F05: تسجيل سلفة عامل (POST /hr/advances).

@@ -54,6 +54,14 @@ function makePrismaMock() {
     ),
     rawMaterial: { count: jest.fn().mockResolvedValue(12) },
     finishedGoodStock: { count: jest.fn().mockResolvedValue(4) },
+    // SELIM-ERP W3: مصاريف الفترة حسب البند (رسم دائري في لوحة التحكم).
+    expense: {
+      groupBy: jest.fn().mockResolvedValue([
+        { categoryName: 'رواتب', _sum: { amount: new Prisma.Decimal('3000') } },
+        { categoryName: 'صيانة', _sum: { amount: new Prisma.Decimal('1500') } },
+        { categoryName: null, _sum: { amount: new Prisma.Decimal('250') } },
+      ]),
+    },
   };
 }
 
@@ -78,6 +86,13 @@ describe('DashboardService (GF-REMAINING-004)', () => {
     expect(result.production).toEqual([{ period: '2026-08-26', pieces: 42 }]);
     expect(result.topWorkers).toEqual([
       { workerId: 'worker-1', name: 'عامل 1', pieces: 42 },
+    ]);
+    // SELIM-ERP W3: مصاريف الفترة حسب البند — مرتبة تنازليًا + بند
+    // null يظهر كـ«غير مصنف» (نفس سلوك /api/dashboard/charts في Selim).
+    expect(result.expensesByCategory).toEqual([
+      { category: 'رواتب', amount: 3000 },
+      { category: 'صيانة', amount: 1500 },
+      { category: 'غير مصنف', amount: 250 },
     ]);
     // DSH-5(ج): الأنواع من COUNT(DISTINCT) لا من finishedGoodStock.count
     expect(result.inventory).toEqual({

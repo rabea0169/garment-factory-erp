@@ -19,6 +19,7 @@ import {
   generateDocumentCode,
 } from '../../core/common/codes.util';
 import { buildReceiptQrPayload } from '../../core/common/qr-tlv.util';
+import { FactorySettingsService } from '../system/factory-settings.service';
 import {
   computeRequestHash,
   createIdempotencyKey,
@@ -61,6 +62,7 @@ export class PosService {
     private readonly prisma: PrismaService,
     private readonly inventory: InventoryService,
     private readonly financial: FinancialPostingService,
+    private readonly factorySettings: FactorySettingsService,
   ) {}
 
   /**
@@ -423,6 +425,8 @@ export class PosService {
 
   /** بناء حِمل الإيصار: أمر البيع + البنود بأسماء المنتجات + QR. */
   private async buildReceipt(orderId: string, tx: Prisma.TransactionClient) {
+    // SELIM-ERP W3: بيانات التسجيل من إعدادات المصنع (الأسبقية على env).
+    const settings = await this.factorySettings.getSettings();
     const order = await tx.salesOrder.findUniqueOrThrow({
       where: { id: orderId },
       include: {
@@ -463,6 +467,10 @@ export class PosService {
         total: Number(order.totalAmount),
         vatAmount: Number(order.vatAmount),
         createdAt: order.createdAt,
+        // SELIM-ERP W3: بيانات التسجيل من إعدادات المصنع (الأسبقية على env).
+        sellerName: settings.factoryName,
+        vatNumber: settings.taxNumber ?? undefined,
+        enableInvoiceQr: settings.enableInvoiceQr,
       }),
     };
   }

@@ -34,15 +34,31 @@ export interface ReceiptQrInput {
   total: number;
   vatAmount: number;
   createdAt: Date;
+  /**
+   * SELIM-ERP W3: بيانات التسجيل من إعدادات المصنع (الأسبقية على env) —
+   * يمررها PosService من FactorySettings. undefined = env فقط.
+   * enableInvoiceQr=false من الإعدادات يعطّل QR كليًا (نص فارغ).
+   */
+  sellerName?: string;
+  vatNumber?: string;
+  enableInvoiceQr?: boolean;
 }
 
 /**
  * حِمل QR للإيصار — TLV base64 عند التهيئة، وإلا نص عادي.
  */
 export function buildReceiptQrPayload(input: ReceiptQrInput): string {
-  if (isEtaQrConfigured()) {
-    const sellerName = (process.env.COMPANY_NAME ?? 'شركة غير مسماة').trim();
-    const vatNumber = (process.env.COMPANY_VAT_NUMBER ?? '').trim();
+  // W3: الإعدادات تعطّل QR للفواتير كليًا.
+  if (input.enableInvoiceQr === false) return '';
+  const settingsVat = (input.vatNumber ?? '').trim();
+  const envVat = (process.env.COMPANY_VAT_NUMBER ?? '').trim();
+  if (settingsVat.length > 0 || isEtaQrConfigured()) {
+    const sellerName = (
+      input.sellerName ??
+      process.env.COMPANY_NAME ??
+      'شركة غير مسماة'
+    ).trim();
+    const vatNumber = settingsVat.length > 0 ? settingsVat : envVat;
     const timestamp = input.createdAt.toISOString();
     const total = input.total.toFixed(2);
     const vat = input.vatAmount.toFixed(2);

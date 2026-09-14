@@ -45,6 +45,7 @@ import { SearchModule } from './modules/search/search.module';
 import { PosModule } from './modules/pos/pos.module';
 import { DataImportModule } from './modules/data-import/data-import.module';
 import { SystemModule } from './modules/system/system.module';
+import { ExportsModule } from './modules/exports/exports.module';
 
 @Module({
   imports: [
@@ -116,6 +117,8 @@ import { SystemModule } from './modules/system/system.module';
     PosModule,
     DataImportModule,
     SystemModule,
+    // SELIM-ERP W3 — تصدير Excel/Word لقوائم الكيانات.
+    ExportsModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200

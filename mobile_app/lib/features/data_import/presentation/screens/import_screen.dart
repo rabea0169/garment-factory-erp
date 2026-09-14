@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/services/file_download_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/selim/format.dart';
 import '../../../../core/widgets/selim/selim_shell.dart';
@@ -50,10 +51,40 @@ class _ImportScreenState extends State<ImportScreen> {
       child: BlocBuilder<ImportCubit, ImportState>(
         builder: (context, state) => SelimShellScaffold(
           title: 'معالج الاستيراد',
+          actions: [
+            // SELIM-ERP W3: تنزيل قالب الاستيراد (GET /import/template).
+            IconButton(
+              tooltip: 'تنزيل قالب الاستيراد',
+              icon: const Icon(Icons.download_rounded),
+              onPressed: _downloadTemplate,
+            ),
+          ],
           body: _body(context, state),
         ),
       ),
     );
+  }
+
+  /// SELIM-ERP W3: تنزيل قالب XLSX بأوراق الكيانات الأربعة (نفس
+  /// import/template في Selim) — يُشارك ملف القالب للجهة المختارة.
+  Future<void> _downloadTemplate() async {
+    try {
+      await FileDownloadService.instance.downloadAndShare(
+        '/import/template',
+        fallbackName: 'import_template.xlsx',
+      );
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'تعذر تنزيل القالب — تحقق من الاتصال',
+              style: TextStyle(fontFamily: 'Cairo'),
+            ),
+          ),
+        );
+      }
+    }
   }
 
   Widget _body(BuildContext context, ImportState state) {

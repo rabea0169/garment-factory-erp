@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { FactorySettingsService } from './factory-settings.service';
 
 /**
  * SELIM-ERP W2 — النسخ الاحتياطي/الاستعادة من الواجهة (تقلد Backup.tsx
@@ -57,7 +58,7 @@ function sortKey(value: unknown): string {
 
 /**
  * ترتيب الجداول الكامل — الآباء قبل الأبناء (FK-safe):
- * 73 موديلًا. بوابة اختبار backup-coverage.spec تتحقق أن كل موديل في
+ * 75 موديلًا. بوابة اختبار backup-coverage.spec تتحقق أن كل موديل في
  * schema.prisma موجود هنا مرة واحدة بالضبط — إضافة موديل جديد دون
  * إضافته هنا تفشل الاختبار (حارس انحراف صامت).
  */
@@ -79,8 +80,10 @@ export const BACKUP_ORDER: BackupModelSpec[] = [
   { model: 'IdempotencyKey' },
   { model: 'JournalTemplate' },
   { model: 'PrintTemplate' },
+  { model: 'FactorySettings' },
   // 1 — تعتمد على الجذور
   { model: 'User', insertSortBy: 'createdAt' },
+  { model: 'Device' },
   { model: 'Account', insertSortBy: 'code' },
   { model: 'ActivityLog' },
   { model: 'Worker' },
@@ -171,7 +174,10 @@ function delegateOf(
 
 @Injectable()
 export class BackupService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly factorySettings: FactorySettingsService,
+  ) {}
 
   /** تصدير كامل — { meta, data } بترتيب BACKUP_ORDER. */
   async createBackup(userId: string) {
@@ -204,6 +210,15 @@ export class BackupService {
         },
       },
     });
+
+    // SELIM-ERP W3: سجّل آخر نسخة ناجحة — يغذي تنبيه «مر أسبوع بلا
+    // نسخة» من الخادم (المرجع يقرأها من localStorage فيضيع مع الكاش).
+    // فشل التحديث لا يفشل التصدير نفسه (تحسين تدريجي فقط).
+    try {
+      await this.factorySettings.markBackupDone();
+    } catch {
+      // تجاهل مقصود — النسخة نفسها نُزّلت بنجاح.
+    }
 
     return { meta, data };
   }

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { InventoryModule } from '../inventory/inventory.module';
+import { SystemModule } from '../system/system.module';
 import { FinancialModule } from '../../core/financial/financial.module';
 import { PosController } from './pos.controller';
 import { PosService } from './pos.service';
@@ -11,7 +12,7 @@ import { PosService } from './pos.service';
  * (postJournalEntryInTx) — نفس تبعيات مسار تأكيد المبيعات.
  */
 @Module({
-  imports: [InventoryModule, FinancialModule],
+  imports: [InventoryModule, FinancialModule, SystemModule],
   providers: [PosService],
   controllers: [PosController],
   exports: [PosService],

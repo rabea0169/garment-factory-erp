@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../../../core/constants/app_colors.dart';
+import '../../../../core/router/app_router.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/contacts/contact_import_service.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/sales_cubit.dart';
 import '../../../../core/navigation/back_navigation.dart';
 
@@ -27,6 +30,8 @@ class SalesScreen extends StatelessWidget {
           leading: const GfBackButton(),
           title: const Text('المبيعات والعملاء'),
           actions: [
+            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+            const EntityExportButtons(entities: ['sales', 'customers']),
             IconButton(
               icon: const Icon(Icons.refresh),
               tooltip: 'تحديث',
@@ -106,6 +111,21 @@ class SalesScreen extends StatelessWidget {
                             }).toList(),
                           ),
                         ),
+                        // SELIM-ERP W3: كشف حساب العميل من بطاقة طلبه.
+                        if (customer?['id'] != null)
+                          Align(
+                            alignment: AlignmentDirectional.centerStart,
+                            child: Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                              child: OutlinedButton.icon(
+                                onPressed: () => screenContext.push(
+                                  '${AppRouter.customerStatement}/${customer!['id']}',
+                                ),
+                                icon: const Icon(Icons.receipt_long_outlined),
+                                label: const Text('كشف حساب العميل'),
+                              ),
+                            ),
+                          ),
                         if ('${order['status'] ?? ''}' == 'DRAFT')
                           Padding(
                             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

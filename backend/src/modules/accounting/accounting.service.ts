@@ -731,4 +731,130 @@ export class AccountingService {
       balanced: totalDebit === totalCredit,
     };
   }
+
+  // ------------------------------------------------------------------
+  // SELIM-ERP W3 — مراكز التكلفة (نقل من /api/accounting/cost-centers
+  // في Selim ERP): CRUD كامل + حماية من حذف مركز عليه ميزانيات.
+  // النموذج موجود منذ بداية المشروع (يستخدمه Budget) لكن بلا مسارات
+  // إدارة — هذه الموجة تكمل الواجهة المفقودة.
+  // ------------------------------------------------------------------
+
+  /** قائمة مراكز التكلفة (الكل مرة واحدة — جدول مرجعي صغير). */
+  async getCostCenters() {
+    const [centers, budgetCounts] = await Promise.all([
+      this.prisma.costCenter.findMany({
+        orderBy: { code: 'asc' },
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          isActive: true,
+          budgets: { select: { id: true } },
+        },
+      }),
+      this.prisma.budget.count({
+        where: { costCenterId: { not: null } },
+      }),
+    ]);
+    return {
+      centers: centers.map((c) => ({
+        id: c.id,
+        code: c.code,
+        name: c.name,
+        isActive: c.isActive,
+        budgetsCount: c.budgets.length,
+      })),
+      centersWithBudgets: budgetCounts,
+    };
+  }
+
+  /** إنشاء مركز تكلفة — الكود فريد (P2002 → Conflict). */
+  async createCostCenter(
+    input: { code: string; name: string; isActive?: boolean },
+    actorId: string,
+  ) {
+    const code = input.code.trim();
+    const name = input.name.trim();
+    if (!code || !name) {
+      throw new BadRequestException('كود واسم مركز التكلفة مطلوبان');
+    }
+    const created = await this.prisma.costCenter.create({
+      data: { code, name, isActive: input.isActive ?? true },
+    });
+    await this.prisma.activityLog.create({
+      data: {
+        userId: actorId,
+        action: 'COST_CENTER_CREATED',
+        module: 'ACCOUNTING',
+        details: { code, name },
+      },
+    });
+    return created;
+  }
+
+  /** تحديث اسم/حالة مركز — الكود غير قابل للتغيير (مرجع قيود الميزانيات). */
+  async updateCostCenter(
+    id: string,
+    input: { name?: string; isActive?: boolean },
+    actorId: string,
+  ) {
+    const existing = await this.prisma.costCenter.findUnique({ where: { id } });
+    if (!existing) {
+      throw new NotFoundException('مركز التكلفة غير موجود');
+    }
+    const data: { name?: string; isActive?: boolean } = {};
+    if (input.name !== undefined) {
+      if (!input.name.trim()) {
+        throw new BadRequestException('الاسم لا يمكن أن يكون فارغًا');
+      }
+      data.name = input.name.trim();
+    }
+    if (input.isActive !== undefined) data.isActive = input.isActive;
+
+    const [updated] = await this.prisma.$transaction([
+      this.prisma.costCenter.update({ where: { id }, data }),
+      this.prisma.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'COST_CENTER_UPDATED',
+          module: 'ACCOUNTING',
+          details: { id, changedFields: Object.keys(input) },
+        },
+      }),
+    ]);
+    return updated;
+  }
+
+  /** حذف مركز — مرفوض إن كان مستخدمًا في ميزانيات (سلسلة التدقيق أولًا). */
+  async deleteCostCenter(id: string, actorId: string) {
+    const existing = await this.prisma.costCenter.findUnique({
+      where: { id },
+      select: {
+        id: true,
+        code: true,
+        name: true,
+        budgets: { select: { id: true } },
+      },
+    });
+    if (!existing) {
+      throw new NotFoundException('مركز التكلفة غير موجود');
+    }
+    if (existing.budgets.length > 0) {
+      throw new ConflictException(
+        `لا يمكن حذف مركز عليه ${existing.budgets.length} ميزانية — عطّله بدلًا من ذلك`,
+      );
+    }
+    await this.prisma.$transaction([
+      this.prisma.costCenter.delete({ where: { id } }),
+      this.prisma.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'COST_CENTER_DELETED',
+          module: 'ACCOUNTING',
+          details: { id, code: existing.code, name: existing.name },
+        },
+      }),
+    ]);
+    return { deleted: true, id };
+  }
 }

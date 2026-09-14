@@ -218,12 +218,199 @@ void main() {
     outbox.dispose();
     await controller.close();
   });
+
+  group('SELIM-ERP W3 — طابور موسّع (حالات/إعادة محاولة/حذف)', () {
+    test('رفض الخادم 400 يعلّم العنصر فاشلًا ويمرّ للعنصر التالي', () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      adapter.statusByPath['/hr/attendance'] = 400;
+
+      await outbox.enqueue(
+        method: 'POST',
+        path: '/hr/attendance',
+        body: const {'workerId': 'w-1'},
+        idempotencyKey: 'k-rejected',
+        title: 'تسجيل حضور',
+      );
+      await outbox.enqueue(
+        method: 'POST',
+        path: '/hr/production',
+        body: const {'workerId': 'w-2'},
+        idempotencyKey: 'k-ok',
+      );
+
+      await outbox.drain();
+
+      // الفاشل يبقى بعنصر واحد؛ الناجح أُرسل وحُذف.
+      expect(outbox.pendingCount, 1);
+      final failed = outbox.pendingEntries.single;
+      expect(failed.status, OutboxStatus.failed);
+      expect(failed.lastError, isNotNull);
+      expect(failed.attempts, 1);
+      expect(failed.title, 'تسجيل حضور');
+      // طلبان أُرسلا فعليًا (الرفض لم يوقف الجولة).
+      expect(adapter.paths, contains('/hr/attendance'));
+      expect(adapter.paths, contains('/hr/production'));
+    });
+
+    test('فشل الشبكة يوقف الجولة (5xx يعامل كعابر)', () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      adapter.statusByPath['/hr/attendance'] = 500;
+
+      await outbox.enqueue(
+        method: 'POST',
+        path: '/hr/attendance',
+        body: const {},
+        idempotencyKey: 'k-500',
+      );
+      await outbox.enqueue(
+        method: 'POST',
+        path: '/hr/production',
+        body: const {},
+        idempotencyKey: 'k-after',
+      );
+
+      await outbox.drain();
+
+      // 5xx = عابر: العنصران يبقيان معلقين ولا يُعلّم فاشل.
+      expect(outbox.pendingCount, 2);
+      expect(
+        outbox.pendingEntries
+            .every((e) => e.status == OutboxStatus.pending),
+        isTrue,
+      );
+      // الجولة توقفت عند أول فشل: الثاني لم يُرسل.
+      expect(adapter.paths, ['/hr/attendance']);
+    });
+
+    test('retryOne ينجح بعد إصلاح الخادم ويحذف العنصر', () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      adapter.statusByPath['/pos/quick-sale'] = 400;
+
+      final entry = await outbox.enqueue(
+        method: 'POST',
+        path: '/pos/quick-sale',
+        body: const {'items': []},
+        idempotencyKey: 'k-retry',
+        isFinancial: true,
+        title: 'بيع نقطة بيع',
+        amount: 250,
+      );
+      await outbox.drain();
+      expect(outbox.failedCount, 1);
+
+      // الخادم عاد للعمل — إعادة المحاولة اليدوية تنجح.
+      adapter.statusByPath.remove('/pos/quick-sale');
+      final ok = await outbox.retryOne(entry!.id);
+      expect(ok, isTrue);
+      expect(outbox.pendingCount, 0);
+      // نفس مفتاح الاندماجية أعيد إرساله (لا تكرار خادميًا).
+      expect(adapter.keys, contains('k-retry'));
+    });
+
+    test('retryOne يبقي الفشل عند استمرار الرفض', () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      adapter.statusByPath['/hr/attendance'] = 400;
+      final entry = await outbox.enqueue(
+        method: 'POST',
+        path: '/hr/attendance',
+        body: const {},
+        idempotencyKey: 'k-still-bad',
+      );
+      await outbox.drain();
+      final ok = await outbox.retryOne(entry!.id);
+      expect(ok, isFalse);
+      expect(outbox.failedCount, 1);
+      expect(outbox.pendingEntries.single.attempts, 2);
+    });
+
+    test('deleteOne يحذف الفاشل؛ clearFailed يمسح الفاشلة فقط',
+        () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      // فاشل (رفض 400 يُعلّم ويمرّ) + معلق (فشل شبكة يوقف الجولة عنده —
+      // يبقى معلقًا بانتظار عودة الاتصال).
+      adapter.statusByPath['/a'] = 400;
+      adapter.failStatusFor.add('/b');
+
+      final failedEntry = await outbox.enqueue(
+        method: 'POST',
+        path: '/a',
+        body: const {},
+        idempotencyKey: 'k-f',
+      );
+      final pendingEntry = await outbox.enqueue(
+        method: 'POST',
+        path: '/b',
+        body: const {},
+        idempotencyKey: 'k-p',
+      );
+      await outbox.drain();
+      // الصندوق: الفاشل يبقى (بقرار المستخدم) + المعلّق بانتظار الشبكة.
+      // pendingCount = إجمالي الصندوق (معلّق + فاشل) — نفس دلالة اللوحة.
+      expect(outbox.failedCount, 1);
+      expect(outbox.pendingCount, 2);
+
+      // حذف فردي للفاشل.
+      final removed = await outbox.deleteOne(failedEntry!.id);
+      expect(removed, isTrue);
+      expect(outbox.pendingCount, 1);
+      expect(outbox.pendingEntries.single.id, pendingEntry!.id);
+
+      // فاشل آخر: إعادة محاولة فردية (retryOne يرسل العنصر وحده —
+      // بلا مساس بترتيب الطابور ولا بالمعلّق قبله).
+      adapter.statusByPath['/c'] = 400;
+      final another = await outbox.enqueue(
+        method: 'POST',
+        path: '/c',
+        body: const {},
+        idempotencyKey: 'k-f2',
+      );
+      final retried = await outbox.retryOne(another!.id);
+      expect(retried, isFalse);
+      expect(outbox.failedCount, 1);
+
+      final cleared = await outbox.clearFailed();
+      expect(cleared, 1);
+      // المعلّق الأصلي لم يُمس.
+      expect(outbox.pendingEntries.single.id, pendingEntry.id);
+    });
+
+    test('توافق خلفي: إدخال قديم (بلا حقول W3) يُقرأ معلّقًا', () async {
+      final outbox = newOutbox();
+      await outbox.init();
+      // حقن إدخال بصيغة ما قبل الترقية يدويًا في الصندوق.
+      final box = Hive.isBoxOpen(OutboxService.boxName)
+          ? Hive.box(OutboxService.boxName)
+          : await Hive.openBox(OutboxService.boxName);
+      await box.add(<String, dynamic>{
+        'id': 'legacy-1',
+        'method': 'POST',
+        'path': '/hr/production',
+        'body': <String, dynamic>{'piecesCount': 5},
+        'idempotencyKey': 'legacy-key',
+        'createdAt': DateTime.now().toIso8601String(),
+      });
+
+      final entries = outbox.pendingEntries;
+      expect(entries.single.id, 'legacy-1');
+      expect(entries.single.status, OutboxStatus.pending);
+      expect(entries.single.isFinancial, isFalse);
+      expect(entries.single.maxAttempts, OutboxService.defaultMaxAttempts);
+    });
+  });
 }
 
 /// محول Dio مُبرمج: يسجل الطلبات ويعيد 200، مع مسارات تفشل بـ 500 عند
 /// الطلب (لمحاكاة خادم متعثر).
 class _ScriptedAdapter implements HttpClientAdapter {
   final Set<String> failStatusFor = <String>{};
+
+  /// SELIM-ERP W3: حالة HTTP لكل مسار (400 لرفض الخادم — بجسم JSON).
+  final Map<String, int> statusByPath = <String, int>{};
   final List<RequestOptions> requests = <RequestOptions>[];
 
   List<String> get paths => requests.map((r) => r.path).toList(growable: false);
@@ -239,8 +426,11 @@ class _ScriptedAdapter implements HttpClientAdapter {
     Future<void>? cancelFuture,
   ) async {
     requests.add(options);
-    final status = failStatusFor.contains(options.path) ? 500 : 200;
-    return ResponseBody.fromString('{"ok": true}', status, headers: {
+    final status = statusByPath[options.path] ??
+        (failStatusFor.contains(options.path) ? 500 : 200);
+    final body =
+        status == 400 ? '{"message": "بيانات غير صالحة"}' : '{"ok": true}';
+    return ResponseBody.fromString(body, status, headers: {
       Headers.contentTypeHeader: [Headers.jsonContentType],
     });
   }

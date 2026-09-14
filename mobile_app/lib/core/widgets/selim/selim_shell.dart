@@ -4,6 +4,7 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../../features/auth/presentation/cubit/auth_cubit.dart';
+import '../../../features/system/presentation/widgets/alerts_bell.dart';
 import '../../constants/app_colors.dart';
 import '../../router/app_router.dart';
 import '../../security/route_access.dart';
@@ -130,6 +131,8 @@ class _MobileShell extends StatelessWidget {
             title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
             centerTitle: true,
             actions: [
+              // SELIM-ERP W3: جرس التنبيهات الذكية (نفس Header Bell في Selim).
+              const AlertsBell(),
               IconButton(
                 tooltip: 'بحث شامل (Ctrl+K)',
                 icon: const Icon(Icons.search_rounded),
@@ -316,6 +319,8 @@ class _WideShell extends StatelessWidget {
         title: Text(title, style: const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.w700)),
         centerTitle: false,
         actions: [
+          // SELIM-ERP W3: جرس التنبيهات الذكية (نفس Header Bell في Selim).
+          const AlertsBell(),
           // SELIM-ERP W2: زر البحث الشامل — نفس Ctrl+K (لوحة الأوامر).
           IconButton(
             tooltip: 'بحث شامل (Ctrl+K)',

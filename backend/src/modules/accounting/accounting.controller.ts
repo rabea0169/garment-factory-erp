@@ -1,12 +1,13 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Headers,
   Param,
   ParseUUIDPipe,
-  Post,
   Patch,
+  Post,
   Query,
 } from '@nestjs/common';
 import { AccountingService } from './accounting.service';
@@ -23,6 +24,10 @@ import { CreateJournalEntryDto } from './dto/create-journal-entry.dto';
 import { VoucherQueryDto } from './dto/voucher-query.dto';
 import { JournalEntryQueryDto } from './dto/journal-entry-query.dto';
 import { AccountStatementQueryDto } from './dto/account-statement-query.dto';
+import {
+  CreateCostCenterDto,
+  UpdateCostCenterDto,
+} from './dto/cost-center.dto';
 
 @ApiTags('Accounting (الحسابات والمالية)')
 @Controller('accounting')
@@ -34,6 +39,50 @@ export class AccountingController {
   @ApiOperation({ summary: 'شجرة الحسابات' })
   async getAccounts(@Query() pagination: PaginationDto) {
     return this.accountingService.getChartOfAccounts(pagination);
+  }
+
+  // ----------------------------------------------------------------
+  // SELIM-ERP W3 — مراكز التكلفة (نقل من /api/accounting/cost-centers)
+  // ----------------------------------------------------------------
+
+  @Get('cost-centers')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'قائمة مراكز التكلفة مع عدد ميزانيات كل مركز' })
+  async getCostCenters() {
+    return this.accountingService.getCostCenters();
+  }
+
+  @Post('cost-centers')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'إنشاء مركز تكلفة (كود فريد + اسم)' })
+  async createCostCenter(
+    @Body() dto: CreateCostCenterDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.accountingService.createCostCenter(dto, user.id);
+  }
+
+  @Patch('cost-centers/:id')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({ summary: 'تحديث اسم/حالة مركز تكلفة (الكود ثابت)' })
+  async updateCostCenter(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() dto: UpdateCostCenterDto,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.accountingService.updateCostCenter(id, dto, user.id);
+  }
+
+  @Delete('cost-centers/:id')
+  @Roles(UserRole.ACCOUNTANT, UserRole.GENERAL_MANAGER, UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary: 'حذف مركز تكلفة — مرفوض إن كان عليه ميزانيات (عطّله بدلًا)',
+  })
+  async deleteCostCenter(
+    @Param('id', ParseUUIDPipe) id: string,
+    @CurrentUser() user: { id: string },
+  ) {
+    return this.accountingService.deleteCostCenter(id, user.id);
   }
 
   @Post('accounts')

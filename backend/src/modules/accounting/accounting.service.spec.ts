@@ -82,6 +82,10 @@ describe('AccountingService — الحسابات والسندات (GF-0003 + aud
     );
     // RES-F02: default to "no replay" so the create path is followed.
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // SELIM-ERP W3: قيم افتراضية لمراكز التكلفة والميزانيات (تُخصَّص لكل اختبار).
+    prisma.costCenter.findMany.mockResolvedValue([]);
+    prisma.costCenter.findUnique.mockResolvedValue(null);
+    prisma.budget.count.mockResolvedValue(0);
     service = new AccountingService(
       prisma as unknown as PrismaService,
       financial as unknown as FinancialPostingService,
@@ -739,9 +743,14 @@ describe('AccountingService — ACC-8 سطح القراءة المحاسبي', (
     prisma = createAccountingPrismaMock();
     financial = { postJournalEntryInTx: jest.fn() };
     prisma.$transaction.mockImplementation(
-      (callback: (tx: typeof prisma) => Promise<unknown>) => callback(prisma),
+      (arg: ((tx: typeof prisma) => Promise<unknown>) | unknown[]) =>
+        typeof arg === 'function' ? arg(prisma) : Promise.all(arg),
     );
     prisma.idempotencyKey.findUnique.mockResolvedValue(null);
+    // SELIM-ERP W3: قيم افتراضية لمراكز التكلفة والميزانيات (تُخصَّص لكل اختبار).
+    prisma.costCenter.findMany.mockResolvedValue([]);
+    prisma.costCenter.findUnique.mockResolvedValue(null);
+    prisma.budget.count.mockResolvedValue(0);
     service = new AccountingService(
       prisma as unknown as PrismaService,
       financial as unknown as FinancialPostingService,
@@ -1050,6 +1059,102 @@ describe('AccountingService — ACC-8 سطح القراءة المحاسبي', (
       expect(prisma.account.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           where: { isActive: true, isGroup: false },
+        }),
+      );
+    });
+  });
+
+  describe('SELIM-ERP W3 — مراكز التكلفة', () => {
+    it('getCostCenters: قائمة بترتيب الكود + عدد ميزانيات كل مركز', async () => {
+      prisma.costCenter.findMany.mockResolvedValue([
+        {
+          id: 'cc-1',
+          code: 'CC-01',
+          name: 'خط الإنتاج أ',
+          isActive: true,
+          budgets: [{ id: 'b-1' }, { id: 'b-2' }],
+        },
+      ]);
+      prisma.budget.count.mockResolvedValue(2);
+
+      const result = await service.getCostCenters();
+      expect(result.centers).toEqual([
+        {
+          id: 'cc-1',
+          code: 'CC-01',
+          name: 'خط الإنتاج أ',
+          isActive: true,
+          budgetsCount: 2,
+        },
+      ]);
+      expect(result.centersWithBudgets).toBe(2);
+    });
+
+    it('createCostCenter: ينشئ + يسجل التدقيق', async () => {
+      prisma.costCenter.create.mockResolvedValue({
+        id: 'cc-2',
+        code: 'CC-02',
+        name: 'خط الإنتاج ب',
+        isActive: true,
+      });
+      const created = await service.createCostCenter(
+        { code: ' CC-02 ', name: ' خط الإنتاج ب ' },
+        'user-1',
+      );
+      expect(created.code).toBe('CC-02');
+      expect(prisma.costCenter.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { code: 'CC-02', name: 'خط الإنتاج ب', isActive: true },
+        }),
+      );
+      expect(prisma.activityLog.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            action: 'COST_CENTER_CREATED',
+          }) as Record<string, unknown>,
+        }) as Record<string, unknown>,
+      );
+    });
+
+    it('createCostCenter: كود/اسم فارغ → BadRequest', async () => {
+      await expect(
+        service.createCostCenter({ code: '  ', name: 'x' }, 'user-1'),
+      ).rejects.toThrow('مطلوبان');
+    });
+
+    it('deleteCostCenter: مركز عليه ميزانيات → Conflict (اقتراح التعطيل)', async () => {
+      prisma.costCenter.findUnique.mockResolvedValue({
+        id: 'cc-1',
+        code: 'CC-01',
+        name: 'خط أ',
+        budgets: [{ id: 'b-1' }],
+      });
+      await expect(service.deleteCostCenter('cc-1', 'user-1')).rejects.toThrow(
+        'لا يمكن حذف',
+      );
+    });
+
+    it('updateCostCenter: الاسم فقط يُحدَّث والكود ثابت', async () => {
+      prisma.costCenter.findUnique.mockResolvedValue({
+        id: 'cc-1',
+        code: 'CC-01',
+        name: 'قديم',
+      });
+      prisma.costCenter.update.mockResolvedValue({
+        id: 'cc-1',
+        code: 'CC-01',
+        name: 'جديد',
+      });
+      const updated = await service.updateCostCenter(
+        'cc-1',
+        { name: ' جديد ' },
+        'user-1',
+      );
+      expect(updated.name).toBe('جديد');
+      expect(prisma.costCenter.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: 'cc-1' },
+          data: { name: 'جديد' },
         }),
       );
     });

@@ -8,6 +8,7 @@ import '../../../../core/widgets/selim/format.dart';
 import '../../../../core/widgets/selim/gradient_hero_card.dart';
 import '../../../../core/widgets/selim/status_chip_bar.dart';
 import '../../../../core/widgets/selim/selim_shell.dart';
+import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/expenses_cubit.dart';
 import '../widgets/expense_category_form_dialog.dart';
 import '../widgets/expense_form_dialog.dart';
@@ -65,6 +66,10 @@ class _ExpensesScreenState extends State<ExpensesScreen>
         builder: (context, state) {
           return SelimShellScaffold(
             title: 'المصاريف',
+            actions: [
+              // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+              const EntityExportButtons(entities: ['expenses']),
+            ],
             fab: FloatingActionButton.extended(
               onPressed: () => _onFab(context, state),
               icon: Icon(
