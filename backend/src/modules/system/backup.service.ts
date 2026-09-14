@@ -68,7 +68,6 @@ export const BACKUP_ORDER: BackupModelSpec[] = [
   { model: 'Warehouse' },
   { model: 'Currency' },
   { model: 'CostCenter' },
-  { model: 'FiscalPeriod' },
   { model: 'Customer' },
   { model: 'Supplier' },
   { model: 'ShippingCompany' },
@@ -85,6 +84,9 @@ export const BACKUP_ORDER: BackupModelSpec[] = [
   { model: 'CompanyBranch' },
   // 1 — تعتمد على الجذور
   { model: 'User', insertSortBy: 'createdAt' },
+  // FiscalPeriod.createdById → User: يجب أن تأتي الفترات بعد المستخدمين
+  // (اكتُشفت ببروفة الاستعادة 2026-09-14 — كانت قبل User فتكسر أي استعادة)
+  { model: 'FiscalPeriod' },
   { model: 'Device' },
   { model: 'Account', insertSortBy: 'code' },
   { model: 'ActivityLog' },
@@ -94,9 +96,13 @@ export const BACKUP_ORDER: BackupModelSpec[] = [
   // 2
   { model: 'ProductVariant' },
   { model: 'RawMaterial' },
-  { model: 'RefreshToken' },
+  // RefreshToken.replacedById ذاتي (الجديد يشير للقديم): فرز createdAt
+  // يضمن إدراج القديم أولًا
+  { model: 'RefreshToken', insertSortBy: 'createdAt' },
+  // JournalEntry.reversalOfId ذاتي (العكسي يشير للأصلي المبكر): فرز createdAt
+  // Voucher.journalEntryId → JournalEntry: السندات بعد القيود
+  { model: 'JournalEntry', insertSortBy: 'createdAt' },
   { model: 'Voucher' },
-  { model: 'JournalEntry' },
   { model: 'TreasuryTransaction' },
   { model: 'ShiftSession' },
   { model: 'Expense' },
@@ -105,8 +111,10 @@ export const BACKUP_ORDER: BackupModelSpec[] = [
   { model: 'BomVersion' },
   { model: 'FinishedGood' },
   { model: 'WorkOrder' },
-  { model: 'Quotation' },
+  // Quotation.salesOrderId → SalesOrder: العرض المُحوَّل يشير لأمر البيع
+  // اللاحق له إنشاءً — يجب أن يأتي بعده
   { model: 'SalesOrder' },
+  { model: 'Quotation' },
   { model: 'PurchaseOrder' },
   { model: 'WorkerReceipt' },
   { model: 'WorkerAdvance' },
@@ -324,22 +332,48 @@ export class BackupService {
             ),
           );
         }
-        const result = await delegateOf(
-          tx,
-          delegateNameOf(spec.model),
-        ).createMany({
-          data: ordered,
-        });
+        let result: { count: number };
+        try {
+          result = await delegateOf(tx, delegateNameOf(spec.model)).createMany({
+            data: ordered,
+          });
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err);
+          throw new BadRequestException(
+            `فشل إدراج النموذج ${spec.model} (${ordered.length} صفًا): ${msg}`,
+          );
+        }
         inserted[spec.model] = result.count;
       }
 
       // 3) سجل التدقيق — بعد نجاح الإدراج داخل نفس المعاملة.
+      // حارس DR (بروفة 2026-09-14): المستخدم المنفِّذ للاستعادة قد لا يكون
+      // ضمن مستخدمي النسخة المستعادة (TRUNCATE استبدل الجدول) — سيناريو
+      // التعافي على نظام جديد بالضبط. ننسب السجل لمستخدم موجود في البيانات
+      // المستعادة (المنفذ ثم مُصدِّر النسخة ثم أول مستخدم) ونوثق المنفذ
+      // الفعلي نصًّا في التفاصيل بلا مفتاح أجنبي.
+      const restoredUsers = (rowsByModel['User'] ?? []) as {
+        id?: string;
+      }[];
+      const restoredUserIds = new Set(
+        restoredUsers.map((u) => u.id).filter((id): id is string => !!id),
+      );
+      const exportedById = (meta as { exportedById?: unknown }).exportedById;
+      let auditUserId: string | undefined = restoredUserIds.has(userId)
+        ? userId
+        : typeof exportedById === 'string' && restoredUserIds.has(exportedById)
+          ? exportedById
+          : (restoredUsers.find((u) => !!u.id)?.id ?? undefined);
+      if (auditUserId === undefined) {
+        auditUserId = userId; // مُستحيل عمليًّا (حارس المستخدمين أعلاه) — أمان نوعي
+      }
       await tx.activityLog.create({
         data: {
-          userId,
+          userId: auditUserId,
           action: 'SYSTEM_RESTORED',
           module: 'SYSTEM',
           details: {
+            performedBy: userId,
             tables: Object.keys(inserted).length,
             totalRows: Object.values(inserted).reduce((a, b) => a + b, 0),
             backupExportedAt:

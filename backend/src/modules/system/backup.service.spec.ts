@@ -83,6 +83,53 @@ describe('BackupService — النسخ الاحتياطي (SELIM W2)', () => {
     expect(stale).toEqual([]);
   });
 
+  /**
+   * حارس ترتيب FK (انحدار بروفة 2026-09-14): كل حقل @relation يشير إلى
+   * نموذج آخر يجب أن يأتي هدفه قبل صاحبه في BACKUP_ORDER — وإلا فشل
+   * الاستعادة بـ P2003 على أي قاعدة فيها تلك البيانات (حدث فعلًا مع
+   * FiscalPeriod.createdById → User قبل الإصلاح). المراجع الذاتية
+   * (Account/RefreshToken/JournalEntry) تُحرس بفرز insertSortBy إلزامي.
+   */
+  it('حارس الترتيب: كل FK بين-نماذج يُدرج هدفه قبله + المراجع الذاتية مفروزة', () => {
+    const schemaPath = join(__dirname, '../../../prisma/schema.prisma');
+    const content = readFileSync(schemaPath, 'utf8');
+    const fkMap = new Map<string, string[]>(); // model → [target, ...]
+    const selfRef = new Set<string>();
+    for (const block of content.matchAll(/model (\w+) \{([\s\S]*?)\n\}/g)) {
+      const [, model, body] = block;
+      const targets: string[] = [];
+      for (const line of body.split('\n')) {
+        const rel = line.match(
+          /^\s*(\w+)\??\s+(\w+)\??\s+@relation\((?:"\w+",\s*)?fields:\s*\[(\w+)\]/,
+        );
+        if (rel) {
+          const [, , target, field] = rel;
+          void field;
+          targets.push(target);
+          if (target === model) selfRef.add(model);
+        }
+      }
+      if (targets.length > 0) fkMap.set(model, targets);
+    }
+    const position = new Map(BACKUP_ORDER.map((s, i) => [s.model, i]));
+    const violations: string[] = [];
+    for (const spec of BACKUP_ORDER) {
+      for (const target of fkMap.get(spec.model) ?? []) {
+        if (target === spec.model) continue; // ذاتي — يُحرس بالفرز أدناه
+        const tp = position.get(target);
+        if (tp !== undefined && tp > (position.get(spec.model) ?? -1)) {
+          violations.push(`${spec.model} قبل ${target}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+    // المراجع الذاتية الثلاثة المعروفة تتطلب فرزًا يضمن الأب/الأقدم أولًا.
+    for (const model of selfRef) {
+      const spec = BACKUP_ORDER.find((s) => s.model === model);
+      expect(spec?.insertSortBy).toBeDefined();
+    }
+  });
+
   it('createBackup: يمر على كل الجداول ويسجل التدقيق ويحسب الإجماليات', async () => {
     // جلسة افتراضية: جدول واحد بصف واحد عبر delegate موسع محليًا.
     const backup = await service.createBackup('user-1');
@@ -199,6 +246,85 @@ describe('BackupService — النسخ الاحتياطي (SELIM W2)', () => {
       expect.objectContaining({
         data: expect.objectContaining({
           action: 'SYSTEM_RESTORED',
+        }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
+    );
+  });
+
+  /**
+   * سيناريو التعافي الكارثي (بروفة 2026-09-14): مستخدم محلي جديد ينفذ
+   * الاستعادة على نظام فارغ — معرفه محيته TRUNCATE مع الجداول، فلا يجوز
+   * أن ينكسر سجل التدقيق بمفتاح أجنبي لمستخدم غير موجود بعد الاستعادة.
+   * المتوقع: تنسب الحركة لمُصدِّر النسخة (موجود في بياناتها) ويوثق المنفذ
+   * الفعلي نصًّا في التفاصيل، وتنجح الاستعادة كاملة.
+   */
+  it('restore على نظام جديد: سجل التدقيق يُنسب لمستخدم النسخة لا المنفذ المحلي المحذوف', async () => {
+    prisma.$queryRaw.mockResolvedValue([{ tablename: 'users' }]);
+    (
+      prisma as unknown as { $executeRawUnsafe: jest.Mock }
+    ).$executeRawUnsafe.mockResolvedValue(0);
+    const file = Buffer.from(
+      JSON.stringify({
+        meta: {
+          formatVersion: 1,
+          exportedAt: '2026-09-13T00:00:00Z',
+          exportedById: 'exporter-1',
+        },
+        data: {
+          User: [
+            { id: 'exporter-1', createdAt: '2026-09-01T00:00:00Z' },
+            { id: 'worker-user', createdAt: '2026-09-05T00:00:00Z' },
+          ],
+        },
+      }),
+    );
+    // الموك يعيد count صفرية افتراضيًا — نحاكي إدراج المستخدمين فعليًا.
+    (
+      prisma.user as unknown as { createMany: jest.Mock }
+    ).createMany.mockResolvedValue({ count: 2 });
+    const result = (await service.restore(
+      file,
+      RESTORE_CONFIRM_PHRASE,
+      'local-admin-999', // غير موجود في النسخة إطلاقًا
+    )) as { restored: boolean; totalRows: number };
+    expect(result.restored).toBe(true);
+    expect(result.totalRows).toBe(2);
+    // الحركة منسوبة لمُصدِّر النسخة (FK سليم) والمنفذ الفعلي موثق نصًّا.
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'exporter-1',
+          action: 'SYSTEM_RESTORED',
+          details: expect.objectContaining({
+            performedBy: 'local-admin-999',
+          }) as Record<string, unknown>,
+        }) as Record<string, unknown>,
+      }) as Record<string, unknown>,
+    );
+  });
+
+  /**
+   * مطابقة عدادات الفحوصات: نفس ملف DR أعلاه لكن بلا exportedById في
+   * meta — تنسب الحركة لأول مستخدم في النسخة بدل الفشل.
+   */
+  it('restore بلا exportedById: أول مستخدم في النسخة هو منصة التدقيق', async () => {
+    prisma.$queryRaw.mockResolvedValue([]);
+    (
+      prisma as unknown as { $executeRawUnsafe: jest.Mock }
+    ).$executeRawUnsafe.mockResolvedValue(0);
+    const file = Buffer.from(
+      JSON.stringify({
+        meta: { formatVersion: 1, exportedAt: '2026-09-13T00:00:00Z' },
+        data: {
+          User: [{ id: 'first-user', createdAt: '2026-09-01T00:00:00Z' }],
+        },
+      }),
+    );
+    await service.restore(file, RESTORE_CONFIRM_PHRASE, 'outsider-x');
+    expect(prisma.activityLog.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          userId: 'first-user',
         }) as Record<string, unknown>,
       }) as Record<string, unknown>,
     );
