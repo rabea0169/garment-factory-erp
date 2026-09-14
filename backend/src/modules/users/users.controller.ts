@@ -21,6 +21,8 @@ import { Roles } from '../auth/roles.guard';
 import { CreateUserDto } from './dto/create-user.dto';
 import { ChangeUserRoleDto } from './dto/change-user-role.dto';
 import { UserQueryDto } from './dto/user-query.dto';
+import { UpdatePermissionsDto } from './dto/update-permissions.dto';
+import { ForbiddenException, Put } from '@nestjs/common';
 import { UsersService } from './users.service';
 
 /**
@@ -117,5 +119,51 @@ export class UsersController {
     @Headers('idempotency-key') idempotencyKey?: string,
   ) {
     return this.usersService.activateUser(id, actorId, idempotencyKey);
+  }
+
+  // ----------------------------------------------------------------
+  // SELIM-ERP W4 — الصلاحيات التفصيلية للمستخدم
+  // (نقل GET/PUT /api/users/[id]/permissions من المرجع SPRINT 81)
+  // ----------------------------------------------------------------
+
+  @Get(':id/permissions')
+  @Roles(
+    UserRole.SUPER_ADMIN,
+    UserRole.GENERAL_MANAGER,
+    UserRole.ACCOUNTANT,
+    UserRole.CASHIER,
+    UserRole.PRODUCTION_MANAGER,
+    UserRole.INVENTORY_MANAGER,
+    UserRole.HR_MANAGER,
+    UserRole.VIEWER,
+  )
+  @ApiOperation({
+    summary:
+      'W4: صلاحيات مستخدم (المخزّنة + افتراضيات الدور + الفعالة) — SUPER_ADMIN أو صاحب الحساب',
+  })
+  async getPermissions(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @CurrentUser() actor: { id: string; role: UserRole },
+  ) {
+    if (actor.id !== id && actor.role !== UserRole.SUPER_ADMIN) {
+      throw new ForbiddenException(
+        'غير مصرح — يمكنك الاطلاع على صلاحياتك الخاصة فقط',
+      );
+    }
+    return this.usersService.getUserPermissions(id);
+  }
+
+  @Put(':id/permissions')
+  @Roles(UserRole.SUPER_ADMIN)
+  @ApiOperation({
+    summary:
+      'W4: تحديث صلاحيات مستخدم (SUPER_ADMIN فقط — لا يمكن لنفسه: حماية من حبس النفس)',
+  })
+  async updatePermissions(
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdatePermissionsDto,
+    @CurrentUser('id') actorId: string,
+  ) {
+    return this.usersService.updateUserPermissions(id, dto, actorId);
   }
 }

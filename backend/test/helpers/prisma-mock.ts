@@ -319,6 +319,16 @@ export function createPrismaMock() {
       updateMany: jest.fn(),
       findMany: jest.fn(),
     },
+    // SELIM-ERP W4: فروع الشركة (CRUD + isMain updateMany لإلغاء الرئيسية).
+    companyBranch: {
+      findMany: jest.fn(),
+      findUnique: jest.fn(),
+      create: jest.fn(),
+      update: jest.fn(),
+      updateMany: jest.fn(),
+      delete: jest.fn(),
+      count: jest.fn(),
+    },
     expense: {
       findUnique: jest.fn(),
       findMany: jest.fn(),

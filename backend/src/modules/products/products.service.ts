@@ -113,6 +113,7 @@ export class ProductsService {
       retailPrice: number;
       wholesalePrice: number;
       seasonId?: string;
+      branchId?: string;
     },
     idempotencyKey?: string,
   ) {
@@ -124,6 +125,7 @@ export class ProductsService {
       retailPrice: data.retailPrice,
       wholesalePrice: data.wholesalePrice,
       seasonId: data.seasonId ?? null,
+      branchId: data.branchId ?? null,
     });
     const scope = 'product-create';
     return this.prisma.$transaction(async (tx) => {
@@ -149,6 +151,20 @@ export class ProductsService {
         if (!season) {
           throw new NotFoundException(
             `الموسم المحدد غير موجود: ${data.seasonId}`,
+          );
+        }
+      }
+
+      // SELIM-ERP W4 (SPRINT 94): فرع الصنف — اختياري (null = مشترك بين
+      // الفروع)؛ يُتحقق من وجوده ونشاطه داخل المعاملة (404 ودود قبل P2003).
+      if (data.branchId) {
+        const branch = await tx.companyBranch.findFirst({
+          where: { id: data.branchId, isActive: true },
+          select: { id: true },
+        });
+        if (!branch) {
+          throw new NotFoundException(
+            `الفرع المحدد غير موجود أو غير نشط: ${data.branchId}`,
           );
         }
       }

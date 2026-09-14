@@ -16,6 +16,12 @@ import {
 } from '../../core/common/idempotency.util';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UserQueryDto } from './dto/user-query.dto';
+import { UpdatePermissionsDto } from './dto/update-permissions.dto';
+import {
+  computeEffectivePermissions,
+  getRoleDefaultPermissions,
+  normalizeStoredPermissions,
+} from '../../core/permissions/permissions.domain';
 
 /**
  * CC-9 (P1 — GF-IMP-W2): موديول إدارة المستخدمين — بديل SQL اليدوي.
@@ -48,6 +54,12 @@ const USER_PUBLIC_SELECT = {
   role: true,
   isActive: true,
   createdAt: true,
+} as const;
+
+/** SELIM-ERP W4: أعمدة آمنة مع عمود الصلاحيات (لا كلمة مرور). */
+const USER_PERMISSIONS_SELECT = {
+  ...USER_PUBLIC_SELECT,
+  permissions: true,
 } as const;
 
 /** قيم UserRole الفعلية من المخطط — فحص دفاعي في الخدمة فوق IsEnum في DTO. */
@@ -410,5 +422,102 @@ export class UsersService {
       }
       throw error;
     }
+  }
+
+  // ----------------------------------------------------------------
+  // SELIM-ERP W4 — الصلاحيات التفصيلية للمستخدم
+  // (نقل GET/PUT /api/users/[id]/permissions من المرجع SPRINT 81)
+  // ----------------------------------------------------------------
+
+  /**
+   * جلب صلاحيات مستخدم: المخزَّنة الصريحة + الافتراضية لدوره (خلفية
+   * للمحرر) + الفعالة المحسوبة — القراءة للـ SUPER_ADMIN أو صاحب الحساب.
+   */
+  async getUserPermissions(id: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id },
+      select: USER_PERMISSIONS_SELECT,
+    });
+    if (!user) {
+      throw new NotFoundException('المستخدم غير موجود');
+    }
+    const stored = normalizeStoredPermissions(user.permissions);
+    const effective = computeEffectivePermissions(user.role, stored);
+    return {
+      user: {
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+      },
+      stored,
+      roleDefaults: getRoleDefaultPermissions(user.role),
+      effective,
+    };
+  }
+
+  /**
+   * تحديث صلاحيات مستخدم (SUPER_ADMIN فقط عبر المتحكم — ولا يمكنه
+   * تعديل صلاحياته الشخصية: نفس حماية حبس النفس في المرجع).
+   * الصفوف تُنقَّى (normalizeStoredPermissions) فتُسقط القيم الشاذة
+   * وتُزال التكرارات؛ الصف الفارغ [] يمسح الصلاحيات الصريحة ويعيد
+   * المستخدم لافتراضيات دوره.
+   */
+  async updateUserPermissions(
+    id: string,
+    dto: UpdatePermissionsDto,
+    actorId: string,
+  ) {
+    if (id === actorId) {
+      throw new ConflictException(
+        'لا يمكنك تعديل صلاحياتك الشخصية بهذه الطريقة — كي لا تحبس نفسك خارج النظام',
+      );
+    }
+    const target = await this.prisma.user.findUnique({
+      where: { id },
+      select: USER_PERMISSIONS_SELECT,
+    });
+    if (!target) {
+      throw new NotFoundException('المستخدم غير موجود');
+    }
+
+    const normalized = normalizeStoredPermissions(dto.permissions);
+    const updated = await this.prisma.$transaction(async (tx) => {
+      const row = await tx.user.update({
+        where: { id },
+        // عمود JSON يتطلب InputJsonValue — الصفوف المنقاة قابلة للتسلسل أصلًا.
+        data: {
+          permissions: normalized as unknown as Prisma.InputJsonValue,
+        },
+        select: USER_PERMISSIONS_SELECT,
+      });
+      await tx.activityLog.create({
+        data: {
+          userId: actorId,
+          action: 'USER_PERMISSIONS_UPDATED',
+          module: 'USERS',
+          details: {
+            targetUserId: id,
+            targetEmail: target.email,
+            count: normalized.length,
+            // الموردات فقط (بلا أفعال) لضغط حجم السجل — same-entity في المرجع.
+            resources: [...new Set(normalized.map((p) => p.resource))],
+          },
+        },
+      });
+      return row;
+    });
+
+    const effective = computeEffectivePermissions(updated.role, normalized);
+    return {
+      user: {
+        id: updated.id,
+        name: updated.name,
+        email: updated.email,
+        role: updated.role,
+      },
+      stored: normalized,
+      effective,
+    };
   }
 }

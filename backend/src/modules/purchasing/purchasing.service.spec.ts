@@ -86,6 +86,8 @@ describe('PurchasingService (GF-0009)', () => {
         expect.objectContaining({
           include: {
             supplier: { select: { id: true, code: true, name: true } },
+            // SELIM-ERP W4 (SPRINT 93): اسم الفرع في قوائم المشتريات.
+            branch: { select: { id: true, name: true } },
             items: {
               select: {
                 id: true,
@@ -232,6 +234,7 @@ describe('PurchasingService (GF-0009)', () => {
           dueDate: null,
           notes: null,
           items: dto.items,
+          branchId: null, // SELIM-ERP W4: الفرع في بصمة الاندماجية
         }),
         response: stored,
       });

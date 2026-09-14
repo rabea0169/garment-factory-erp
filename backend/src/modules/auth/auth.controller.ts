@@ -14,6 +14,7 @@ import { RefreshDto } from './dto/refresh.dto';
 import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
 import { CurrentUser } from './current-user.decorator';
 import { Public } from './public.decorator';
+import { computeEffectivePermissions } from '../../core/permissions/permissions.domain';
 import type { Request } from 'express';
 
 /**
@@ -29,7 +30,15 @@ export class AuthController {
   @ApiOperation({ summary: 'إرجاع بيانات المستخدم الحالي' })
   @ApiResponse({ status: 200, description: 'بيانات المستخدم المصادق عليه' })
   me(@CurrentUser() user: Record<string, unknown>) {
-    return user;
+    // SELIM-ERP W4: الصلاحيات الفعالة (الدور أساس + صريحة المستخدم) —
+    // الجوال يقرأها لبوابات الأقسام (نفس permissionRows في جلسة المرجع).
+    // user.permissions يأتي خامًا من JwtStrategy (عمود JSON) — نقية هنا فقط.
+    const effectivePermissions = computeEffectivePermissions(
+      user.role as never,
+      user.permissions,
+    );
+    const { permissions, ...rest } = user;
+    return { ...rest, effectivePermissions };
   }
 
   @Public()

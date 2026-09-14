@@ -46,6 +46,7 @@ import { PosModule } from './modules/pos/pos.module';
 import { DataImportModule } from './modules/data-import/data-import.module';
 import { SystemModule } from './modules/system/system.module';
 import { ExportsModule } from './modules/exports/exports.module';
+import { BranchesModule } from './modules/branches/branches.module';
 
 @Module({
   imports: [
@@ -119,6 +120,9 @@ import { ExportsModule } from './modules/exports/exports.module';
     SystemModule,
     // SELIM-ERP W3 — تصدير Excel/Word لقوائم الكيانات.
     ExportsModule,
+    // SELIM-ERP W4 — فروع الشركة + الصلاحيات التفصيلية (نقل CompanyBranch
+    // و UserPermission من المرجع SPRINT 89/93/94 + permissions API).
+    BranchesModule,
   ],
   // إصلاح خلل قديم كشفه اختبار GF-0002: AppController/AppService لم يكونا
   // مسجلين في المodule — فكان GET / يرجع 404 رغم أن app.e2e-spec الأصلي ينتظر 200

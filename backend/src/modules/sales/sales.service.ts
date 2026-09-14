@@ -1006,6 +1006,8 @@ export class SalesService {
         // product الكاملة لكل بند في كل صفحة قائمة).
         include: {
           customer: { select: { id: true, name: true, code: true } },
+          // SELIM-ERP W4 (SPRINT 93): اسم الفرع لعرضه في قوائم البيع.
+          branch: { select: { id: true, name: true } },
           items: {
             select: {
               id: true,
@@ -1069,6 +1071,7 @@ export class SalesService {
       paymentType: PaymentType;
       discount: number;
       items: { productVariantId: string; quantity: number }[];
+      branchId?: string;
     },
     userId: string,
     idempotencyKey?: string,
@@ -1094,6 +1097,7 @@ export class SalesService {
       paymentType: data.paymentType,
       discount: data.discount,
       items: data.items,
+      branchId: data.branchId ?? null,
     });
     const replay = await tryReplayIdempotencyKey(
       this.prisma,
@@ -1108,6 +1112,18 @@ export class SalesService {
       select: { id: true },
     });
     if (!customer) throw new NotFoundException('العميل غير موجود أو غير نشط');
+
+    // SELIM-ERP W4 (SPRINT 93): الفرع المُصدِر — اختياري؛ إن وُجد يُتحقق
+    // منه (نشط) قبل الإنشاء كي لا يُخزَّن فرع معطّل/محذوف في فاتورة.
+    if (data.branchId) {
+      const branch = await this.prisma.companyBranch.findFirst({
+        where: { id: data.branchId, isActive: true },
+        select: { id: true },
+      });
+      if (!branch) {
+        throw new BadRequestException('الفرع غير موجود أو غير نشط');
+      }
+    }
 
     const variants = await this.prisma.productVariant.findMany({
       where: {
@@ -1161,6 +1177,7 @@ export class SalesService {
             totalAmount,
             discount: data.discount,
             status: SalesOrderStatus.DRAFT,
+            ...(data.branchId ? { branchId: data.branchId } : {}),
             items: { create: orderItemsData },
           },
           include: { items: true },

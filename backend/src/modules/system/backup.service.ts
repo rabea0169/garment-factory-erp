@@ -81,6 +81,8 @@ export const BACKUP_ORDER: BackupModelSpec[] = [
   { model: 'JournalTemplate' },
   { model: 'PrintTemplate' },
   { model: 'FactorySettings' },
+  // SELIM-ERP W4: فروع الشركة — جذر بلا تبعيات (المستندات تشير إليه SetNull).
+  { model: 'CompanyBranch' },
   // 1 — تعتمد على الجذور
   { model: 'User', insertSortBy: 'createdAt' },
   { model: 'Device' },

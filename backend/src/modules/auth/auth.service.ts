@@ -11,6 +11,7 @@ import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { LoginDto } from './dto/login.dto';
 import { Prisma } from '@prisma/client';
+import { computeEffectivePermissions } from '../../core/permissions/permissions.domain';
 
 /**
  * SEC-F04: مدة صلاحية الـ refresh token — 30 يومًا افتراضيًا،
@@ -131,10 +132,18 @@ export class AuthService {
 
     const { password, ...result } = user;
 
+    // SELIM-ERP W4: الصلاحيات الفعالة (الدور أساس + صريحة المستخدم) —
+    // نفس دلالة permissionRows في جلسة المرجع (loginUser).
+    const effectivePermissions = computeEffectivePermissions(
+      user.role,
+      result.permissions,
+    );
+
     return {
       access_token: accessToken,
       refresh_token: refreshToken,
       user: result,
+      effectivePermissions,
     };
   }
 
@@ -229,10 +238,17 @@ export class AuthService {
 
         const { password, ...userResult } = existing.user;
 
+        // SELIM-ERP W4: نفس حساب الصلاحيات الفعالة في login.
+        const effectivePermissions = computeEffectivePermissions(
+          existing.user.role,
+          userResult.permissions,
+        );
+
         return {
           access_token: accessToken,
           refresh_token: newRefreshToken,
           user: userResult,
+          effectivePermissions,
         };
       });
     } catch (error) {

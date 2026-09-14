@@ -63,7 +63,33 @@ describe('AuthController — الوصول العام والتفويض (GF-0003 +
       role: 'VIEWER',
     };
 
-    expect(controller.me(user)).toEqual(user);
+    // SELIM-ERP W4: نفس الحقول + الصلاحيات الفعالة لافتراضيات الدور.
+    const result = controller.me(user) as Record<string, unknown>;
+    expect(result).toMatchObject(user);
+    const effective = result.effectivePermissions as {
+      permissions: unknown[];
+      source: string;
+    };
+    expect(Array.isArray(effective.permissions)).toBe(true);
+    expect(effective.source).toBe('role');
+  });
+
+  it('SELIM-ERP W4: me يضيف الصلاحيات الفعالة ويخفي عمود permissions الخام', () => {
+    const user = {
+      id: 'u-1',
+      email: 'viewer@factory.com',
+      role: 'VIEWER',
+      permissions: [{ resource: 'sales', action: 'READ' }],
+    };
+
+    const result = controller.me(user) as Record<string, unknown>;
+    // الصريحة تغلب افتراضيات الدور (source: user) ولا تُنقل خامًا.
+    expect(result.permissions).toBeUndefined();
+    expect(result.effectivePermissions).toEqual({
+      permissions: [{ resource: 'sales', action: 'READ' }],
+      source: 'user',
+    });
+    expect(result.id).toBe('u-1');
   });
 
   it('مسار login معلّم @Public — يجب أن يبقى عامًا وإلا انكسرت المصادقة كلها', () => {
