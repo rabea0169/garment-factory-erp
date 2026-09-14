@@ -3,10 +3,10 @@ import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:intl/intl.dart';
 
 import '../../../../../core/constants/app_colors.dart';
-import '../../../../../core/navigation/back_navigation.dart';
 import '../../../../../core/services/worker_report_pdf_service.dart';
 import '../../../../../core/widgets/app_feedback.dart';
 import '../../../../../core/widgets/selim/format.dart';
+import '../../../../../core/widgets/selim/selim_shell.dart';
 import '../cubit/worker_report_cubit.dart';
 import '../cubit/worker_report_state.dart';
 
@@ -33,21 +33,20 @@ class WorkerReportScreen extends StatelessWidget {
       create: (_) => WorkerReportCubit(workerId: workerId)..fetchReport(),
       child: DefaultTabController(
         length: 5,
-        child: Scaffold(
-          appBar: AppBar(
-            leading: const GfBackButton(),
-            title: Text('تقرير العامل${_titleSuffix()}'),
-            actions: const [_PdfAction()],
-            bottom: const TabBar(
-              isScrollable: true,
-              tabs: [
-                Tab(text: 'السلف'),
-                Tab(text: 'سندات القبض'),
-                Tab(text: 'الحضور'),
-                Tab(text: 'الإنتاج'),
-                Tab(text: 'الرواتب'),
-              ],
-            ),
+        // UI-COMPLETE: الهيكل الموحد مع bottom للـ TabBar — نفس بنية
+        // بقية الشاشات (تنقل سفلي + لوحة أوامر) مع الحفاظ على التبويبات.
+        child: SelimShellScaffold(
+          title: 'تقرير العامل${_titleSuffix()}',
+          actions: const [_PdfAction()],
+          bottom: const TabBar(
+            isScrollable: true,
+            tabs: [
+              Tab(text: 'السلف'),
+              Tab(text: 'سندات القبض'),
+              Tab(text: 'الحضور'),
+              Tab(text: 'الإنتاج'),
+              Tab(text: 'الرواتب'),
+            ],
           ),
           body: const _WorkerReportBody(),
         ),

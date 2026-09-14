@@ -5,9 +5,9 @@ import 'package:intl/intl.dart';
 
 import '../../../../../core/constants/app_colors.dart';
 import '../../../../../core/widgets/app_feedback.dart';
+import '../../../../../core/widgets/selim/selim_shell.dart';
 import '../cubit/worker_activity_cubit.dart';
 import '../cubit/worker_activity_state.dart';
-import '../../../../../core/navigation/back_navigation.dart';
 
 /// MOB-8: شاشة نشاط العامل — تبويبان: آخر السلف وآخر إنتاج العامل
 /// (أبسط تمثيل قائمة). تُفتح من بطاقة العامل في شاشة الموارد البشرية.
@@ -39,28 +39,27 @@ class WorkerActivityScreen extends StatelessWidget {
           )..fetchActivity()),
       child: DefaultTabController(
         length: 2,
-        child: Scaffold(
-          appBar: AppBar(
-            leading: const GfBackButton(),
-            title: Text('نشاط العامل${_titleSuffix()}'),
-            // SELIM-ERP W5: التقرير المجمّع بنطاق تاريخ من هنا مباشرة —
-            // push كشاشات التفاصيل (الرجوع يعود إلى هنا لا للوحة).
-            actions: [
-              IconButton(
-                tooltip: 'تقرير العامل المجمّع',
-                icon: const Icon(Icons.assessment),
-                onPressed: () => context.push(
-                  '/hr/workers/report/$workerId'
-                  '${(workerName == null || workerName!.isEmpty) ? '' : '?name=${Uri.encodeComponent(workerName!)}'}',
-                ),
+        // UI-COMPLETE: الهيكل الموحد مع bottom للـ TabBar — نفس بنية
+        // بقية الشاشات (تنقل سفلي + لوحة أوامر) مع الحفاظ على التبويبات.
+        child: SelimShellScaffold(
+          title: 'نشاط العامل${_titleSuffix()}',
+          // SELIM-ERP W5: التقرير المجمّع بنطاق تاريخ من هنا مباشرة —
+          // push كشاشات التفاصيل (الرجوع يعود إلى هنا لا للوحة).
+          actions: [
+            IconButton(
+              tooltip: 'تقرير العامل المجمّع',
+              icon: const Icon(Icons.assessment),
+              onPressed: () => context.push(
+                '/hr/workers/report/$workerId'
+                '${(workerName == null || workerName!.isEmpty) ? '' : '?name=${Uri.encodeComponent(workerName!)}'}',
               ),
-            ],
-            bottom: const TabBar(
-              tabs: [
-                Tab(text: 'آخر السلف'),
-                Tab(text: 'آخر الإنتاج'),
-              ],
             ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'آخر السلف'),
+              Tab(text: 'آخر الإنتاج'),
+            ],
           ),
           body: const _WorkerActivityBody(),
         ),

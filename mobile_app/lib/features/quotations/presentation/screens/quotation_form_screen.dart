@@ -3,7 +3,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/selim/format.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 /// نموذج إنشاء عرض سعر (SELIM-ERP W1).
 ///
@@ -83,14 +83,13 @@ class _QuotationFormScreenState extends State<QuotationFormScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('عرض سعر جديد'),
-        actions: [
-          IconButton(icon: const Icon(Icons.save_rounded), tooltip: 'حفظ', onPressed: _save),
-        ],
-      ),
+    // UI-COMPLETE: الهيكل الموحد — زر الرجوع التلقائي + التنقل السفلي
+    // ولوحة الأوامر، مثل بقية الشاشات.
+    return SelimShellScaffold(
+      title: 'عرض سعر جديد',
+      actions: [
+        IconButton(icon: const Icon(Icons.save_rounded), tooltip: 'حفظ', onPressed: _save),
+      ],
       body: Form(
         key: _formKey,
         child: ListView(
@@ -119,7 +118,7 @@ class _QuotationFormScreenState extends State<QuotationFormScreen> {
       ),
       // شريط الإجمالي اللزج أسفل الشاشة مع زر الحفظ — نفس sticky footer
       // في نماذج Selim: الإجمالي الكبير مرئي دائمًا أثناء الإدخال.
-      bottomNavigationBar: SafeArea(
+      bottomBar: SafeArea(
         child: Container(
           padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 16, 12),
           decoration: BoxDecoration(
