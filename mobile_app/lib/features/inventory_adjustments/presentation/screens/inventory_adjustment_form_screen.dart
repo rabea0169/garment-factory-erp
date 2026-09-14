@@ -133,7 +133,7 @@ class _InventoryAdjustmentFormScreenState extends State<InventoryAdjustmentFormS
           ],
         ),
       ),
-      bottomNavigationBar: SafeArea(
+      bottomBar: SafeArea(
         child: Container(
           padding: const EdgeInsetsDirectional.fromSTEB(16, 10, 16, 12),
           decoration: BoxDecoration(

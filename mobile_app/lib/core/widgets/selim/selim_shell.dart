@@ -31,6 +31,7 @@ class SelimShellScaffold extends StatelessWidget implements PreferredSizeWidget 
     this.currentRoute,
     this.actions,
     this.bottom,
+    this.bottomBar,
   });
 
   /// عنوان الشاشة في الـ AppBar.
@@ -50,6 +51,10 @@ class SelimShellScaffold extends StatelessWidget implements PreferredSizeWidget 
   /// شريط سفلي للـ AppBar (TabBar) — شاشات العمالة ذات التبويبات.
   final PreferredSizeWidget? bottom;
 
+  /// شريط لزج أسفل المحتوى (إجماليات النماذج + زر الحفظ) — يظهر فوق
+  /// شريط التنقل على الجوال وفي قاع منطقة المحتوى على الديسكتوب.
+  final Widget? bottomBar;
+
   @override
   Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 
@@ -57,9 +62,9 @@ class SelimShellScaffold extends StatelessWidget implements PreferredSizeWidget 
   Widget build(BuildContext context) {
     final isWide = MediaQuery.sizeOf(context).width >= 1000;
     if (isWide) {
-      return _WideShell(title: title, body: body, fab: fab, actions: actions, bottom: bottom);
+      return _WideShell(title: title, body: body, fab: fab, actions: actions, bottom: bottom, bottomBar: bottomBar);
     }
-    return _MobileShell(title: title, body: body, fab: fab, actions: actions, bottom: bottom);
+    return _MobileShell(title: title, body: body, fab: fab, actions: actions, bottom: bottom, bottomBar: bottomBar);
   }
 }
 
@@ -101,13 +106,14 @@ List<SelimDestination> get allDestinations => [
 ];
 
 class _MobileShell extends StatelessWidget {
-  const _MobileShell({required this.title, required this.body, this.fab, this.actions, this.bottom});
+  const _MobileShell({required this.title, required this.body, this.fab, this.actions, this.bottom, this.bottomBar});
 
   final String title;
   final Widget body;
   final Widget? fab;
   final List<Widget>? actions;
   final PreferredSizeWidget? bottom;
+  final Widget? bottomBar;
 
   @override
   Widget build(BuildContext context) {
@@ -147,7 +153,21 @@ class _MobileShell extends StatelessWidget {
             ],
             bottom: bottom,
           ),
-            body: body,
+            // شريط النموذج اللزج (الإجماليات + الحفظ) يظهر فوق شريط
+            // التنقل — مع إزالة حافة النظام السفلية هنا لأن SafeArea
+            // شريط التنقل استهلكتها فعلًا (منع الحشو المزدوج).
+            body: bottomBar == null
+                ? body
+                : Column(
+                    children: [
+                      Expanded(child: body),
+                      MediaQuery.removePadding(
+                        context: context,
+                        removeBottom: true,
+                        child: bottomBar!,
+                      ),
+                    ],
+                  ),
             floatingActionButton: fab,
             // المساحة السفلية تحفظ بطاقة الشريط من فوق زر النظام في
             // الأجهزة الحديثة (safe-area) — مثل pb-[env(...)] في Selim.
@@ -300,13 +320,14 @@ class _MoreButton extends StatelessWidget {
 }
 
 class _WideShell extends StatelessWidget {
-  const _WideShell({required this.title, required this.body, this.fab, this.actions, this.bottom});
+  const _WideShell({required this.title, required this.body, this.fab, this.actions, this.bottom, this.bottomBar});
 
   final String title;
   final Widget body;
   final Widget? fab;
   final List<Widget>? actions;
   final PreferredSizeWidget? bottom;
+  final Widget? bottomBar;
 
   @override
   Widget build(BuildContext context) {
@@ -377,7 +398,16 @@ class _WideShell extends StatelessWidget {
                 .toList(),
           ),
           const VerticalDivider(width: 1, thickness: 1),
-          Expanded(child: body),
+          Expanded(
+            // على الديسكتوب لا شريط سفلي للتنقل — شريط النموذج اللزج
+            // يثبت في قاع منطقة المحتوى مباشرة (نفس sticky footer في
+            // نماذج Selim على الويب).
+            child: bottomBar == null
+                ? body
+                : Column(
+                    children: [Expanded(child: body), bottomBar!],
+                  ),
+          ),
         ],
       ),
       floatingActionButton: fab,
