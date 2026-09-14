@@ -11,14 +11,10 @@ import '../../../../core/widgets/app_feedback.dart';
 import '../../../../core/widgets/contact_import_button.dart';
 import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/sales_cubit.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class SalesScreen extends StatelessWidget {
-  const SalesScreen({
-    super.key,
-    this.cubit,
-    this.contactImportService,
-  });
+  const SalesScreen({super.key, this.cubit, this.contactImportService});
 
   final SalesCubit? cubit;
   final ContactImportService? contactImportService;
@@ -26,24 +22,22 @@ class SalesScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Builder(
-      builder: (screenContext) => Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('المبيعات والعملاء'),
-          actions: [
-            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
-            const EntityExportButtons(entities: ['sales', 'customers']),
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث',
-              onPressed: () => screenContext.read<SalesCubit>().fetchOrders(),
-            ),
-          ],
-        ),
+      builder: (screenContext) => SelimShellScaffold(
+        title: 'المبيعات والعملاء',
+        actions: [
+          // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+          const EntityExportButtons(entities: ['sales', 'customers']),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () => screenContext.read<SalesCubit>().fetchOrders(),
+          ),
+        ],
         body: BlocBuilder<SalesCubit, SalesState>(
           builder: (context, state) {
             if (state is SalesLoading) {
-              return const AppLoadingView();
+              // UI-REVAMP: سكيلتون يحاكي بطاقات الطلبات بدل مؤشر دوّار.
+              return const AppSkeletonList();
             }
             if (state is SalesError) {
               return AppErrorView(
@@ -128,12 +122,12 @@ class SalesScreen extends StatelessWidget {
                                       '${AppRouter.customerStatement}/${customer!['id']}',
                                     ),
                                     icon: const Icon(
-                                        Icons.receipt_long_outlined),
+                                      Icons.receipt_long_outlined,
+                                    ),
                                     label: const Text('كشف حساب العميل'),
                                   ),
                                   OutlinedButton.icon(
-                                    onPressed: () =>
-                                        showPartyDetailsSheet(
+                                    onPressed: () => showPartyDetailsSheet(
                                       screenContext,
                                       party: Map<String, dynamic>.from(
                                         customer as Map,
@@ -156,8 +150,9 @@ class SalesScreen extends StatelessWidget {
                                   child: OutlinedButton.icon(
                                     onPressed: () =>
                                         _confirmOrder(screenContext, order),
-                                    icon:
-                                        const Icon(Icons.check_circle_outline),
+                                    icon: const Icon(
+                                      Icons.check_circle_outline,
+                                    ),
                                     label: const Text('تأكيد'),
                                   ),
                                 ),
@@ -182,7 +177,8 @@ class SalesScreen extends StatelessWidget {
                                 onPressed: () =>
                                     _showReturnDialog(screenContext, order),
                                 icon: const Icon(
-                                    Icons.assignment_return_outlined),
+                                  Icons.assignment_return_outlined,
+                                ),
                                 label: const Text('تسجيل مرتجع'),
                               ),
                             ),
@@ -214,7 +210,7 @@ class SalesScreen extends StatelessWidget {
             return const SizedBox.shrink();
           },
         ),
-        floatingActionButton: Column(
+        fab: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -301,9 +297,8 @@ class SalesScreen extends StatelessWidget {
     try {
       await salesCubit.cancelOrder('${order['id']}');
       if (!context.mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إلغاء أمر البيع')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم إلغاء أمر البيع')));
     } catch (error) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -316,7 +311,8 @@ class SalesScreen extends StatelessWidget {
     BuildContext context,
     Map<String, dynamic> order,
   ) async {
-    final items = (order['items'] as List?)
+    final items =
+        (order['items'] as List?)
             ?.whereType<Map>()
             .map((item) => Map<String, dynamic>.from(item))
             .where((item) => item['id'] != null)
@@ -337,23 +333,22 @@ class SalesScreen extends StatelessWidget {
       ),
     );
     if (returned == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تسجيل المرتجع بنجاح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم تسجيل المرتجع بنجاح')));
     }
   }
 
   Future<void> _showCreateSalesOrderDialog(BuildContext context) async {
     final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => _CreateSalesOrderDialog(
-        salesCubit: context.read<SalesCubit>(),
-      ),
+      builder: (_) =>
+          _CreateSalesOrderDialog(salesCubit: context.read<SalesCubit>()),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إنشاء أمر البيع بنجاح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تم إنشاء أمر البيع بنجاح')));
     }
   }
 
@@ -385,9 +380,8 @@ class SalesScreen extends StatelessWidget {
       ),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تسجيل الدفعة بنجاح')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم تسجيل الدفعة بنجاح')));
     }
   }
 
@@ -400,9 +394,8 @@ class SalesScreen extends StatelessWidget {
       ),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ العميل بنجاح')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم حفظ العميل بنجاح')));
     }
   }
 }
@@ -483,7 +476,8 @@ class _AddCustomerDialogState extends State<_AddCustomerDialog> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 ContactImportButton(
-                  service: widget.contactImportService ??
+                  service:
+                      widget.contactImportService ??
                       const ContactImportService(),
                   onImported: _applyImportedContact,
                 ),
@@ -615,8 +609,7 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
   /// جلب الفروع النشطة للمنتقي (لا يرمي — الفروع اختيارية).
   static Future<List<Map<String, dynamic>>> _fetchBranches() async {
     try {
-      final response =
-          await ApiClient.instance.dio.get<dynamic>('/branches');
+      final response = await ApiClient.instance.dio.get<dynamic>('/branches');
       final rows = response.data is Map
           ? (response.data as Map)['branches']
           : response.data;
@@ -646,11 +639,12 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
 
   Future<void> _save(_SalesOrderOptions options) async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final selectedVariant =
-        options.variants.cast<Map<String, dynamic>?>().firstWhere(
-              (variant) => variant?['id'] == _variantId,
-              orElse: () => null,
-            );
+    final selectedVariant = options.variants
+        .cast<Map<String, dynamic>?>()
+        .firstWhere(
+          (variant) => variant?['id'] == _variantId,
+          orElse: () => null,
+        );
     if (_customerId == null || _variantId == null || selectedVariant == null) {
       return;
     }
@@ -692,14 +686,12 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
           future: _optionsFuture,
           builder: (context, snapshot) {
             if (snapshot.connectionState != ConnectionState.done) {
-              return const SizedBox(
-                height: 120,
-                child: AppLoadingView(),
-              );
+              return const SizedBox(height: 120, child: AppLoadingView());
             }
             if (snapshot.hasError) {
               return const Text(
-                  'تعذر تحميل العملاء والمنتجات. أغلق الحوار وحاول مرة أخرى.');
+                'تعذر تحميل العملاء والمنتجات. أغلق الحوار وحاول مرة أخرى.',
+              );
             }
             final options = snapshot.data!;
             if (options.customers.isEmpty || options.variants.isEmpty) {
@@ -737,8 +729,9 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       initialValue: _variantId,
-                      decoration:
-                          const InputDecoration(labelText: 'المنتج والمتغير *'),
+                      decoration: const InputDecoration(
+                        labelText: 'المنتج والمتغير *',
+                      ),
                       items: options.variants
                           .map(
                             (variant) => DropdownMenuItem<String>(
@@ -768,8 +761,9 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
                     const SizedBox(height: 10),
                     DropdownButtonFormField<String>(
                       initialValue: _paymentType,
-                      decoration:
-                          const InputDecoration(labelText: 'نوع الدفع *'),
+                      decoration: const InputDecoration(
+                        labelText: 'نوع الدفع *',
+                      ),
                       items: const [
                         DropdownMenuItem(value: 'CASH', child: Text('نقدي')),
                         DropdownMenuItem(value: 'CREDIT', child: Text('آجل')),
@@ -815,8 +809,9 @@ class _CreateSalesOrderDialogState extends State<_CreateSalesOrderDialog> {
                     const SizedBox(height: 10),
                     TextFormField(
                       controller: _discountController,
-                      keyboardType:
-                          const TextInputType.numberWithOptions(decimal: true),
+                      keyboardType: const TextInputType.numberWithOptions(
+                        decimal: true,
+                      ),
                       decoration: const InputDecoration(labelText: 'الخصم'),
                       validator: (value) {
                         final discount = double.tryParse(value?.trim() ?? '');
@@ -919,7 +914,8 @@ class _CustomerPaymentDialogState extends State<_CustomerPaymentDialog> {
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('تعذر تسجيل الدفعة. تحقق من المبلغ والصلاحيات.')),
+          content: Text('تعذر تسجيل الدفعة. تحقق من المبلغ والصلاحيات.'),
+        ),
       );
     }
   }
@@ -937,8 +933,9 @@ class _CustomerPaymentDialogState extends State<_CustomerPaymentDialog> {
             const SizedBox(height: 12),
             TextFormField(
               controller: _amountController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'قيمة الدفعة *'),
               validator: (value) {
                 final amount = double.tryParse(value?.trim() ?? '');
@@ -1096,8 +1093,9 @@ class _SalesReturnDialogState extends State<_SalesReturnDialog> {
                 TextFormField(
                   controller: _reasonController,
                   enabled: !_isSaving,
-                  decoration:
-                      const InputDecoration(labelText: 'سبب المرتجع (اختياري)'),
+                  decoration: const InputDecoration(
+                    labelText: 'سبب المرتجع (اختياري)',
+                  ),
                   maxLines: 2,
                 ),
               ],

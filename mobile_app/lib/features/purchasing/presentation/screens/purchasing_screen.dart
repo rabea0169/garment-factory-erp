@@ -5,7 +5,7 @@ import '../../../../core/network/api_client.dart';
 import '../../../../core/widgets/app_feedback.dart';
 import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/purchasing_cubit.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class PurchasingScreen extends StatelessWidget {
   const PurchasingScreen({super.key, this.cubit});
@@ -15,25 +15,22 @@ class PurchasingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final content = Builder(
-      builder: (screenContext) => Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('المشتريات والاستلام'),
-          actions: [
-            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
-            const EntityExportButtons(entities: ['purchases']),
-            IconButton(
-              icon: const Icon(Icons.refresh),
-              tooltip: 'تحديث',
-              onPressed: () =>
-                  screenContext.read<PurchasingCubit>().fetchData(),
-            ),
-          ],
-        ),
+      builder: (screenContext) => SelimShellScaffold(
+        title: 'المشتريات والاستلام',
+        actions: [
+          // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+          const EntityExportButtons(entities: ['purchases']),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'تحديث',
+            onPressed: () => screenContext.read<PurchasingCubit>().fetchData(),
+          ),
+        ],
         body: BlocBuilder<PurchasingCubit, PurchasingState>(
           builder: (context, state) {
             if (state is PurchasingInitial || state is PurchasingLoading) {
-              return const AppLoadingView();
+              // UI-REVAMP: سكيلتون يحاكي بطاقات أوامر الشراء.
+              return const AppSkeletonList();
             }
             if (state is PurchasingError) {
               return AppErrorView(
@@ -84,7 +81,8 @@ class PurchasingScreen extends StatelessWidget {
                             dense: true,
                             leading: const Icon(Icons.category_outlined),
                             title: Text(
-                                'خامة: ${material?['name'] ?? itemMap['rawMaterialId'] ?? 'غير محددة'}'),
+                              'خامة: ${material?['name'] ?? itemMap['rawMaterialId'] ?? 'غير محددة'}',
+                            ),
                             subtitle: Text(
                               'الكمية: ${itemMap['quantity'] ?? 0} | المستلم: $received | تكلفة الوحدة: ${itemMap['unitCost'] ?? 0}',
                             ),
@@ -129,10 +127,8 @@ class PurchasingScreen extends StatelessWidget {
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                               child: OutlinedButton.icon(
-                                onPressed: () => _showReceiveDialog(
-                                  screenContext,
-                                  order,
-                                ),
+                                onPressed: () =>
+                                    _showReceiveDialog(screenContext, order),
                                 icon: const Icon(Icons.move_to_inbox_outlined),
                                 label: const Text('تسجيل استلام'),
                               ),
@@ -144,12 +140,11 @@ class PurchasingScreen extends StatelessWidget {
                             child: Padding(
                               padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
                               child: OutlinedButton.icon(
-                                onPressed: () => _showReturnDialog(
-                                  screenContext,
-                                  order,
-                                ),
+                                onPressed: () =>
+                                    _showReturnDialog(screenContext, order),
                                 icon: const Icon(
-                                    Icons.assignment_return_outlined),
+                                  Icons.assignment_return_outlined,
+                                ),
                                 label: const Text('مرتجع للمورد'),
                               ),
                             ),
@@ -163,7 +158,7 @@ class PurchasingScreen extends StatelessWidget {
             return const SizedBox.shrink();
           },
         ),
-        floatingActionButton: FloatingActionButton.extended(
+        fab: FloatingActionButton.extended(
           onPressed: () => _showCreateOrderDialog(screenContext),
           icon: const Icon(Icons.add_business),
           label: const Text('أمر شراء جديد'),
@@ -183,27 +178,23 @@ class PurchasingScreen extends StatelessWidget {
   Future<void> _showCreateOrderDialog(BuildContext context) async {
     final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => _CreatePurchaseOrderDialog(
-        cubit: context.read<PurchasingCubit>(),
-      ),
+      builder: (_) =>
+          _CreatePurchaseOrderDialog(cubit: context.read<PurchasingCubit>()),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم إنشاء أمر الشراء')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم إنشاء أمر الشراء')));
     }
   }
 
   Future<void> _approveOrder(BuildContext context, String orderId) async {
-    final error = await context
-        .read<PurchasingCubit>()
-        .approvePurchaseOrder(purchaseOrderId: orderId);
+    final error = await context.read<PurchasingCubit>().approvePurchaseOrder(
+      purchaseOrderId: orderId,
+    );
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(
-          error ?? 'تم اعتماد أمر الشراء — صار الاستلام متاحًا',
-        ),
+        content: Text(error ?? 'تم اعتماد أمر الشراء — صار الاستلام متاحًا'),
         backgroundColor: error == null ? Colors.green.shade700 : null,
       ),
     );
@@ -223,8 +214,7 @@ class PurchasingScreen extends StatelessWidget {
             child: const Text('تراجع'),
           ),
           FilledButton(
-            style: FilledButton.styleFrom(
-                backgroundColor: Colors.red.shade700),
+            style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
             onPressed: () => Navigator.pop(dialogContext, true),
             child: const Text('إلغاء المسودة'),
           ),
@@ -315,8 +305,7 @@ class _CreatePurchaseOrderDialogState
   /// SELIM-ERP W4: الفروع النشطة للمنتقي (لا يرمي — الفرع اختياري).
   Future<List<Map<String, dynamic>>> _loadBranches() async {
     try {
-      final response =
-          await ApiClient.instance.dio.get<dynamic>('/branches');
+      final response = await ApiClient.instance.dio.get<dynamic>('/branches');
       final rows = response.data is Map
           ? (response.data as Map)['branches']
           : response.data;
@@ -370,8 +359,10 @@ class _CreatePurchaseOrderDialogState
       // P2 (audit-FE2): رسالة الخادم الفعلية (validation/403/409) بدل عامة.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                'تعذر إنشاء أمر الشراء: ${ApiClient.instance.messageFor(e)}')),
+          content: Text(
+            'تعذر إنشاء أمر الشراء: ${ApiClient.instance.messageFor(e)}',
+          ),
+        ),
       );
     }
   }
@@ -381,8 +372,10 @@ class _CreatePurchaseOrderDialogState
     final state = widget.cubit.state;
     if (state is! PurchasingLoaded) {
       return const AlertDialog(
-          content: Text(
-              'بيانات الموردين والخامات غير متاحة. حدّث الشاشة وحاول مرة أخرى.'));
+        content: Text(
+          'بيانات الموردين والخامات غير متاحة. حدّث الشاشة وحاول مرة أخرى.',
+        ),
+      );
     }
     return AlertDialog(
       title: const Text('إنشاء أمر شراء'),
@@ -400,10 +393,12 @@ class _CreatePurchaseOrderDialogState
                   items: state.suppliers
                       .whereType<Map>()
                       .where((supplier) => supplier['id'] != null)
-                      .map((supplier) => DropdownMenuItem<String>(
-                            value: supplier['id'].toString(),
-                            child: Text('${supplier['name'] ?? 'مورد'}'),
-                          ))
+                      .map(
+                        (supplier) => DropdownMenuItem<String>(
+                          value: supplier['id'].toString(),
+                          child: Text('${supplier['name'] ?? 'مورد'}'),
+                        ),
+                      )
                       .toList(),
                   onChanged: _isSaving
                       ? null
@@ -454,11 +449,14 @@ class _CreatePurchaseOrderDialogState
                   items: state.rawMaterials
                       .whereType<Map>()
                       .where((material) => material['id'] != null)
-                      .map((material) => DropdownMenuItem<String>(
-                            value: material['id'].toString(),
-                            child: Text(
-                                '${material['name'] ?? material['code'] ?? 'خامة'}'),
-                          ))
+                      .map(
+                        (material) => DropdownMenuItem<String>(
+                          value: material['id'].toString(),
+                          child: Text(
+                            '${material['name'] ?? material['code'] ?? 'خامة'}',
+                          ),
+                        ),
+                      )
                       .toList(),
                   onChanged: _isSaving
                       ? null
@@ -468,8 +466,9 @@ class _CreatePurchaseOrderDialogState
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _quantityController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
                   decoration: const InputDecoration(labelText: 'الكمية *'),
                   validator: (value) {
                     final quantity = double.tryParse(value?.trim() ?? '');
@@ -481,10 +480,12 @@ class _CreatePurchaseOrderDialogState
                 const SizedBox(height: 10),
                 TextFormField(
                   controller: _unitCostController,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  decoration:
-                      const InputDecoration(labelText: 'تكلفة الوحدة *'),
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    labelText: 'تكلفة الوحدة *',
+                  ),
                   validator: (value) {
                     final cost = double.tryParse(value?.trim() ?? '');
                     return cost == null || cost < 0 ? 'أدخل تكلفة صحيحة' : null;
@@ -557,8 +558,7 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
   /// int.tryParse كان يحوّل «2.5» إلى null/failure صامت.
   double _remaining(Map item) {
     final ordered = double.tryParse('${item['quantity'] ?? 0}') ?? 0;
-    final received =
-        double.tryParse('${item['receivedQuantity'] ?? 0}') ?? 0;
+    final received = double.tryParse('${item['receivedQuantity'] ?? 0}') ?? 0;
     return (ordered - received).clamp(0, ordered);
   }
 
@@ -567,7 +567,10 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
     // أزل الأصفار الزائدة: 3.0 → «3» و2.5 → «2.5».
     final text = remaining == remaining.roundToDouble()
         ? '${remaining.toInt()}'
-        : remaining.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+        : remaining
+              .toStringAsFixed(4)
+              .replaceAll(RegExp(r'0+$'), '')
+              .replaceAll(RegExp(r'\.$'), '');
     return text;
   }
 
@@ -599,8 +602,10 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
       // رسالة الخادم الفعلية (تجاوز المتبقي/عدم الاعتماد) بدل رسالة عامة.
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                'تعذر تسجيل الاستلام: ${ApiClient.instance.messageFor(error)}')),
+          content: Text(
+            'تعذر تسجيل الاستلام: ${ApiClient.instance.messageFor(error)}',
+          ),
+        ),
       );
     }
   }
@@ -617,36 +622,39 @@ class _ReceivePurchaseDialogState extends State<_ReceivePurchaseDialog> {
             DropdownButtonFormField<String>(
               initialValue: _itemId,
               decoration: const InputDecoration(labelText: 'بند أمر الشراء *'),
-              items: _items
-                  .map((item) {
-                    final material = item['rawMaterial'] as Map?;
-                    return DropdownMenuItem<String>(
-                      value: item['id'].toString(),
-                      child: Text(
-                          '${material?['name'] ?? item['rawMaterialId'] ?? ''} — متبقي ${_remainingLabel(item)}'),
-                    );
-                  })
-                  .toList(),
-              onChanged:
-                  _isSaving ? null : (value) => setState(() => _itemId = value),
+              items: _items.map((item) {
+                final material = item['rawMaterial'] as Map?;
+                return DropdownMenuItem<String>(
+                  value: item['id'].toString(),
+                  child: Text(
+                    '${material?['name'] ?? item['rawMaterialId'] ?? ''} — متبقي ${_remainingLabel(item)}',
+                  ),
+                );
+              }).toList(),
+              onChanged: _isSaving
+                  ? null
+                  : (value) => setState(() => _itemId = value),
               validator: (value) => value == null ? 'اختر بندًا' : null,
             ),
             const SizedBox(height: 10),
             TextFormField(
               controller: _quantityController,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(
-                  labelText: 'كمية الاستلام *',
-                  hintText: 'يقبل كسورًا حتى 4 منازل، مثل 2.5'),
+                labelText: 'كمية الاستلام *',
+                hintText: 'يقبل كسورًا حتى 4 منازل، مثل 2.5',
+              ),
               validator: (value) {
                 final quantity = double.tryParse(value?.trim() ?? '');
                 if (quantity == null || quantity <= 0) {
                   return 'أدخل عددًا موجبًا (كسورًا مسموحة)';
                 }
                 final item = _items.cast<Map?>().firstWhere(
-                      (item) => item?['id']?.toString() == _itemId,
-                      orElse: () => null,
-                    );
+                  (item) => item?['id']?.toString() == _itemId,
+                  orElse: () => null,
+                );
                 final remaining = item == null ? 0.0 : _remaining(item);
                 return quantity > remaining
                     ? 'الكمية تتجاوز المتبقي (${item == null ? '0' : _remainingLabel(item)})'
@@ -708,7 +716,10 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
     final received = _received(item);
     return received == received.roundToDouble()
         ? '${received.toInt()}'
-        : received.toStringAsFixed(4).replaceAll(RegExp(r'0+$'), '').replaceAll(RegExp(r'\.$'), '');
+        : received
+              .toStringAsFixed(4)
+              .replaceAll(RegExp(r'0+$'), '')
+              .replaceAll(RegExp(r'\.$'), '');
   }
 
   @override
@@ -734,8 +745,10 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-            content: Text(
-                'تعذر تسجيل المرتجع: ${ApiClient.instance.messageFor(error)}')),
+          content: Text(
+            'تعذر تسجيل المرتجع: ${ApiClient.instance.messageFor(error)}',
+          ),
+        ),
       );
     }
   }
@@ -752,30 +765,27 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
             DropdownButtonFormField<String>(
               initialValue: _itemId,
               decoration: const InputDecoration(labelText: 'البند المستلم *'),
-              items: _items
-                  .where((item) => _received(item) > 0)
-                  .map(
-                    (item) {
-                      final material = item['rawMaterial'] as Map?;
-                      return DropdownMenuItem<String>(
-                        value: '${item['id']}',
-                        child: Text(
-                          '${material?['name'] ?? item['rawMaterialId'] ?? ''} — مستلم ${_receivedLabel(item)}',
-                        ),
-                      );
-                    },
-                  )
-                  .toList(),
-              onChanged:
-                  _isSaving ? null : (value) => setState(() => _itemId = value),
+              items: _items.where((item) => _received(item) > 0).map((item) {
+                final material = item['rawMaterial'] as Map?;
+                return DropdownMenuItem<String>(
+                  value: '${item['id']}',
+                  child: Text(
+                    '${material?['name'] ?? item['rawMaterialId'] ?? ''} — مستلم ${_receivedLabel(item)}',
+                  ),
+                );
+              }).toList(),
+              onChanged: _isSaving
+                  ? null
+                  : (value) => setState(() => _itemId = value),
               validator: (value) => value == null ? 'اختر بندًا مستلمًا' : null,
             ),
             const SizedBox(height: 10),
             TextFormField(
               controller: _quantityController,
               enabled: !_isSaving,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'كمية المرتجع *'),
               validator: (value) {
                 final quantity = double.tryParse(value?.trim() ?? '');
@@ -783,9 +793,9 @@ class _ReturnToSupplierDialogState extends State<_ReturnToSupplierDialog> {
                   return 'أدخل كمية موجبة';
                 }
                 final item = _items.cast<Map?>().firstWhere(
-                      (item) => item?['id']?.toString() == _itemId,
-                      orElse: () => null,
-                    );
+                  (item) => item?['id']?.toString() == _itemId,
+                  orElse: () => null,
+                );
                 final received = item == null ? 0.0 : _received(item);
                 return quantity > received
                     ? 'الكمية تتجاوز المستلم (${item == null ? received : _receivedLabel(item)})'

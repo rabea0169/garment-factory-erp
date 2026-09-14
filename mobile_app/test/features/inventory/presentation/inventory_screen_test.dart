@@ -30,9 +30,11 @@ void main() {
     },
   ];
 
-  testWidgets('loading state shows AppLoadingView', (tester) async {
+  // UI-REVAMP: حالة التحميل صارت سكيلتون (هيكل بطاقات نابض) بدل
+  // المؤشر الدوّار — يحاكي شكل القائمة الفعلية ويحسن الإحساس بالسرعة.
+  testWidgets('loading state shows AppSkeletonList', (tester) async {
     await _pump(tester, state: InventoryLoading());
-    expect(find.byType(AppLoadingView), findsOneWidget);
+    expect(find.byType(AppSkeletonList), findsOneWidget);
     expect(find.byType(AppOfflineView), findsNothing);
   });
 

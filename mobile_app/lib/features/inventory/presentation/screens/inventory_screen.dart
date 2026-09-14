@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:go_router/go_router.dart';
+
 import '../../../../core/constants/app_colors.dart';
 import '../../../../core/router/app_router.dart';
 import '../../../../core/services/barcode_scanner_launcher.dart';
@@ -8,7 +9,7 @@ import '../../../../core/widgets/app_feedback.dart';
 import '../../../system/presentation/widgets/export_buttons.dart';
 import '../cubit/inventory_cubit.dart';
 import '../cubit/inventory_state.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class InventoryScreen extends StatelessWidget {
   const InventoryScreen({super.key, this.cubit, this.scannerLauncher});
@@ -55,8 +56,7 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
   void initState() {
     super.initState();
     _tabController = TabController(length: 3, vsync: this);
-    _scannerLauncher =
-        widget.scannerLauncher ?? const BarcodeScannerLauncher();
+    _scannerLauncher = widget.scannerLauncher ?? const BarcodeScannerLauncher();
   }
 
   @override
@@ -68,106 +68,122 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        leading: const GfBackButton(),
-        title: const Text('المخزون'),
-        bottom: TabBar(
-          controller: _tabController,
-          labelColor: Colors.white,
-          unselectedLabelColor: Colors.white70,
-          indicatorColor: AppColors.secondary,
-          labelStyle:
-              const TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
-          unselectedLabelStyle: const TextStyle(fontFamily: 'Cairo'),
-          tabs: const [
-            Tab(text: 'المواد الخام'),
-            Tab(text: 'المنتجات التامة'),
-            Tab(text: 'تنبيهات المخزون'),
-          ],
+    // UI-REVAMP: هجرة للهيكل الموحد — التبويبات انتقلت من أسفل شريط
+    // التطبيق الأزرق إلى رأس الجسم على خلفية بيضاء (نمط المصاريف/الخزينة).
+    return SelimShellScaffold(
+      title: 'المخزون',
+      actions: [
+        // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+        const EntityExportButtons(entities: ['inventory']),
+        IconButton(
+          icon: const Icon(Icons.refresh),
+          tooltip: 'تحديث',
+          onPressed: () => context.read<InventoryCubit>().fetchInventoryData(),
         ),
-        actions: [
-          // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
-          const EntityExportButtons(entities: ['inventory']),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'تحديث',
-            onPressed: () =>
-                context.read<InventoryCubit>().fetchInventoryData(),
+      ],
+      body: Column(
+        children: [
+          Material(
+            color: Colors.white,
+            child: TabBar(
+              controller: _tabController,
+              labelColor: AppColors.primary,
+              unselectedLabelColor: Colors.grey.shade600,
+              indicatorColor: AppColors.secondary,
+              labelStyle: const TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+              ),
+              unselectedLabelStyle: const TextStyle(fontFamily: 'Cairo'),
+              tabs: const [
+                Tab(text: 'المواد الخام'),
+                Tab(text: 'المنتجات التامة'),
+                Tab(text: 'تنبيهات المخزون'),
+              ],
+            ),
+          ),
+          Expanded(
+            child: BlocBuilder<InventoryCubit, InventoryState>(
+              builder: (context, state) {
+                if (state is InventoryLoading || state is InventoryInitial) {
+                  // UI-REVAMP: سكيلتون يحاكي بطاقات المخزون.
+                  return const AppSkeletonList();
+                } else if (state is InventoryOffline) {
+                  // GF-REMAINING-008: شاشة مخصصة لانقطاع الشبكة بدل الخطأ العام.
+                  return AppOfflineView(
+                    onRetry: () =>
+                        context.read<InventoryCubit>().fetchInventoryData(),
+                  );
+                } else if (state is InventoryError) {
+                  return AppErrorView(
+                    message: state.message,
+                    onRetry: () =>
+                        context.read<InventoryCubit>().fetchInventoryData(),
+                  );
+                } else if (state is InventoryLoaded) {
+                  return Column(
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                        child: TextField(
+                          controller: _searchController,
+                          decoration: InputDecoration(
+                            labelText: 'بحث في المخزون',
+                            hintText: 'الاسم أو الكود',
+                            prefixIcon: const Icon(Icons.search),
+                            suffixIcon: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                // GF-REMAINING-008: مسح باركود حقيقي يرجع SKU/كود
+                                // المادة ويملأ خانة البحث به مباشرة.
+                                IconButton(
+                                  tooltip: 'مسح باركود',
+                                  icon: const Icon(Icons.qr_code_scanner),
+                                  onPressed: _openScanner,
+                                ),
+                                if (_searchQuery.isNotEmpty)
+                                  IconButton(
+                                    tooltip: 'مسح البحث',
+                                    onPressed: () {
+                                      _searchController.clear();
+                                      setState(() => _searchQuery = '');
+                                    },
+                                    icon: const Icon(Icons.clear),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          onChanged: (value) => setState(
+                            () => _searchQuery = value.trim().toLowerCase(),
+                          ),
+                        ),
+                      ),
+                      Expanded(
+                        child: TabBarView(
+                          controller: _tabController,
+                          children: [
+                            _buildRawMaterialsTab(
+                              _filterItems(state.rawMaterials),
+                            ),
+                            _buildFinishedGoodsTab(
+                              _filterItems(state.finishedGoods, nested: true),
+                            ),
+                            _buildLowStockTab(
+                              _filterItems(state.lowStockMaterials),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return const SizedBox();
+              },
+            ),
           ),
         ],
       ),
-      body: BlocBuilder<InventoryCubit, InventoryState>(
-        builder: (context, state) {
-          if (state is InventoryLoading || state is InventoryInitial) {
-            return const AppLoadingView();
-          } else if (state is InventoryOffline) {
-            // GF-REMAINING-008: شاشة مخصصة لانقطاع الشبكة بدل الخطأ العام.
-            return AppOfflineView(
-              onRetry: () =>
-                  context.read<InventoryCubit>().fetchInventoryData(),
-            );
-          } else if (state is InventoryError) {
-            return AppErrorView(
-              message: state.message,
-              onRetry: () =>
-                  context.read<InventoryCubit>().fetchInventoryData(),
-            );
-          } else if (state is InventoryLoaded) {
-            return Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                  child: TextField(
-                    controller: _searchController,
-                    decoration: InputDecoration(
-                      labelText: 'بحث في المخزون',
-                      hintText: 'الاسم أو الكود',
-                      prefixIcon: const Icon(Icons.search),
-                      suffixIcon: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          // GF-REMAINING-008: مسح باركود حقيقي يرجع SKU/كود
-                          // المادة ويملأ خانة البحث به مباشرة.
-                          IconButton(
-                            tooltip: 'مسح باركود',
-                            icon: const Icon(Icons.qr_code_scanner),
-                            onPressed: _openScanner,
-                          ),
-                          if (_searchQuery.isNotEmpty)
-                            IconButton(
-                              tooltip: 'مسح البحث',
-                              onPressed: () {
-                                _searchController.clear();
-                                setState(() => _searchQuery = '');
-                              },
-                              icon: const Icon(Icons.clear),
-                            ),
-                        ],
-                      ),
-                    ),
-                    onChanged: (value) => setState(
-                        () => _searchQuery = value.trim().toLowerCase()),
-                  ),
-                ),
-                Expanded(
-                  child: TabBarView(
-                    controller: _tabController,
-                    children: [
-                      _buildRawMaterialsTab(_filterItems(state.rawMaterials)),
-                      _buildFinishedGoodsTab(
-                          _filterItems(state.finishedGoods, nested: true)),
-                      _buildLowStockTab(_filterItems(state.lowStockMaterials)),
-                    ],
-                  ),
-                ),
-              ],
-            );
-          }
-          return const SizedBox();
-        },
-      ),
-      floatingActionButton: FloatingActionButton.extended(
+      fab: FloatingActionButton.extended(
         onPressed: () => _showAddStockDialog(context),
         icon: const Icon(Icons.add),
         label: const Text('إضافة رصيد', style: TextStyle(fontFamily: 'Cairo')),
@@ -183,13 +199,14 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
       final values = <Object>[
         ...[item['name'], item['code'], item['sku']].whereType<Object>(),
         // منتجات تامة: البيانات متداخلة تحت variant/product (SHP-5/FG projection).
-        if (nested) ...[
-          item['variant']?['product']?['name'],
-          item['variant']?['product']?['code'],
-          item['variant']?['size'],
-          item['variant']?['color'],
-          item['variant']?['barcode'],
-        ].whereType<Object>(),
+        if (nested)
+          ...[
+            item['variant']?['product']?['name'],
+            item['variant']?['product']?['code'],
+            item['variant']?['size'],
+            item['variant']?['color'],
+            item['variant']?['barcode'],
+          ].whereType<Object>(),
       ].map((value) => value.toString().toLowerCase());
       return values.any((value) => value.contains(_searchQuery));
     }).toList();
@@ -221,7 +238,8 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
       itemCount: materials.length,
       itemBuilder: (context, index) {
         final item = materials[index];
-        final isLow = double.parse(item['currentStock'].toString()) <=
+        final isLow =
+            double.parse(item['currentStock'].toString()) <=
             double.parse(item['minStockLevel'].toString());
 
         return Card(
@@ -231,11 +249,15 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
               backgroundColor: isLow
                   ? AppColors.error.withValues(alpha: 0.1)
                   : AppColors.primary.withValues(alpha: 0.1),
-              child: Icon(Icons.category,
-                  color: isLow ? AppColors.error : AppColors.primary),
+              child: Icon(
+                Icons.category,
+                color: isLow ? AppColors.error : AppColors.primary,
+              ),
             ),
-            title: Text(item['name'],
-                style: Theme.of(context).textTheme.titleMedium),
+            title: Text(
+              item['name'],
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             subtitle: Text('الكود: ${item['code']}'),
             trailing: Column(
               mainAxisAlignment: MainAxisAlignment.center,
@@ -251,11 +273,14 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
                   ),
                 ),
                 if (isLow)
-                  const Text('مخزون منخفض',
-                      style: TextStyle(
-                          color: AppColors.error,
-                          fontSize: 10,
-                          fontFamily: 'Cairo')),
+                  const Text(
+                    'مخزون منخفض',
+                    style: TextStyle(
+                      color: AppColors.error,
+                      fontSize: 10,
+                      fontFamily: 'Cairo',
+                    ),
+                  ),
               ],
             ),
           ),
@@ -288,10 +313,13 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
               backgroundColor: AppColors.secondary.withValues(alpha: 0.1),
               child: const Icon(Icons.checkroom, color: AppColors.secondary),
             ),
-            title: Text(product['name'],
-                style: Theme.of(context).textTheme.titleMedium),
-            subtitle:
-                Text('المقاس: ${variant['size']} | اللون: ${variant['color']}'),
+            title: Text(
+              product['name'],
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            subtitle: Text(
+              'المقاس: ${variant['size']} | اللون: ${variant['color']}',
+            ),
             trailing: Text(
               '${item['quantity']} قطعة',
               style: const TextStyle(
@@ -313,14 +341,20 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.check_circle_outline,
-                color: AppColors.success, size: 60),
+            Icon(
+              Icons.check_circle_outline,
+              color: AppColors.success,
+              size: 60,
+            ),
             SizedBox(height: 16),
-            Text('جميع الأرصدة في مستويات آمنة',
-                style: TextStyle(
-                    fontFamily: 'Cairo',
-                    color: AppColors.success,
-                    fontSize: 16)),
+            Text(
+              'جميع الأرصدة في مستويات آمنة',
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                color: AppColors.success,
+                fontSize: 16,
+              ),
+            ),
           ],
         ),
       );
@@ -335,23 +369,32 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
           color: AppColors.error.withValues(alpha: 0.05),
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
-            leading:
-                const Icon(Icons.warning_amber_rounded, color: AppColors.error),
-            title: Text(item['name'],
-                style: const TextStyle(
-                    fontFamily: 'Cairo',
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.error)),
+            leading: const Icon(
+              Icons.warning_amber_rounded,
+              color: AppColors.error,
+            ),
+            title: Text(
+              item['name'],
+              style: const TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+                color: AppColors.error,
+              ),
+            ),
             subtitle: Text(
-                'الرصيد: ${item['currentStock']} | الحد الأدنى: ${item['minStockLevel']}',
-                style: const TextStyle(fontFamily: 'Cairo')),
+              'الرصيد: ${item['currentStock']} | الحد الأدنى: ${item['minStockLevel']}',
+              style: const TextStyle(fontFamily: 'Cairo'),
+            ),
             trailing: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.error,
-                  padding: const EdgeInsets.symmetric(horizontal: 12)),
+                backgroundColor: AppColors.error,
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+              ),
               onPressed: () => context.push(AppRouter.purchasing),
-              child:
-                  const Text('فتح المشتريات', style: TextStyle(fontSize: 12)),
+              child: const Text(
+                'فتح المشتريات',
+                style: TextStyle(fontSize: 12),
+              ),
             ),
           ),
         );
@@ -372,9 +415,9 @@ class _InventoryScreenViewState extends State<_InventoryScreenView>
       ),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تمت إضافة الرصيد بنجاح')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تمت إضافة الرصيد بنجاح')));
     }
   }
 }
@@ -423,7 +466,8 @@ class _AddRawMaterialStockDialogState
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('تعذر إضافة الرصيد. تحقق من البيانات والصلاحيات.')),
+          content: Text('تعذر إضافة الرصيد. تحقق من البيانات والصلاحيات.'),
+        ),
       );
     }
   }
@@ -447,7 +491,8 @@ class _AddRawMaterialStockDialogState
                     (material) => DropdownMenuItem<String>(
                       value: material['id'].toString(),
                       child: Text(
-                          '${material['name'] ?? material['code'] ?? 'خامة'}'),
+                        '${material['name'] ?? material['code'] ?? 'خامة'}',
+                      ),
                     ),
                   )
                   .toList(),
@@ -459,8 +504,9 @@ class _AddRawMaterialStockDialogState
             const SizedBox(height: 12),
             TextFormField(
               controller: _quantityController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'الكمية المضافة *'),
               validator: (value) {
                 final quantity = double.tryParse(value?.trim() ?? '');
@@ -472,8 +518,9 @@ class _AddRawMaterialStockDialogState
             const SizedBox(height: 12),
             TextFormField(
               controller: _costController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
+              ),
               decoration: const InputDecoration(labelText: 'سعر الوحدة *'),
               validator: (value) {
                 final cost = double.tryParse(value?.trim() ?? '');

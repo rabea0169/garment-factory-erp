@@ -13,7 +13,7 @@ import '../cubit/hr_state.dart';
 import '../widgets/create_worker_dialog.dart';
 import '../widgets/record_advance_dialog.dart';
 import '../widgets/worker_nfc_button.dart';
-import '../../../../core/navigation/back_navigation.dart';
+import '../../../../core/widgets/selim/selim_shell.dart';
 
 class HrScreen extends StatefulWidget {
   const HrScreen({this.cubit, super.key});
@@ -38,39 +38,36 @@ class _HrScreenState extends State<HrScreen> {
   Widget build(BuildContext context) {
     return BlocProvider(
       create: (context) => widget.cubit ?? (HrCubit()..fetchWorkers()),
-      child: Scaffold(
-        appBar: AppBar(
-          leading: const GfBackButton(),
-          title: const Text('الموارد البشرية والعمال'),
-          actions: [
-            // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
-            const EntityExportButtons(entities: ['workers']),
-            // MOB-3: عدد تسجيلات الإنتاج المحفوظة محليًا بانتظار الاتصال.
-            const OutboxPendingBadge(),
-            // COMM-F05: تسجيل سلفة عامل (POST /hr/advances).
-            Builder(
-              builder: (ctx) => IconButton(
-                tooltip: 'تسجيل سلفة',
-                icon: const Icon(Icons.savings),
-                onPressed: () => _showRecordAdvanceDialog(ctx),
-              ),
+      child: SelimShellScaffold(
+        title: 'الموارد البشرية والعمال',
+        actions: [
+          // SELIM-ERP W3: تصدير Excel/Word (يُخفى ذاتيًا لغير المصرّحين).
+          const EntityExportButtons(entities: ['workers']),
+          // MOB-3: عدد تسجيلات الإنتاج المحفوظة محليًا بانتظار الاتصال.
+          const OutboxPendingBadge(),
+          // COMM-F05: تسجيل سلفة عامل (POST /hr/advances).
+          Builder(
+            builder: (ctx) => IconButton(
+              tooltip: 'تسجيل سلفة',
+              icon: const Icon(Icons.savings),
+              onPressed: () => _showRecordAdvanceDialog(ctx),
             ),
-            // MOB-8: اختصار شاشة حالة الرواتب.
-            Builder(
-              builder: (ctx) => IconButton(
-                tooltip: 'كشوف الرواتب',
-                icon: const Icon(Icons.payments),
-                onPressed: () => ctx.push(AppRouter.hrPayrolls),
-              ),
+          ),
+          // MOB-8: اختصار شاشة حالة الرواتب.
+          Builder(
+            builder: (ctx) => IconButton(
+              tooltip: 'كشوف الرواتب',
+              icon: const Icon(Icons.payments),
+              onPressed: () => ctx.push(AppRouter.hrPayrolls),
             ),
-            Builder(
-              builder: (ctx) => IconButton(
-                icon: const Icon(Icons.refresh),
-                onPressed: () => ctx.read<HrCubit>().fetchWorkers(),
-              ),
+          ),
+          Builder(
+            builder: (ctx) => IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () => ctx.read<HrCubit>().fetchWorkers(),
             ),
-          ],
-        ),
+          ),
+        ],
         body: Column(
           children: [
             // MOB-4: حقل بحث بالاسم/الكود + زر قراءة بطاقة NFC.
@@ -150,13 +147,12 @@ class _HrScreenState extends State<HrScreen> {
             ),
           ],
         ),
-        floatingActionButton: FloatingActionButton.extended(
+        fab: FloatingActionButton.extended(
           onPressed: () async {
             final saved = await showDialog<bool>(
               context: context,
-              builder: (_) => CreateWorkerDialog(
-                cubit: context.read<HrCubit>(),
-              ),
+              builder: (_) =>
+                  CreateWorkerDialog(cubit: context.read<HrCubit>()),
             );
             if (saved == true && context.mounted) {
               ScaffoldMessenger.of(context).showSnackBar(
@@ -178,21 +174,17 @@ class _HrScreenState extends State<HrScreen> {
     final state = cubit.state;
     final workers = state is HrLoaded
         ? state.workers
-            .whereType<Map>()
-            .map((worker) => Map<String, dynamic>.from(worker))
-            .toList(growable: false)
+              .whereType<Map>()
+              .map((worker) => Map<String, dynamic>.from(worker))
+              .toList(growable: false)
         : <Map<String, dynamic>>[];
     final saved = await showDialog<bool>(
       context: context,
-      builder: (_) => RecordAdvanceDialog(
-        cubit: cubit,
-        workers: workers,
-      ),
+      builder: (_) => RecordAdvanceDialog(cubit: cubit, workers: workers),
     );
     if (saved == true && context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم تسجيل السلفة بنجاح')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('تم تسجيل السلفة بنجاح')));
     }
   }
 
@@ -282,8 +274,7 @@ class _HrScreenState extends State<HrScreen> {
     notesController.dispose();
     if (saved == true && context.mounted) {
       final message = switch (outcome) {
-        RecordAttendanceOutcome.queued =>
-          'لا يوجد اتصال — تم حفظ الحضور محليًا وسيُرسل تلقائيًا عند عودة الاتصال',
+        RecordAttendanceOutcome.queued => 'لا يوجد اتصال — تم حفظ الحضور محليًا وسيُرسل تلقائيًا عند عودة الاتصال',
         _ => 'تم تسجيل الحضور بنجاح',
       };
       ScaffoldMessenger.of(context).showSnackBar(
@@ -324,12 +315,14 @@ class _HrScreenState extends State<HrScreen> {
                 onPressed: isSaving
                     ? null
                     : () async {
-                        final pieces =
-                            int.tryParse(piecesController.text.trim());
+                        final pieces = int.tryParse(
+                          piecesController.text.trim(),
+                        );
                         if (pieces == null || pieces <= 0) {
                           ScaffoldMessenger.of(context).showSnackBar(
                             const SnackBar(
-                                content: Text('أدخل عددًا صحيحًا موجبًا')),
+                              content: Text('أدخل عددًا صحيحًا موجبًا'),
+                            ),
                           );
                           return;
                         }
@@ -363,8 +356,7 @@ class _HrScreenState extends State<HrScreen> {
     piecesController.dispose();
     if (saved == true && context.mounted) {
       final message = switch (outcome) {
-        RecordProductionOutcome.queued =>
-          'لا يوجد اتصال — تم حفظ التسجيل محليًا وسيُرسل تلقائيًا عند عودة الاتصال',
+        RecordProductionOutcome.queued => 'لا يوجد اتصال — تم حفظ التسجيل محليًا وسيُرسل تلقائيًا عند عودة الاتصال',
         _ => 'تم تسجيل الإنتاج بنجاح',
       };
       ScaffoldMessenger.of(context).showSnackBar(
@@ -383,11 +375,11 @@ class _WorkersList extends StatelessWidget {
 
   final List<Map<String, dynamic>> workers;
   final Future<void> Function(BuildContext, Map<String, dynamic>)
-      onRecordProduction;
+  onRecordProduction;
 
   /// MOB-3: تسجيل الحضور — يُرسل فوريًا أو يُدرج بالطابور بلا اتصال.
   final Future<void> Function(BuildContext, Map<String, dynamic>)
-      onRecordAttendance;
+  onRecordAttendance;
 
   @override
   Widget build(BuildContext context) {
@@ -430,11 +422,16 @@ class _WorkerCard extends StatelessWidget {
           backgroundColor: AppColors.primary,
           child: Icon(Icons.person, color: Colors.white),
         ),
-        title: Text(worker['name']?.toString() ?? '',
-            style: const TextStyle(
-                fontWeight: FontWeight.bold, fontFamily: 'Cairo')),
+        title: Text(
+          worker['name']?.toString() ?? '',
+          style: const TextStyle(
+            fontWeight: FontWeight.bold,
+            fontFamily: 'Cairo',
+          ),
+        ),
         subtitle: Text(
-            'كود: ${worker['code']} | التخصص: ${_specialtyLabel(worker['specialty']?.toString() ?? '')}'),
+          'كود: ${worker['code']} | التخصص: ${_specialtyLabel(worker['specialty']?.toString() ?? '')}',
+        ),
         // MOB-8: بطاقة العامل تفتح نشاطه (آخر السلف + آخر الإنتاج).
         onTap: () => context.push(
           '${AppRouter.hrWorkerActivity}/${worker['id']}'

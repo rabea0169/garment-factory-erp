@@ -390,6 +390,16 @@ bool _isSameSection(String location, String section) {
 }
 
 Map<String, dynamic>? _userOf(BuildContext context) {
+  // UI-REVAMP: الهيكل صار يُستخدم في شاشات قديمة تُختبر بضخ مباشر بلا
+  // AuthCubit فوقها (نمط اختبارات sales/purchasing/...) — فحص وجود
+  // المزود قبل watch يمنع ProviderNotFoundException. داخل التطبيق
+  // الحقيقي المزود موجود دائمًا أعلى MaterialApp (app.dart) فلا يتغير
+  // السلوك؛ بلا مزود (اختبار) يُعامل كمستخدم مجهول: تظهر الأقسام
+  // العامة فقط (نفس منطق canAccessWithUser مع null).
+  final hasAuthCubit =
+      context.findAncestorWidgetOfExactType<BlocProvider<AuthCubit>>() !=
+          null;
+  if (!hasAuthCubit) return null;
   final authState = context.watch<AuthCubit>().state;
   if (authState is AuthAuthenticated) {
     return authState.user;

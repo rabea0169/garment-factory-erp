@@ -26,6 +26,136 @@ class AppLoadingView extends StatelessWidget {
   }
 }
 
+/// UI-REVAMP: سكيلتون قائمة — هيكل بطاقات رمادية نابضة يحاكي شكل
+/// عناصر القائمة الحقيقي (دائرة + سطران) بدل المؤشر الدوّار وحده.
+///
+/// يحسّن الإحساس بالسرعة: المستخدم يرى "هيكل" الشاشة ويتوقع المحتوى
+/// بدل شاشة فارغة بدائرة وسطها. موجه لشاشات القوائم الكبيرة التي
+/// تستغرق أكثر من لحظة (مبيعات/مخزون/إنتاج/مشتريات).
+///
+/// النبض: تحكم متكرر (opacity 0.45↔1.0) — دقيقة واحدة تكفي لأن
+/// الشاشات التي تستخدمه تنتقل لحالة Loaded فور وصول البيانات.
+class AppSkeletonList extends StatefulWidget {
+  const AppSkeletonList({
+    this.itemCount = 6,
+    this.showAvatar = true,
+    super.key,
+  });
+
+  /// عدد بطاقات الهيكل المعروضة.
+  final int itemCount;
+
+  /// عرض دائرة في رأس كل بطاقة (يحاكي Leading في القوائم الفعلية).
+  final bool showAvatar;
+
+  @override
+  State<AppSkeletonList> createState() => _AppSkeletonListState();
+}
+
+class _AppSkeletonListState extends State<AppSkeletonList>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _pulse = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 900),
+  )..repeat(reverse: true);
+
+  @override
+  void dispose() {
+    _pulse.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return FadeTransition(
+      opacity: Tween<double>(
+        begin: 0.45,
+        end: 1.0,
+      ).animate(CurvedAnimation(parent: _pulse, curve: Curves.easeInOut)),
+      child: ListView.builder(
+        physics: const NeverScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        itemCount: widget.itemCount,
+        itemBuilder: (context, index) =>
+            _SkeletonCard(showAvatar: widget.showAvatar),
+      ),
+    );
+  }
+}
+
+class _SkeletonCard extends StatelessWidget {
+  const _SkeletonCard({this.showAvatar = true});
+
+  final bool showAvatar;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.divider),
+      ),
+      child: Row(
+        children: [
+          if (showAvatar) ...[
+            const _SkeletonBox(size: Size(44, 44), radius: 22),
+            const SizedBox(width: 12),
+          ],
+          const Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _SkeletonBox(
+                  size: Size(double.infinity, 14),
+                  radius: 7,
+                  widthFactor: 0.7,
+                ),
+                SizedBox(height: 10),
+                _SkeletonBox(
+                  size: Size(double.infinity, 10),
+                  radius: 5,
+                  widthFactor: 0.45,
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SkeletonBox extends StatelessWidget {
+  const _SkeletonBox({required this.size, this.radius = 8, this.widthFactor});
+
+  final Size size;
+  final double radius;
+  final double? widthFactor;
+
+  @override
+  Widget build(BuildContext context) {
+    Widget box = Container(
+      width: size.width,
+      height: size.height,
+      decoration: BoxDecoration(
+        color: AppColors.divider,
+        borderRadius: BorderRadius.circular(radius),
+      ),
+    );
+    if (widthFactor != null) {
+      box = FractionallySizedBox(
+        alignment: AlignmentDirectional.centerStart,
+        widthFactor: widthFactor,
+        child: box,
+      );
+    }
+    return box;
+  }
+}
+
 class AppEmptyView extends StatelessWidget {
   const AppEmptyView({
     required this.title,
@@ -79,11 +209,7 @@ class AppEmptyView extends StatelessWidget {
 }
 
 class AppErrorView extends StatelessWidget {
-  const AppErrorView({
-    required this.message,
-    this.onRetry,
-    super.key,
-  });
+  const AppErrorView({required this.message, this.onRetry, super.key});
   final String message;
   final VoidCallback? onRetry;
 
@@ -140,10 +266,7 @@ class AppAsyncButton extends StatelessWidget {
         : Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (icon != null) ...[
-                Icon(icon),
-                const SizedBox(width: 8),
-              ],
+              if (icon != null) ...[Icon(icon), const SizedBox(width: 8)],
               Text(label),
             ],
           );
@@ -246,8 +369,10 @@ class AppOfflineView extends StatelessWidget {
             const Text(
               'لا يوجد اتصال بالإنترنت',
               textAlign: TextAlign.center,
-              style:
-                  TextStyle(fontFamily: 'Cairo', fontWeight: FontWeight.bold),
+              style: TextStyle(
+                fontFamily: 'Cairo',
+                fontWeight: FontWeight.bold,
+              ),
             ),
             const SizedBox(height: 8),
             const Text(
