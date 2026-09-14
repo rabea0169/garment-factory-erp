@@ -117,7 +117,7 @@ class _RangeBar extends StatelessWidget {
       lastDate: DateTime(2100),
       helpText: isFrom ? 'اختر بداية الفترة' : 'اختر نهاية الفترة',
     );
-    if (picked == null) return;
+    if (picked == null || !context.mounted) return;
     final cubit = context.read<WorkerReportCubit>();
     if (isFrom) {
       await cubit.fetchReport(
