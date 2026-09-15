@@ -71,6 +71,45 @@ describe('CreateJournalEntryDto — ACC-10 سقف بنود القيد', () => {
     expect(allConstraintKeys(errors)).toContain('isUuid');
   });
 
+  // GF-OPS-2026-09-16 — انحدار معرفات شجرة الحسابات الثابتة (version-0):
+  // الحسابات النظامية (CHART_OF_ACCOUNTS) مثل 1300 المخزون تحمل معرفات
+  // ثابتة بصيغة 10000000-0000-0000-0000-000000000031 — نسق 8-4-4-4-12 hex
+  // سليم يقبل عمود uuid في PostgreSQL، لكن class-validator >= 0.15 (مع
+  // validator.js المحدَّث) صار يرفضها في وضع "all" (يشترط version 1-8).
+  // النتيجة قبل الإصلاح: أي قيد يدوي على حساب نظامي عبر API = 400
+  // «must be a UUID» — أُثبت كسرًا فعليًا على الإنتاج أثناء محاولة ترحيل
+  // القيد الافتتاحي. النمط 'loose' يعيد السلوك المقصود: كل hex بالنسق
+  // الكامل (وهو نفس شرط عمود uuid أصلًا) — دون قبول أي قمامة.
+  describe('CHART_OF_ACCOUNTS الثابتة — معرفات version-0', () => {
+    it('يقبل معرفات الحسابات النظامية الثابتة (مخزون/حقوق ملكية)', async () => {
+      const line = {
+        ...baseLine,
+        debitAccountId: '10000000-0000-0000-0000-000000000031', // 1300 المخزون
+        creditAccountId: '30000000-0000-0000-0000-000000000001', // 3000 حقوق الملكية
+      };
+      expect(await errorsOf(buildDto({ lines: [line] }))).toHaveLength(0);
+    });
+
+    it('يبقى رفض المعرفات الفاسدة/غير hex راسخًا في الوضع loose', async () => {
+      const bad = await errorsOf(
+        buildDto({
+          lines: [
+            {
+              ...baseLine,
+              debitAccountId: 'gg000000-0000-0000-0000-000000000031',
+            },
+          ],
+        }),
+      );
+      expect(allConstraintKeys(bad)).toContain('isUuid');
+
+      const junk = await errorsOf(
+        buildDto({ lines: [{ ...baseLine, creditAccountId: 'deadbeef' }] }),
+      );
+      expect(allConstraintKeys(junk)).toContain('isUuid');
+    });
+  });
+
   it('رسم Swagger (ApiProperty) موجود على lines — مواصفة القائمة', () => {
     const dto = plainToInstance(CreateJournalEntryDto, {
       description: 'x',

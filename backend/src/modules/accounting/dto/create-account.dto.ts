@@ -36,7 +36,8 @@ export class CreateAccountDto {
     description: 'معرف الحساب الأب (اختياري)',
   })
   @IsOptional()
-  @IsUUID(undefined, { message: 'معرف الحساب الأب يجب أن يكون UUID صالحًا' })
+  // 'loose': الأب قد يكون حسابًا نظاميًا ثابتًا version-0 (راجع JournalLineDto)
+  @IsUUID('loose', { message: 'معرف الحساب الأب يجب أن يكون UUID صالحًا' })
   parentId?: string;
 
   @ApiPropertyOptional({
