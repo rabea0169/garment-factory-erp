@@ -354,15 +354,15 @@ tag `v1.6.0-uat` (189.8MB، arm64-v8a، توقيع debug) — Release مرفق �
 |---|---|
 | المستودع | `rabea0169/garment-factory-erp` |
 | الفرع الأساسي المرجعي | `origin/main` |
-| آخر commit على main | `4debaac` — Merge PR #92 (توثيق بناء v1.6.0-uat) بتاريخ 2026-09-14؛ دمج `fix/backup-restore-dr-gate` قادم عبر PR |
-| Pull Requests الأخيرة | #79-#81 (GF-IMP W1-W3)، #82-#85 (جاهزية UAT والتدقيق)، **#86-#92 (محاكاة Selim الموجات 1-5 + زر الرجوع + توثيق البناء) كلها مدمجة بـ CI أخضر**؛ لا يُدمج PR جديد قبل CI أخضر وموافقة المالك |
-| آخر مرحلة مكتملة بالكامل على main | محاكاة Selim ERP كاملة (5 موجات) + بناء v1.6.0-uat + بروفة الاستعادة مع إصلاح عيبَي DR (2026-09-14) |
-| حالة CI على main | **خضراء** — متحقق منها مباشرة عبر GitHub API (2026-09-14: Performance على main = success) |
+| آخر commit على main | `dad5080` — UI-COMPLETE: ترحيل آخر 7 شاشات إلى الهيكل الموحد SelimShellScaffold (#95) بتاريخ 2026-09-14؛ يليه `54f770d` (Merge #94 — توحيد الواجهة) |
+| Pull Requests الأخيرة | #79-#81 (GF-IMP W1-W3)، #82-#85 (جاهزية UAT والتدقيق)، #86-#92 (محاكاة Selim الموجات 1-5 + زر الرجوع + توثيق البناء)، **#93 (بروفة الاستعادة + إصلاح عيبَي DR)، #94 (توحيد الواجهة: 12 شاشة + دخول + سكيلتون)، #95 (UI-COMPLETE: آخر 7 شاشات — 41/42 على الهيكل الموحد)** كلها مدمجة بـ CI أخضر؛ لا يُدمج PR جديد قبل CI أخضر وموافقة المالك |
+| آخر مرحلة مكتملة بالكامل على main | محاكاة Selim ERP كاملة (5 موجات) + بناء v1.6.0-uat + بروفة الاستعادة مع إصلاح عيبَي DR (2026-09-14) + **اكتمال توحيد الواجهة: 41/42 شاشة على الهيكل الموحد مع دعم bottom (TabBar) وbottomBar (شريط الإجماليات اللزج)** (2026-09-14) |
+| حالة CI على main | **خضراء** — متحقق منها مباشرة عبر GitHub API بعد دمج #95 (2026-09-14: Flutter Analyze/Test + Backend + Performance + Secret Scan كلها success) |
 | حالة قاعدة البيانات | **43 migration** (بما فيها موجات Selim 1/3/4) تطبق عبر preDeploy؛ الـ seed نُفّذ مرة واحدة (نسخة قديمة — راجع اكتشاف القيد الافتتاحي أعلاه) |
 | الإنتاج (Railway) | `garment-factory-erp-production.up.railway.app` — health/ready 200 وlogin 200 متحقق منهما مباشرة 2026-09-14 |
 | إصدار API | `1.0`؛ 24+ وحدة (بعد موجات Selim) — 76 جدولًا في القاعدة |
 | الإصدار | `pre-release`؛ مطلق لـ UAT/pilot على Railway، غير معتمد لتشغيل مؤسسي رسمي |
-| المهمة النشطة | GF-REMAINING-009 جارية: بروفة الاستعادة + reconciliation + دليل التدريب منفذة (2026-09-14)؛ التالي: UAT الميداني وقرار Go/No-Go |
+| المهمة النشطة | GF-REMAINING-009: المتبقي فقط بروفة pg_dump (تتطلب وصول DB من المالك) + UAT الميداني 16/16 على جهاز Android فعلي + monitoring + قرار Go/No-Go — مهمة «مراجعة وتطوير واجهة المستخدم» اكتملت بالكامل (41/42 شاشة موحدة، 2026-09-14) |
 | المرحلة النشطة | ما بعد محاكاة Selim الكاملة وبناء v1.6.0-uat؛ GF-REMAINING-009 (UAT الميداني + pg_dump بروفة + monitoring + Go/No-Go) |
 | سبب عدم الإغلاق النهائي | UAT ميداني 16/16 على جهاز Android فعلي، بروفة pg_dump (تحتاج وصول DB من المالك)، توقيع APK إنتاجي (keystore)، القيد الافتتاحي في الإنتاج، وقرار إطلاق المالك (G10/G11) |
 | Security blockers | لا أسرار في المستودع (SEED_ADMIN_PASSWORD متغير بيئة على Railway فقط)؛ `npm audit`: أُغلقت ثغرتا qs، والمتبقي سلسلة mysql2 داخل Prisma (مؤجل بقرار MASTER_BACKLOG) |
@@ -430,7 +430,9 @@ tag `v1.6.0-uat` (189.8MB، arm64-v8a، توقيع debug) — Release مرفق �
 
 ## آخر تحديث توثيقي
 
-تم تحديث هذا الملف على فرع `docs/post-merge-release-state` فوق `main@e32f745` بعد دمج PR #57 وPR #58. Run `32950963418` أخضر وحقق Backend وPostgreSQL integration وE2E وFlutter وSecret Scan. ما زال Production No-Go حتى إغلاق Prisma Compute/npm audit وBackup/Restore/UAT.
+**مزامنة 2026-09-15 (فوق `main@dad5080`):** حُدّث جدول «الحالة الحالية» ليعكس دمج PR #93 (بروفة الاستعادة + إصلاح عيبَي DR — موثقة PASS في `docs/runbooks/BACKUP_RESTORE.md` §5) وPR #94 + PR #95 (توحيد واجهة المستخدم كاملًا — 41/42 شاشة على `SelimShellScaffold` مع دعم `bottom`/`bottomBar` في الهيكل، CI أخضر). كما صُحّح بند GF-REMAINING-001 في `MASTER_BACKLOG.md` (كان «تنتظر PR/CI» رغم دمجه عبر PR #48 منذ زمن). لا يزال الإصدار `pre-release`: المتبقي على مسار GF-REMAINING-009 هو بروفة pg_dump (بيد المالك) + UAT الميداني + monitoring + قرار Go/No-Go.
+
+**سجل المزامنة السابقة:** تم تحديث هذا الملف على فرع `docs/post-merge-release-state` فوق `main@e32f745` بعد دمج PR #57 وPR #58. Run `32950963418` أخضر وحقق Backend وPostgreSQL integration وE2E وFlutter وSecret Scan.
 
 ## سجل التنفيذ الشامل — 2026-08-27
 
