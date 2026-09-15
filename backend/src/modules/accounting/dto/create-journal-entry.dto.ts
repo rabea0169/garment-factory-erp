@@ -14,12 +14,18 @@ import {
 } from 'class-validator';
 
 export class JournalLineDto {
-  @ApiProperty({ example: 'uuid-debit-account' })
-  @IsUUID()
+  // IsUUID('loose'): حسابات النظام الافتراضية (CHART_OF_ACCOUNTS) تحمل
+  // معرفات ثابتة version-0 مثل 10000000-0000-0000-0000-000000000031 —
+  // صالحة تمامًا لعمود uuid في PostgreSQL، لكن class-validator >= 0.15
+  // (مع validator.js الجديد) صار يرفضها في وضع "all". اكتُشف هذا كسرًا
+  // فعليًا على الإنتاج عند محاولة قيد يدوي على حساب نظامي (400). النمط
+  // 'loose' = نسق 8-4-4-4-12 hex كاملًا — كل ما يقبله العمود أصلًا.
+  @ApiProperty({ example: '10000000-0000-0000-0000-000000000031' })
+  @IsUUID('loose')
   debitAccountId: string;
 
-  @ApiProperty({ example: 'uuid-credit-account' })
-  @IsUUID()
+  @ApiProperty({ example: '30000000-0000-0000-0000-000000000001' })
+  @IsUUID('loose')
   creditAccountId: string;
 
   @ApiProperty({ example: 1250.5 })

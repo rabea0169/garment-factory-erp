@@ -34,7 +34,8 @@ export class JournalTemplateLineDto {
     example: '40000000-0000-0000-0000-000000000011',
     description: 'معرف الحساب (يجب أن يكون حسابًا ورقة غير تجميعي)',
   })
-  @IsUUID(undefined, { message: 'معرف الحساب يجب أن يكون UUID صالحًا' })
+  // 'loose': يقبل الحسابات النظامية الثابتة version-0 (راجع JournalLineDto)
+  @IsUUID('loose', { message: 'معرف الحساب يجب أن يكون UUID صالحًا' })
   accountId: string;
 
   @ApiPropertyOptional({

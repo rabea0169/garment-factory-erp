@@ -68,3 +68,10 @@
 ## قرارات قبل المهام التابعة
 
 تحتاج المهام المالية والتقارير قرارًا موثقًا حول حدود transaction ومصدر KPI. لا يُضاف `companyId` أو tenancy أو migration جديدة إلا بمهمة مستقلة وADR وخطة backfill/rollback. لا يُنفذ `npm audit fix --force` دون مراجعة توافق Prisma والـlockfile.
+
+> **إغلاق بند الأمن المؤجل (2026-09-16):** ثغرة mysql2 داخل Prisma أُغلقت
+> دون `--force` — عبر `overrides` في `backend/package.json` (mysql2 3.24.4
+> داخل 3.x + multer 2.4.0 + exceljs→uuid 11.1.1) وjs-yaml عبر audit fix
+> غير الكاسر. **`npm audit` = 0 vulnerabilities** — قرار «لا --force دون
+> مراجعة» تحقق حرفيًا: لم تُنفَّذ أي ترقية كاسرة. التفصيل في PROJECT_STATE
+> (قسم 2026-09-16). البند لم يعد مؤجلًا.
