@@ -181,6 +181,29 @@ find "${DUMP_DIR}" -maxdepth 1 -type f \( -name 'garment-erp_*.dump*' -o -name '
 |---|---|---|---|---|---|---|
 | | | | | | | |
 
+### 3.9 أتمتة الطبقة الخارجية عبر API — `scripts/backup-download.mjs` (2026-09-16)
+
+النسخة على مستوى التطبيق (GET /system/backup — نفس ما تختبره بروفة §5)
+يمكن أتمتتها خارج الخادم بالكامل بدون psql أو وصول DB مباشر:
+
+```bash
+BACKUP_EMAIL=<SUPER_ADMIN_EMAIL> \
+BACKUP_PASSWORD='<PASSWORD>' \
+BACKUP_DIR=/var/backups/garment-erp \
+  node backend/scripts/backup-download.mjs
+```
+
+السكربت (Node 20+، بلا اعتماديات): يسجّل الدخول، ينزّل النسخة الكاملة،
+**يتحقق من سلامتها قبل الحفظ** (formatVersion + عدد الجداول ≥ 40 +
+totalRows > 0 — يرفض حفظ نسخة مبتورة)، يكتبها مع `.sha256` بجانبها
+(صلاحية 600)، ويدوّر النسخ الأقدم من `BACKUP_RETENTION_DAYS` (افتراضي
+30 — مطابق لـ §2.2). اختُبر على الإنتاج 2026-09-16: نسخة سليمة 76
+جدولًا/180 صفًا. **مكمّل لـ §3.2 وليس بديلًا عنها:** pg_dump يبقى
+الأساس (يغطي كل شيء بما فيه schema/الفهارس)، ونسخة API هي طبقة
+المرونة الثانية التي لا تحتاج أي وصول DB. يُجدوَلان معًا في cron
+الخارجي (§2.2). شقيقُه `scripts/monitor-health.mjs` يفحص 4 طبقات
+(health/ready/login/backup-summary) برمز خروج لـ cron وخيار webhook.
+
 ---
 
 ## 4. إجراء الاستعادة — DR Drill (قاعدة اختبار منفصلة)
