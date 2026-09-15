@@ -113,5 +113,11 @@ flutter:
 # NOTE: تثبيت path_provider_android على 2.2.10 — الإصدار الأحدث (2.3.x) يسحب
 # jni_flutter ذا الكود الأصلي C++ (يتطلب NDK كامل ~3.5GB + cmake) دون فائدة
 # لهذا التطبيق. 2.2.10 يغطي نفس الواجهة البرمجية بلا كود أصلي.
+# NOTE: تثبيت objective_c على 9.6.0 — 9.6.1 (نُشرت 2026-09-15 00:38 UTC) ترجع
+# مرجع OSArchitecture.arm64e غير الموجود في Dart SDK المدمج مع Flutter 3.47.4
+# فيكسر flutter test فورًا (فشل main بعد 3 دقائق من نشرها). 9.6.0 هي آخر نسخة
+# عاملة (كل التشغيلات قبل 00:38 خضراء بها). التطبيق Android-first — objective_c
+# تابعة انتقالية لبناء macOS فقط؛ التثبيت لا يؤثر على الجوال.
 dependency_overrides:
   path_provider_android: 2.2.10
+  objective_c: 9.6.0
