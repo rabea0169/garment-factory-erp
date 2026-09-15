@@ -1,7 +1,7 @@
 name: garment_factory_erp
 description: نظام ERP لإدارة مصنع الملابس الجاهزة
 publish_to: 'none'
-version: 1.6.0+9
+version: 1.6.1+10
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
